@@ -1,4 +1,4 @@
-# Trading System v1
+# Trading System
 
 A high-performance, real-time trading system built in Go for the Indian stock market via Angel One SmartAPI.
 
