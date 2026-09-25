@@ -1,0 +1,91 @@
+# ═══════════════════════════════════════════════════════════════════
+#  CI — build and test backend + frontend
+#
+#  Runs on every pull request and on pushes to branches other than main.
+#  deploy.yml calls it (workflow_call) and only deploys if it passes, so
+#  nothing reaches the production VM untested.
+#
+#  No test here talks to Angel One: tests run against fakes, plus a local
+#  Redis service for the store/stratengine tests that use one.
+# ═══════════════════════════════════════════════════════════════════
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main] # main is covered by deploy.yml calling this workflow
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (build, vet, test -race)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same Go version as go.mod — what the VM builds with.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: |
+          go vet ./...
+          go vet -tags drills ./internal/drills/
+
+      - name: Test (race detector)
+        env:
+          CGO_ENABLED: "1" # go-sqlite3 and -race both need cgo
+        run: go test -race -count=1 ./...
+
+  frontend:
+    name: Frontend (test, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same Node major as the VM (deploy.yml installs Node 20).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Build (type-check + bundle)
+        run: npm run build

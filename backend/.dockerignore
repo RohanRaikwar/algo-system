@@ -1,0 +1,11 @@
+tmp/
+data/
+logs/
+results/
+.cache/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.env
+.env.*

@@ -1,0 +1,57 @@
+.bar {
+    display: none;
+}
+
+@media (max-width: 640px) {
+    .bar {
+        position: sticky;
+        bottom: 0;
+        z-index: 100;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        flex-shrink: 0;
+        padding-bottom: env(safe-area-inset-bottom);
+        background: var(--sg-surface);
+        border-top: 1px solid var(--sg-line);
+    }
+}
+
+.link {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    height: 56px;
+    color: var(--sg-faint);
+    font-size: 0.72rem;
+    font-weight: 500;
+    text-decoration: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.active {
+    color: var(--sg-text);
+}
+
+.active svg {
+    color: var(--sg-accent);
+}
+
+.link:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--sg-accent);
+}
+
+.iconWrap {
+    position: relative;
+    display: flex;
+}
+
+/* Unread count sits on the icon's top-right corner. */
+.iconWrap :global(.signal-badge) {
+    position: absolute;
+    top: -6px;
+    left: 12px;
+    margin: 0;
+}

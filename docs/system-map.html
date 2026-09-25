@@ -1,0 +1,561 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>algo-sys-v1 System Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground: #f3f6f5;
+    --surface: #ffffff;
+    --paper: #fbfcfc;
+    --ink: #15201d;
+    --muted: #56665f;
+    --line: #d6dfdb;
+    --accent: #0d6f63;
+    --accent-soft: #e0efec;
+    --amber: #9a6212;
+    --amber-soft: #f6ecdc;
+    --good: #2f7a3e;
+    --warn: #9a6212;
+    --bad: #b03a2e;
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --ground: #0d1412;
+      --surface: #141d1a;
+      --paper: #f7f9f8;
+      --ink: #e3ebe8;
+      --muted: #9aaba4;
+      --line: #26332f;
+      --accent: #45b8a6;
+      --accent-soft: #16302b;
+      --amber: #e2ac55;
+      --amber-soft: #2e2415;
+      --good: #6cc27c;
+      --warn: #e2ac55;
+      --bad: #ee7a6c;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ground: #0d1412;
+    --surface: #141d1a;
+    --paper: #f7f9f8;
+    --ink: #e3ebe8;
+    --muted: #9aaba4;
+    --line: #26332f;
+    --accent: #45b8a6;
+    --accent-soft: #16302b;
+    --amber: #e2ac55;
+    --amber-soft: #2e2415;
+    --good: #6cc27c;
+    --warn: #e2ac55;
+    --bad: #ee7a6c;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font: 400 15px/1.6 var(--body);
+    padding-inline: 16px;
+    padding-block: 32px 64px;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 40px; }
+
+  header { display: grid; gap: 12px; }
+  .eyebrow {
+    font: 500 12px/1 var(--mono);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  h1 {
+    font: 800 clamp(28px, 4.2vw, 42px)/1.1 var(--display);
+    letter-spacing: -.01em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .lede { margin: 0; color: var(--muted); max-width: 68ch; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    font: 500 12px/1 var(--mono);
+    padding: 6px 10px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--muted);
+  }
+  .chip strong { color: var(--ink); font-weight: 500; }
+
+  h2 {
+    font: 700 22px/1.25 var(--display);
+    margin: 0;
+    text-wrap: balance;
+  }
+  section { display: grid; gap: 14px; }
+  section > p { margin: 0; color: var(--muted); max-width: 72ch; }
+
+  .diagram-frame { position: relative; }
+  .diagram {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 48px 20px 20px;
+    overflow: auto;
+    max-height: 80vh;
+  }
+  .diagram pre.mermaid { margin: 0; min-width: 760px; text-align: center; }
+  .diagram svg { display: block; margin: 0 auto; }
+  .diagram.pannable { cursor: grab; }
+  .diagram.panning { cursor: grabbing; user-select: none; }
+  .diagram-frame:fullscreen { background: var(--ground); padding: 16px; }
+  .diagram-frame:fullscreen .diagram { height: calc(100% - 26px); max-height: none; }
+  .diagram-frame:fullscreen .zoombar { top: 24px; right: 24px; }
+  .zoombar {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 2;
+    display: flex;
+    gap: 2px;
+    padding: 3px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgb(0 0 0 / .08);
+  }
+  .zoombar button {
+    font: 500 13px/1 var(--mono);
+    min-width: 30px;
+    height: 28px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .zoombar button:hover { background: var(--accent-soft); color: var(--accent); }
+  .zoombar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .zoombar .level { min-width: 52px; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .zoomhint { margin: 6px 2px 0; font: 400 12px/1.4 var(--mono); color: var(--muted); }
+
+  .services {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+  }
+  .svc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px 16px;
+    display: grid;
+    gap: 6px;
+    align-content: start;
+  }
+  .svc h3 { margin: 0; font: 600 15px/1.3 var(--mono); }
+  .svc p { margin: 0; font-size: 14px; color: var(--muted); }
+  .svc .port { font: 400 12px/1 var(--mono); color: var(--accent); }
+
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  th { font: 500 12px/1.2 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  td code, p code, li code { font: 400 13px/1.4 var(--mono); color: var(--ink); }
+  .num { font-variant-numeric: tabular-nums; font-family: var(--mono); white-space: nowrap; }
+
+  .pill {
+    display: inline-block;
+    font: 500 12px/1 var(--mono);
+    padding: 4px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+  .pill.ext { background: var(--accent-soft); color: var(--accent); }
+  .pill.int { background: var(--amber-soft); color: var(--amber); }
+
+  .score {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 12px;
+  }
+  .score .row {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px 16px;
+    display: grid;
+    gap: 8px;
+  }
+  .score .label { font-size: 14px; color: var(--muted); }
+  .score .val { font: 700 24px/1 var(--display); font-variant-numeric: tabular-nums; }
+  .score .val small { font: 400 13px var(--mono); color: var(--muted); }
+  .bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); }
+  .score .row.overall { border-color: var(--accent); }
+
+  .guards { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+  .guards li {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: 14px;
+  }
+  .guards .tag { font: 500 12px/1.5 var(--mono); color: var(--accent); }
+  @media (max-width: 560px) { .guards li { grid-template-columns: 1fr; gap: 4px; } }
+
+  footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 16px; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">NSE · NIFTY 50 F&amp;O · branch fix/review-hardening</div>
+    <h1>algo-sys-v1 system map</h1>
+    <p class="lede">Five Go processes that talk only through Redis. Angel One ticks become 1-second and timeframe candles, then indicators, analysis and signals; orders go back to Angel One from one executor. The browser sees all of it through the API gateway.</p>
+    <div class="meta">
+      <span class="chip">money: <strong>int64 paise</strong></span>
+      <span class="chip">time: <strong>EventTS → CanonicalTS()</strong></span>
+      <span class="chip">bus: <strong>Redis pub/sub + streams</strong></span>
+      <span class="chip">durable: <strong>SQLite</strong></span>
+      <span class="chip">real orders: <strong>NIFTY50_FNO only</strong></span>
+    </div>
+  </header>
+
+  <section>
+    <h2>The five services</h2>
+    <div class="services">
+      <div class="svc"><h3>mdengine</h3><p>Angel One WebSocket ingest, 1-second OHLC, timeframe candles. Buffers final candles through a Redis outage and restores missed ones from SQLite.</p><span class="port">metrics :9090 (METRICS_ADDR)</span></div>
+      <div class="svc"><h3>indengine</h3><p>Indicators per token and timeframe. One goroutine owns the engine; each indicator skips candles it has already applied.</p><span class="port">http :9095 · /reload</span></div>
+      <div class="svc"><h3>analyst</h3><p>Market state, support/resistance and breakouts from 1-minute candles.</p><span class="port">pub:analyst:*</span></div>
+      <div class="svc"><h3>stratengine</h3><p>Strategies, signals, order execution, P&amp;L from fills, EOD exit at 15:20.</p><span class="port">metrics :9096</span></div>
+      <div class="svc"><h3>api_gateway</h3><p>REST and WebSocket to the dashboard, with per-channel sequence numbers, epochs and replay.</p><span class="port">GATEWAY_ADDR :9090</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Data flow</h2>
+    <p>Solid arrows are the live path. Dotted arrows are recovery: SQLite restoring streams after an outage, and warming indicators on start.</p>
+    <div class="diagram">
+<pre class="mermaid">
+%%{init: {'theme':'neutral', 'flowchart': {'curve':'basis'}}}%%
+flowchart LR
+    subgraph EXT["External"]
+        AWS["Angel One WebSocket&lt;br/&gt;live ticks"]
+        SIM["tickserver / wssim&lt;br/&gt;staging feed"]
+        AREST["Angel One REST&lt;br/&gt;orders · GTT · book · positions"]
+    end
+
+    subgraph MD["mdengine"]
+        ING["WS ingest&lt;br/&gt;EventTS / TickTS"] --> AGG["1s aggregator&lt;br/&gt;event time per token"]
+        AGG --> FAN["fan-out"]
+        FAN --> TFB["TF builder&lt;br/&gt;60 · 120 · 180 · 300 · 3600 s"]
+        CD["close detector&lt;br/&gt;CLOSE_REF_TOKEN"]
+        TFW["Redis TF writer&lt;br/&gt;outage buffer"]
+        ING -.-> CD
+        TFB -- finals --> TFW
+    end
+
+    subgraph REDIS["Redis"]
+        RT[("pub:tick:*")]
+        RS[("streams&lt;br/&gt;candle:{tf}s:{ex}:{tok}")]
+        RF[("pub:candle:{tf}s:*")]
+        RI[("pub:ind:*")]
+        RA[("pub:analyst:*")]
+        RO[("pub:signal · pub:orders&lt;br/&gt;pub:pnl · pub:strike")]
+        RK[("snapshots · pnl:summary")]
+    end
+
+    SQL[("SQLite&lt;br/&gt;candles_1s · candles_tf&lt;br/&gt;snapshots · signals")]
+
+    subgraph IND["indengine"]
+        IPL["processLoop&lt;br/&gt;sole engine owner"] --> IEN["indicator engine&lt;br/&gt;per-indicator lastTS"]
+    end
+
+    subgraph AN["analyst"]
+        ANE["market state · S/R · breakout"]
+    end
+
+    subgraph ST["stratengine"]
+        TFE["TFEngine&lt;br/&gt;strategies"] --> SL["signalLoop&lt;br/&gt;dispatch first"]
+        SL --> OQ["per-strategy order queue"]
+        OQ --> OE["orderexec&lt;br/&gt;gate · rate limit · breaker"]
+        OE -- fills --> PNL["P&amp;L + portfolio"]
+        EOD["EOD exit 15:20&lt;br/&gt;+ executor sweep"] --> OQ
+    end
+
+    subgraph GW["api_gateway"]
+        HUB["WS hub&lt;br/&gt;seq · epoch · replay"]
+        REST["REST handlers"]
+    end
+
+    FE["dashboard&lt;br/&gt;React / Vite"]
+
+    AWS --> ING
+    SIM -. staging .-> ING
+    ING --> RT
+    FAN --> SQL
+    TFB --> SQL
+    TFW --> RS
+    TFW --> RF
+    SQL -. restore missed finals .-> TFW
+
+    RS -- consumer group --> IPL
+    SQL -. warm-up, last N per token .-> IEN
+    IPL --> RI
+    IPL --> RK
+
+    RS -- TF 60 --> ANE
+    ANE --> RA
+
+    RS -- 60 / 120 / 180 s --> TFE
+    RT --> TFE
+    OE <--> AREST
+    SL --> RO
+    PNL --> RO
+    OE --> RK
+    SL --> SQL
+
+    RT --> HUB
+    RF --> HUB
+    RI --> HUB
+    RA --> HUB
+    RO --> HUB
+    RK --> REST
+    REST <--> AREST
+    HUB <--> FE
+    REST <--> FE
+</pre>
+    </div>
+  </section>
+
+  <section>
+    <h2>One real order, start to finish</h2>
+    <p>The order is saved before Angel One sees it, P&amp;L is booked only from fills, and an exit is never blocked. A failed exit is resent after checking the broker's net position.</p>
+    <div class="diagram">
+<pre class="mermaid">
+%%{init: {'theme':'neutral'}}%%
+sequenceDiagram
+    autonumber
+    participant S as Strategy
+    participant L as signalLoop
+    participant Q as Order queue
+    participant E as orderexec
+    participant R as Redis snapshot
+    participant B as Angel One
+    participant P as P&amp;L / portfolio
+
+    S->>L: BUY signal
+    L->>L: kill switch · market open · EOD cutoff · profit cap
+    L->>Q: dispatch before journal, publish, notify
+    L-->>L: journal · pub:signal · notify (async)
+    Q->>E: ExecuteSignal
+    E->>E: position gate · rate limit · breaker
+    E->>R: save intent (Pending, ordertag)
+    alt save failed
+        E-->>E: BUY not sent, operator alert
+    else saved
+        E->>B: PlaceOrder with ordertag
+        B-->>E: order id, or ambiguous
+        E->>B: settle by tag in order book (one safe resend)
+        E->>B: GTT target + stop loss
+        E->>P: fill report (average price)
+        E->>R: snapshot
+    end
+
+    S->>L: EXIT signal
+    L->>Q: dispatch
+    Q->>E: ExecuteSignal (never blocked)
+    E->>R: mark exit by tag (sent even if save fails)
+    E->>B: SELL
+    alt filled
+        E->>B: cancel paired GTTs
+        E->>P: fill report (SELL)
+    else failed, rejected or partial
+        E->>B: read net position
+        E->>B: resend after 5 s, 15 s, 30 s, 60 s, or close record if flat
+    end
+
+    Note over E,B: On restart, ResumeSettlement finds Pending and tagged exits in the order book by ordertag.
+    Note over L,E: 15:20 IST: strategy exits, then a sweep of executor-held positions. 15:25: alert if anything is still open.
+</pre>
+    </div>
+  </section>
+
+  <section>
+    <h2>Channels the browser receives</h2>
+    <p>The gateway forwards these Redis channels over WebSocket, each with its own sequence number and replay buffer.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Channel</th><th>Published by</th><th>Carries</th></tr></thead>
+        <tbody>
+          <tr><td><code>pub:tick:*</code></td><td>mdengine</td><td>Live LTP per token</td></tr>
+          <tr><td><code>pub:candle:{tf}s:*</code></td><td>mdengine</td><td>Forming and final candles (the gateway subscribes explicitly)</td></tr>
+          <tr><td><code>pub:ind:*</code></td><td>indengine</td><td>Indicator values per name, timeframe and token</td></tr>
+          <tr><td><code>pub:analyst:*</code></td><td>analyst</td><td>Market state, levels, breakouts, summary</td></tr>
+          <tr><td><code>pub:signal</code> · <code>pub:orders</code> · <code>pub:pnl</code> · <code>pub:strike</code></td><td>stratengine</td><td>Signals, live orders, P&amp;L summary, selected strikes</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Safety guards on the money path</h2>
+    <ul class="guards">
+      <li><span class="tag">real order</span><span>Sent only when the strategy is <code>NIFTY50_FNO</code>, <code>LiveOrders</code> is on and the Angel session is up. Everything else is paper with a <code>PAPER_*</code> ID.</span></li>
+      <li><span class="tag">intent</span><span>A real BUY is saved to Redis before sending; if the save fails, the BUY is not sent.</span></li>
+      <li><span class="tag">exits</span><span>Never refused by the rate limiter, circuit breaker or profit cap. Failed exits are resent automatically.</span></li>
+      <li><span class="tag">exchange</span><span>Each filled entry gets a GTT target (+1.5%) and a GTT stop loss at Angel One.</span></li>
+      <li><span class="tag">end of day</span><span>Entries blocked and positions closed at <code>STRAT_EOD_EXIT_TIME</code> (default 15:20 IST).</span></li>
+      <li><span class="tag">tools</span><span><code>teststrategyorder</code>, <code>testposition</code> and <code>cancelorder</code> need <code>--i-understand-real-money</code> and a typed <code>REAL</code>.</span></li>
+      <li><span class="tag">deploy</span><span>Production deploy runs only after CI (build, vet, <code>test -race</code>, frontend test and build) passes.</span></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Current rating</h2>
+    <div class="score">
+      <div class="row overall"><span class="label">Overall</span><span class="val">7.5 <small>/ 10</small></span><div class="bar"><i style="width:75%"></i></div></div>
+      <div class="row"><span class="label">Market data</span><span class="val">7.5 <small>/ 10</small></span><div class="bar"><i style="width:75%"></i></div></div>
+      <div class="row"><span class="label">Orders and strategies</span><span class="val">7.5 <small>/ 10</small></span><div class="bar"><i style="width:75%"></i></div></div>
+      <div class="row"><span class="label">Gateway, frontend, ops</span><span class="val">7.5 <small>/ 10</small></span><div class="bar"><i style="width:75%"></i></div></div>
+      <div class="row"><span class="label">Overall design</span><span class="val">8 <small>/ 10</small></span><div class="bar"><i style="width:80%"></i></div></div>
+    </div>
+    <p>To reach 8: revoke the GitHub token saved in the git remote, confirm CI passes on the PR, and do one staging run (a BUY→EXIT cycle, restarts mid-position, a Redis stop and start, and the 15:20 exit).</p>
+  </section>
+
+  <footer>Drawn from the code on branch <code>fix/review-hardening</code>, 23 Sep 2026. Service ports and channel names come from the source, not from the older README.</footer>
+</div>
+
+<!-- Renders the Mermaid diagrams when the file is opened directly in a browser. -->
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+mermaid.initialize({ startOnLoad: false });
+
+// Zoom and pan for each rendered diagram: buttons, Ctrl/⌘ + wheel, drag to pan.
+function addZoom(box) {
+  const svg = box.querySelector('svg');
+  if (!svg) return;
+  const vb = svg.viewBox.baseVal;
+  const baseW = vb && vb.width ? vb.width : svg.getBoundingClientRect().width;
+  const baseH = vb && vb.height ? vb.height : svg.getBoundingClientRect().height;
+  const MIN = 0.25, MAX = 4, STEP = 1.25;
+  let scale = 1;
+
+  const frame = document.createElement('div');
+  frame.className = 'diagram-frame';
+  box.parentNode.insertBefore(frame, box);
+  frame.appendChild(box);
+
+  const bar = document.createElement('div');
+  bar.className = 'zoombar';
+  bar.innerHTML =
+    '<button type="button" data-z="out" aria-label="Zoom out" title="Zoom out">−</button>' +
+    '<button type="button" data-z="reset" class="level" aria-label="Reset zoom" title="Reset zoom">100%</button>' +
+    '<button type="button" data-z="in" aria-label="Zoom in" title="Zoom in">+</button>' +
+    '<button type="button" data-z="fit" aria-label="Fit to width" title="Fit to width">Fit</button>' +
+    '<button type="button" data-z="full" aria-label="Full screen" title="Full screen">⛶</button>';
+  frame.appendChild(bar);
+  const level = bar.querySelector('.level');
+
+  const hint = document.createElement('p');
+  hint.className = 'zoomhint';
+  hint.textContent = 'Ctrl/⌘ + scroll to zoom · drag to pan';
+  frame.appendChild(hint);
+
+  // Resize the svg itself (not a CSS transform) so the box's scrollbars track the zoom.
+  function apply(next, cx, cy) {
+    next = Math.min(MAX, Math.max(MIN, next));
+    const rect = box.getBoundingClientRect();
+    const ox = cx === undefined ? box.clientWidth / 2 : cx - rect.left;
+    const oy = cy === undefined ? box.clientHeight / 2 : cy - rect.top;
+    const px = (box.scrollLeft + ox) / scale;
+    const py = (box.scrollTop + oy) / scale;
+    scale = next;
+    svg.style.maxWidth = 'none';
+    svg.style.width = baseW * scale + 'px';
+    svg.style.height = baseH * scale + 'px';
+    box.scrollLeft = px * scale - ox;
+    box.scrollTop = py * scale - oy;
+    level.textContent = Math.round(scale * 100) + '%';
+    box.classList.toggle('pannable', box.scrollWidth > box.clientWidth || box.scrollHeight > box.clientHeight);
+  }
+
+  function fit() {
+    const cs = getComputedStyle(box);
+    const pad = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+    apply((box.clientWidth - pad) / baseW);
+  }
+
+  bar.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const z = b.dataset.z;
+    if (z === 'in') apply(scale * STEP);
+    else if (z === 'out') apply(scale / STEP);
+    else if (z === 'reset') apply(1);
+    else if (z === 'fit') fit();
+    else if (z === 'full') {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else if (frame.requestFullscreen) frame.requestFullscreen().then(() => requestAnimationFrame(fit)).catch(() => {});
+    }
+  });
+
+  box.addEventListener('wheel', e => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    apply(scale * Math.exp(-e.deltaY * 0.002), e.clientX, e.clientY);
+  }, { passive: false });
+
+  let drag = null;
+  box.addEventListener('pointerdown', e => {
+    if (e.button !== 0 || !box.classList.contains('pannable')) return;
+    drag = { x: e.clientX, y: e.clientY, l: box.scrollLeft, t: box.scrollTop, id: e.pointerId };
+    box.setPointerCapture(e.pointerId);
+    box.classList.add('panning');
+  });
+  box.addEventListener('pointermove', e => {
+    if (!drag) return;
+    box.scrollLeft = drag.l - (e.clientX - drag.x);
+    box.scrollTop = drag.t - (e.clientY - drag.y);
+  });
+  const end = () => {
+    if (!drag) return;
+    box.releasePointerCapture(drag.id);
+    drag = null;
+    box.classList.remove('panning');
+  };
+  box.addEventListener('pointerup', end);
+  box.addEventListener('pointercancel', end);
+
+  let wasFull = false;
+  document.addEventListener('fullscreenchange', () => {
+    if (document.fullscreenElement === frame) wasFull = true;
+    else if (wasFull) { wasFull = false; fit(); }
+  });
+
+  fit();
+}
+
+mermaid.run({ querySelector: '.diagram pre.mermaid' })
+  .then(() => document.querySelectorAll('.diagram').forEach(addZoom))
+  .catch(err => console.error('mermaid render failed', err));
+</script>
+</body>
+</html>

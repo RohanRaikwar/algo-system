@@ -1,0 +1,430 @@
+# ═══════════════════════════════════════════════════════════════════
+#  CI/CD — Auto Deploy to VM on Push to main
+#  
+#  Deploys only after CI (ci.yml: build, vet, test -race, frontend
+#  test + build) passes for the same commit.
+#  Both backend & frontend deploy to the SAME VM.
+#  Self-provisioning: installs Go, Node.js, Redis on first run.
+#
+#  Required GitHub Secrets:
+#    VM_HOST     — VM IP or hostname
+#    VM_USER     — SSH username (e.g. ubuntu)
+#    VM_SSH_KEY  — Private SSH key (myVM.pem contents)
+#    ENV_FILE    — Production .env file contents
+# ═══════════════════════════════════════════════════════════════════
+
+name: Deploy to Production VM
+
+on:
+  push:
+    branches: [main]
+
+  # Allow manual trigger from GitHub UI
+  workflow_dispatch:
+
+env:
+  REMOTE_BACKEND_DIR: /opt/trading-backend
+  REMOTE_FRONTEND_DIR: /opt/trading-frontend
+
+# One deploy at a time; a newer push waits instead of racing the VM.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  # ════════════════════════════════════════════════════════════
+  #  CI gate — nothing deploys unless this passes
+  # ════════════════════════════════════════════════════════════
+  ci:
+    name: ✅ CI
+    uses: ./.github/workflows/ci.yml
+
+  # ════════════════════════════════════════════════════════════
+  #  Backend Deploy
+  # ════════════════════════════════════════════════════════════
+  deploy-backend:
+    name: 🚀 Deploy Backend
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # ── 1. Checkout code ──
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      # ── 2. Setup SSH ──
+      - name: 🔑 Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.VM_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      # ── 3. Provision VM (idempotent — safe to run every time) ──
+      - name: 🏗️ Provision VM dependencies
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} << 'PROVISION'
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          
+          echo "── Checking VM dependencies ──"
+          
+          # Wait for any existing apt locks (fresh VMs run unattended-upgrades on boot)
+          echo "→ Waiting for apt lock..."
+          for i in $(seq 1 30); do
+            if ! sudo fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend 2>/dev/null; then
+              break
+            fi
+            echo "  apt locked, waiting... ($i/30)"
+            sleep 2
+          done
+          
+          # Install system packages if missing
+          if ! command -v redis-server &>/dev/null || ! command -v gcc &>/dev/null; then
+            echo "→ Installing system packages..."
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq build-essential git curl redis-server sqlite3 gcc
+            sudo systemctl enable redis-server
+            sudo systemctl start redis-server
+            echo "  ✅ System packages installed"
+          else
+            echo "  ✅ System packages already present"
+          fi
+          
+          # Install Go if missing. Keep this version in step with go.mod,
+          # which is what CI builds and tests with.
+          if ! /usr/local/go/bin/go version &>/dev/null; then
+            echo "→ Installing Go 1.21.13..."
+            curl -sL "https://go.dev/dl/go1.21.13.linux-amd64.tar.gz" -o /tmp/go.tar.gz
+            sudo rm -rf /usr/local/go
+            sudo tar -C /usr/local -xzf /tmp/go.tar.gz
+            rm /tmp/go.tar.gz
+            echo 'export PATH=$PATH:/usr/local/go/bin' | sudo tee /etc/profile.d/go.sh > /dev/null
+            echo "  ✅ Go installed"
+          else
+            echo "  ✅ Go already installed: $(/usr/local/go/bin/go version)"
+          fi
+          
+          # Create app user if missing
+          if ! id trading &>/dev/null; then
+            sudo useradd -r -s /bin/bash -m trading
+            echo "  ✅ Created user: trading"
+          fi
+          
+          # Create directories
+          sudo mkdir -p /opt/trading-backend/{bin,data,logs,config}
+          sudo mkdir -p /opt/trading-frontend
+          sudo chown -R trading:trading /opt/trading-backend
+          echo "  ✅ Directories ready"
+          
+          echo "── VM provisioning complete ──"
+          PROVISION
+
+      # ── 4. Sync backend code to VM ──
+      - name: 📦 Sync backend code
+        run: |
+          rsync -az --delete \
+            --exclude '.git' \
+            --exclude 'node_modules' \
+            --exclude 'frontend' \
+            --exclude 'backend/tmp' \
+            --exclude 'backend/data/*.db' \
+            --exclude '*.db-journal' \
+            --exclude 'deploy/*.pem' \
+            --exclude '.env' \
+            --exclude '.env.*' \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            ./backend/ ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}:~/trading-backend/
+
+      # ── 5. Sync .env file from secrets ──
+      - name: 🔐 Sync .env file
+        run: |
+          echo "${{ secrets.ENV_FILE }}" > /tmp/.env.production
+          rsync -az \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            /tmp/.env.production ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}:~/trading-backend/.env
+          rm -f /tmp/.env.production
+
+      # ── 6. Deploy on VM (copy, build, install services, restart) ──
+      - name: 🔨 Build & restart services
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} << 'DEPLOY_SCRIPT'
+          set -euo pipefail
+          
+          APP_DIR="/opt/trading-backend"
+          
+          # Copy code to /opt with proper permissions
+          sudo rm -rf $APP_DIR/cmd $APP_DIR/internal $APP_DIR/pkg $APP_DIR/config $APP_DIR/go.* 2>/dev/null || true
+          sudo cp -r ~/trading-backend/* $APP_DIR/
+          sudo cp ~/trading-backend/.env $APP_DIR/.env 2>/dev/null || true
+          sudo chown -R root:root $APP_DIR
+          sudo mkdir -p $APP_DIR/data $APP_DIR/logs
+          sudo chown -R trading:trading $APP_DIR/data $APP_DIR/logs
+          
+          # Build Go microservices
+          export PATH=$PATH:/usr/local/go/bin
+          cd $APP_DIR
+          sudo mkdir -p $APP_DIR/bin
+          sudo CGO_ENABLED=1 /usr/local/go/bin/go build -o bin/mdengine        ./cmd/mdengine/
+          sudo CGO_ENABLED=1 /usr/local/go/bin/go build -o bin/indengine       ./cmd/indengine/
+          sudo CGO_ENABLED=1 /usr/local/go/bin/go build -o bin/api_gateway     ./cmd/api_gateway/
+          sudo CGO_ENABLED=1 /usr/local/go/bin/go build -o bin/stratengine     ./cmd/stratengine/
+          sudo CGO_ENABLED=1 /usr/local/go/bin/go build -o bin/analyst         ./cmd/analyst/
+          
+          echo "✅ All binaries built successfully"
+          
+          # ── Install systemd services (idempotent) ──
+          create_unit() {
+            local NAME="$1" BINARY="$2" DESC="$3" AFTER="$4" DEPS="${5:-}"
+            sudo tee "/etc/systemd/system/trading-${NAME}.service" > /dev/null <<UNIT
+          [Unit]
+          Description=Trading System — ${DESC}
+          After=network.target ${AFTER}
+          Requires=${DEPS}
+          PartOf=trading-backend.target
+
+          [Service]
+          Type=simple
+          User=trading
+          Group=trading
+          WorkingDirectory=${APP_DIR}
+          EnvironmentFile=${APP_DIR}/.env
+          Environment=STAGING_MODE=false
+          ExecStart=${APP_DIR}/bin/${BINARY}
+          Restart=on-failure
+          RestartSec=5
+          StandardOutput=journal
+          StandardError=journal
+          SyslogIdentifier=trading-${NAME}
+          NoNewPrivileges=true
+          ProtectSystem=strict
+          ReadWritePaths=${APP_DIR}/data ${APP_DIR}/logs
+
+          [Install]
+          WantedBy=trading-backend.target
+          UNIT
+          }
+          
+          create_unit "mdengine" "mdengine" \
+            "Market Data Engine" "redis-server.service" "redis-server.service"
+          create_unit "indengine" "indengine" \
+            "Indicator Engine" "redis-server.service trading-mdengine.service" "redis-server.service"
+          create_unit "api-gateway" "api_gateway" \
+            "API Gateway" "redis-server.service" "redis-server.service"
+          create_unit "stratengine" "stratengine" \
+            "Strategy Engine" "redis-server.service trading-indengine.service" "redis-server.service"
+          create_unit "analyst" "analyst" \
+            "Market Analyst Engine" "redis-server.service trading-mdengine.service" "redis-server.service"
+          
+          # Grouping target
+          sudo tee /etc/systemd/system/trading-backend.target > /dev/null <<TARGET
+          [Unit]
+          Description=Trading System Backend (all services)
+          Requires=trading-mdengine.service trading-indengine.service trading-api-gateway.service trading-stratengine.service trading-analyst.service
+          After=trading-mdengine.service trading-indengine.service trading-api-gateway.service trading-stratengine.service trading-analyst.service
+
+          [Install]
+          WantedBy=multi-user.target
+          TARGET
+          
+          sudo systemctl daemon-reload
+          sudo systemctl enable trading-backend.target
+          
+          # Restart all services
+          sudo systemctl restart trading-backend.target
+          sleep 15
+          
+          echo "✅ Services restarted"
+          DEPLOY_SCRIPT
+
+      # ── 7. Health check ──
+      - name: ❤️ Health check
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} << 'HEALTH_SCRIPT'
+          
+          echo "── Service Status ──"
+          SERVICES="mdengine indengine api-gateway stratengine analyst"
+          ALL_OK=true
+          
+          # Retry up to 3 times with 5s intervals — stratengine needs
+          # 10-15s to connect to Redis, restore snapshots, and start
+          for attempt in 1 2 3; do
+            ALL_OK=true
+            for svc in $SERVICES; do
+              STATUS=$(sudo systemctl is-active trading-${svc}.service 2>&1 || echo "inactive")
+              if [ "$STATUS" = "active" ]; then
+                echo "  ✅ trading-${svc} is running"
+              elif [ "$STATUS" = "activating" ] && [ "$attempt" -lt 3 ]; then
+                echo "  ⏳ trading-${svc} is starting (attempt $attempt/3)..."
+                ALL_OK=false
+              else
+                echo "  ⚠️  trading-${svc} is ${STATUS}"
+                ALL_OK=false
+              fi
+            done
+            if [ "$ALL_OK" = true ]; then
+              break
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "  Waiting 5s for services to stabilize..."
+              sleep 5
+            fi
+          done
+          
+          echo ""
+          echo "── API Health ──"
+          if curl -sf http://localhost:9090/api/config > /dev/null 2>&1; then
+            echo "  ✅ API Gateway responding on :9090"
+          else
+            echo "  ⚠️  API Gateway not ready yet"
+            ALL_OK=false
+          fi
+          
+          if [ "$ALL_OK" = false ]; then
+            echo ""
+            echo "⚠️  Some services are not running. Dumping recent logs:"
+            for svc in $SERVICES; do
+              STATUS=$(sudo systemctl is-active trading-${svc}.service 2>&1 || echo "inactive")
+              if [ "$STATUS" != "active" ]; then
+                echo "── trading-${svc} logs ──"
+                sudo journalctl -u trading-${svc}.service -n 20 --no-pager 2>/dev/null || true
+                echo ""
+              fi
+            done
+            exit 1
+          fi
+          
+          echo ""
+          echo "🎉 Backend deployment successful!"
+          HEALTH_SCRIPT
+
+      # ── 8. Cleanup SSH ──
+      - name: 🧹 Cleanup
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
+
+  # ════════════════════════════════════════════════════════════
+  #  Frontend Deploy — SAME VM as backend
+  # ════════════════════════════════════════════════════════════
+  deploy-frontend:
+    name: 🎨 Deploy Frontend
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔑 Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.VM_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      # ── Provision frontend deps (Node.js + serve) ──
+      - name: 🏗️ Provision frontend dependencies
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} << 'PROVISION'
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          
+          # Wait for apt lock
+          for i in $(seq 1 30); do
+            if ! sudo fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend 2>/dev/null; then
+              break
+            fi
+            echo "  apt locked, waiting... ($i/30)"
+            sleep 2
+          done
+          
+          # Install Node.js if missing
+          if ! command -v node &>/dev/null; then
+            echo "→ Installing Node.js 20 LTS..."
+            curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+            sudo apt-get install -y -qq nodejs
+            echo "  ✅ Node $(node -v) installed"
+          else
+            echo "  ✅ Node already installed: $(node -v)"
+          fi
+          
+          # Install serve if missing
+          if ! command -v serve &>/dev/null; then
+            sudo npm install -g serve
+            echo "  ✅ serve installed"
+          else
+            echo "  ✅ serve already installed"
+          fi
+          
+          # Ensure frontend directory exists and is writable by deploy user
+          sudo mkdir -p /opt/trading-frontend
+          sudo chown -R $(whoami):$(whoami) /opt/trading-frontend
+          PROVISION
+
+      - name: 📦 Sync frontend code
+        run: |
+          rsync -az --delete \
+            --exclude 'node_modules' \
+            --exclude 'dist' \
+            --exclude '.env.production.local' \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            ./frontend/ ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}:${{ env.REMOTE_FRONTEND_DIR }}/
+
+      - name: 🔨 Build & restart frontend
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} << 'DEPLOY_SCRIPT'
+          set -euo pipefail
+          
+          cd /opt/trading-frontend
+          
+          # Backend is on same VM — use public hostname so browsers can reach it
+          echo "VITE_API_URL=http://${{ secrets.VM_HOST }}:9090" > .env.production.local
+          
+          # Install deps + build
+          npm ci --silent
+          npm run build
+          
+          # Install systemd service for frontend (idempotent)
+          SERVE_PATH=$(which serve)
+          sudo tee /etc/systemd/system/trading-frontend.service > /dev/null <<UNIT
+          [Unit]
+          Description=Trading Frontend (serve)
+          After=network.target
+
+          [Service]
+          Type=simple
+          ExecStart=${SERVE_PATH} -s /opt/trading-frontend/dist -l 80
+          Restart=on-failure
+          RestartSec=3
+          StandardOutput=journal
+          StandardError=journal
+          SyslogIdentifier=trading-frontend
+
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+          
+          sudo systemctl daemon-reload
+          sudo systemctl enable trading-frontend
+          sudo systemctl restart trading-frontend
+          sleep 2
+          
+          if curl -sf http://localhost:80 > /dev/null 2>&1; then
+            echo "✅ Frontend serving on :80"
+          else
+            echo "⚠️  Frontend not ready (check: journalctl -u trading-frontend -f)"
+          fi
+          
+          echo "🎉 Frontend deployment complete!"
+          DEPLOY_SCRIPT
+
+      - name: 🧹 Cleanup
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

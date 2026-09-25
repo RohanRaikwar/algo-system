@@ -1,0 +1,121 @@
+{
+  "config": {
+    "DBPath": "data/historical.db",
+    "Exchange": "NSE",
+    "Token": "99926000",
+    "Qty": 1,
+    "From": "2026-03-19",
+    "To": "2026-03-19",
+    "Output": "json",
+    "OutDir": "./results",
+    "StrategyType": "nifty50_fno_sl",
+    "StrategyCfg": {
+      "EMA6Period": 6,
+      "EMA9Period": 9,
+      "SMA21Period": 21,
+      "BufferSize": 10,
+      "CooldownCandles": 0,
+      "MinReEntrySeparationPct": 0.1,
+      "SidewaysEnabled": true,
+      "MaxChopCrosses": 3,
+      "MA21FlatPct": 0.05,
+      "NarrowRangePct": 0.3,
+      "MomentumBypassPct": 0,
+      "SkipFirstMinutes": 0,
+      "SkipLastMinutes": 0,
+      "LunchFilterEnabled": true,
+      "LunchStartHHMM": "1200",
+      "LunchEndHHMM": "1330",
+      "TrendEnabled": false,
+      "TrendLookback": 50,
+      "TrendSlopePct": 0.05,
+      "HardSLPct": 0.15,
+      "ReEntryAfterSL": true,
+      "TrailSLPct": 0,
+      "TrailStartPct": 0.1,
+      "IndexHardSLPct": 0.1,
+      "IndexTrailSLPct": 0.08,
+      "IndexTrailStartPct": 0.06,
+      "FNOHardSLPct": 10,
+      "FNOTrailSLPct": 5,
+      "FNOTrailStartPct": 0,
+      "FNOCallToken": "",
+      "FNOPutToken": "",
+      "ConsecCandleExit": false,
+      "IndexToken": "NSE:99926000"
+    },
+    "CandleTF": 1,
+    "CallFNOToken": "",
+    "PutFNOToken": "",
+    "FNOExchange": "NFO"
+  },
+  "total_candles": 375,
+  "trades": [
+    {
+      "id": 1,
+      "side": "PUT",
+      "entry_time": "2026-03-19T09:38:00+05:30",
+      "exit_time": "2026-03-19T09:46:00+05:30",
+      "entry_price": 2326615,
+      "exit_price": 2324415,
+      "entry_reason": "1m PUT entry: EMA6(2329379) EMA9(2328230) \u003c MA21(2331735), close=2326615",
+      "exit_reason": "INDEX TRAIL SL PUT: idx_price=2326625 rose 0.11% above idx_best=2324085 (trail=0.08%, idx_entry=2326615)"
+    },
+    {
+      "id": 2,
+      "side": "CALL",
+      "entry_time": "2026-03-19T10:28:00+05:30",
+      "exit_time": "2026-03-19T10:29:00+05:30",
+      "entry_price": 2327840,
+      "exit_price": 2327240,
+      "entry_reason": "1m CALL entry: EMA6(2326749) EMA9(2327718) \u003e MA21(2324340), close=2327840",
+      "exit_reason": "1m CALL exit: EMA6(2326889) crossed below EMA9(2327540), close=2327240"
+    },
+    {
+      "id": 3,
+      "side": "PUT",
+      "entry_time": "2026-03-19T15:02:00+05:30",
+      "exit_time": "2026-03-19T15:03:00+05:30",
+      "entry_price": 2301090,
+      "exit_price": 2298575,
+      "entry_reason": "1m PUT re-entry: EMA6(2298944) EMA9(2300182) \u003c MA21(2301332), close=2301090",
+      "exit_reason": "INDEX TRAIL SL PUT: idx_price=2300840 rose 0.11% above idx_best=2298385 (trail=0.08%, idx_entry=2301090)"
+    }
+  ],
+  "day_summaries": [
+    {
+      "date": "2026-03-19",
+      "trades": 3,
+      "wins": 2,
+      "losses": 1,
+      "pnl": 41.15,
+      "cumulative_pnl": 41.15,
+      "max_drawdown": 0
+    }
+  ],
+  "metrics": {
+    "total_trades": 3,
+    "call_trades": 1,
+    "put_trades": 2,
+    "wins": 2,
+    "losses": 1,
+    "win_rate": 66.7,
+    "net_pnl": 41.15,
+    "gross_profit": 47.15,
+    "gross_loss": -6,
+    "profit_factor": 7.86,
+    "best_trade": 25.15,
+    "worst_trade": -6,
+    "avg_win": 23.58,
+    "avg_loss": -6,
+    "max_drawdown": -6,
+    "sharpe_ratio": 0,
+    "avg_duration": "3m 20s",
+    "total_days": 1
+  },
+  "equity_curve": [
+    22,
+    16,
+    41.15
+  ]
+}

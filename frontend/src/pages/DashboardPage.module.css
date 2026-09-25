@@ -1,0 +1,14 @@
+.page {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+}
+
+/* Phones: keep the chart usable even when the viewport is short. */
+@media (max-width: 640px) {
+    .page {
+        min-height: 420px;
+    }
+}

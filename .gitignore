@@ -1,0 +1,50 @@
+# env files
+.env
+.env.*
+
+# data / db / logs
+/data/
+backend/data/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# node
+node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# go
+/bin/
+/dist/
+*.exe
+*.out
+backend/.gocache/
+backend/.gotmp/
+backend/tmp/
+
+# editor/OS
+.DS_Store
+.idea/
+.vscode/
+
+# build artifacts
+*.tmp
+*.cache
+deploy/*.pem
+.agent/
+.cursor/
+.kiro/
+# compiled go binaries (backend module root)
+/backend/api_gateway
+/backend/testfnoprice
+/backend/teststrike_otm
+/backend/mdengine
+/backend/stratengine
+/backend/tickserver
+/backend/analyst
+
+# Added by code-review-graph
+.code-review-graph/

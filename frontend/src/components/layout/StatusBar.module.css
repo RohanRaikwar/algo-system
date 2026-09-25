@@ -1,0 +1,44 @@
+.bar {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    height: 30px;
+    padding: 0 16px;
+    padding-bottom: env(safe-area-inset-bottom);
+    font-size: 0.74rem;
+    color: var(--sg-faint);
+    border-top: 1px solid var(--sg-line);
+    background: var(--sg-surface);
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    flex-shrink: 0;
+}
+
+.stat {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    white-space: nowrap;
+}
+
+.val {
+    color: var(--sg-text-2);
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.inline {
+    position: static;
+}
+
+/* Phones get the bottom tab bar instead. */
+@media (max-width: 640px) {
+    .bar {
+        display: none;
+    }
+}

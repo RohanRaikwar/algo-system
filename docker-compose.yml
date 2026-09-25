@@ -1,0 +1,53 @@
+# Local run of the full stack. On Railway, create one service per block
+# below (Redis from the Railway template, backend and frontend from their
+# Dockerfiles); Railway does not run this file directly.
+#
+#   docker compose --env-file .env.staging up --build
+#
+# Real orders need STRAT_LIVE_ORDERS=true AND Angel credentials; it
+# defaults to false here.
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    env_file:
+      - ${ENV_FILE:-.env.staging}
+    environment:
+      REDIS_ADDR: redis:6379
+      GATEWAY_ADDR: ":9090"
+      STRAT_LIVE_ORDERS: ${STRAT_LIVE_ORDERS:-false}
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - backend-data:/app/data
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: http://localhost:9090
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  backend-data:

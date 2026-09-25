@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading System v1 - Current Backend Architecture</title>
+    <style>
+        :root {
+            --bg: #07111f;
+            --bg-soft: #0d1a2b;
+            --panel: rgba(10, 20, 34, 0.88);
+            --panel-strong: rgba(14, 27, 45, 0.96);
+            --border: rgba(116, 149, 184, 0.24);
+            --border-strong: rgba(130, 175, 221, 0.38);
+            --text: #e8f0fb;
+            --muted: #98a8bf;
+            --blue: #67b3ff;
+            --cyan: #79e6d8;
+            --green: #73d69b;
+            --amber: #ffcc73;
+            --red: #ff8d8d;
+            --purple: #b7a3ff;
+            --shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
+            --radius: 20px;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            color: var(--text);
+            background:
+                radial-gradient(circle at top left, rgba(74, 144, 226, 0.18), transparent 28%),
+                radial-gradient(circle at top right, rgba(121, 230, 216, 0.12), transparent 24%),
+                linear-gradient(180deg, #08111d 0%, #050b15 100%);
+            font-family: "Avenir Next", "Segoe UI", Helvetica, Arial, sans-serif;
+            line-height: 1.5;
+        }
+
+        .page {
+            width: min(1500px, calc(100% - 32px));
+            margin: 0 auto;
+            padding: 28px 0 64px;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(18px);
+        }
+
+        .hero {
+            position: relative;
+            overflow: hidden;
+            padding: 30px 30px 26px;
+            background:
+                linear-gradient(145deg, rgba(12, 25, 42, 0.96), rgba(7, 14, 26, 0.94)),
+                var(--panel);
+        }
+
+        .hero::before {
+            content: "";
+            position: absolute;
+            inset: -20% auto auto 58%;
+            width: 420px;
+            height: 420px;
+            background: radial-gradient(circle, rgba(103, 179, 255, 0.22), transparent 60%);
+            pointer-events: none;
+        }
+
+        .eyebrow {
+            margin: 0 0 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.18em;
+            font-size: 0.76rem;
+            color: var(--cyan);
+        }
+
+        h1 {
+            margin: 0;
+            font-size: clamp(2rem, 4vw, 3.4rem);
+            line-height: 0.98;
+            letter-spacing: -0.03em;
+            max-width: 900px;
+        }
+
+        .subtitle {
+            margin: 14px 0 0;
+            max-width: 980px;
+            color: var(--muted);
+            font-size: 1rem;
+        }
+
+        .chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 18px;
+        }
+
+        .chip {
+            padding: 8px 12px;
+            border-radius: 999px;
+            border: 1px solid rgba(121, 230, 216, 0.22);
+            background: rgba(121, 230, 216, 0.08);
+            color: #d5fff8;
+            font-size: 0.86rem;
+            white-space: nowrap;
+        }
+
+        .meta-grid,
+        .note-grid {
+            display: grid;
+            gap: 16px;
+        }
+
+        .meta-grid {
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            margin-top: 24px;
+        }
+
+        .meta-card,
+        .note-card {
+            border-radius: 18px;
+            border: 1px solid var(--border);
+            background: rgba(255, 255, 255, 0.025);
+        }
+
+        .meta-card {
+            padding: 18px 18px 16px;
+        }
+
+        .meta-card h3,
+        .note-card h3 {
+            margin: 0 0 10px;
+            font-size: 0.98rem;
+            letter-spacing: -0.01em;
+        }
+
+        .meta-card ul,
+        .note-card ul {
+            margin: 0;
+            padding-left: 18px;
+            color: var(--muted);
+            font-size: 0.92rem;
+        }
+
+        .section {
+            margin-top: 26px;
+        }
+
+        .section-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 18px;
+            align-items: end;
+            margin-bottom: 12px;
+            padding: 0 4px;
+        }
+
+        .section-head h2 {
+            margin: 0;
+            font-size: 1.35rem;
+            letter-spacing: -0.02em;
+        }
+
+        .section-head p {
+            margin: 0;
+            max-width: 700px;
+            color: var(--muted);
+            font-size: 0.94rem;
+        }
+
+        .diagram-panel {
+            padding: 20px 18px;
+            background:
+                linear-gradient(180deg, rgba(12, 24, 39, 0.98), rgba(8, 16, 29, 0.98)),
+                var(--panel-strong);
+        }
+
+        .mermaid {
+            overflow-x: auto;
+            padding: 8px 0;
+        }
+
+        .note-grid {
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            margin-top: 14px;
+        }
+
+        .note-card {
+            padding: 16px 18px 14px;
+        }
+
+        .note-card p {
+            margin: 0;
+            color: var(--muted);
+            font-size: 0.92rem;
+        }
+
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+            padding: 14px 4px 0;
+            color: var(--muted);
+            font-size: 0.86rem;
+        }
+
+        .legend-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .legend-swatch {
+            width: 12px;
+            height: 12px;
+            border-radius: 4px;
+        }
+
+        .footer-note {
+            margin-top: 24px;
+            padding: 16px 18px;
+            color: var(--muted);
+            font-size: 0.9rem;
+        }
+
+        code {
+            padding: 0.1rem 0.32rem;
+            border-radius: 6px;
+            background: rgba(103, 179, 255, 0.12);
+            color: #d6ebff;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 0.9em;
+        }
+
+        @media (max-width: 820px) {
+            .page {
+                width: min(100%, calc(100% - 20px));
+                padding-top: 20px;
+            }
+
+            .hero {
+                padding: 22px 18px 20px;
+            }
+
+            .section-head {
+                display: block;
+            }
+
+            .section-head p {
+                margin-top: 6px;
+            }
+
+            .diagram-panel {
+                padding: 14px 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <main class="page">
+        <section class="hero panel">
+            <p class="eyebrow">Trading System v1 / Backend Audit</p>
+            <h1>Current Backend Runtime</h1>
+            <p class="subtitle">
+                Audited against the current repository on 2026-03-20. The active backend is
+                <code>mdengine</code>, <code>indengine</code>, <code>stratengine</code>, and
+                <code>api_gateway</code>, with <code>tickserver</code> as the staging feed.
+                <code>cmd/api</code> is still a placeholder and is intentionally excluded from the runtime diagrams.
+            </p>
+
+            <div class="chips">
+                <span class="chip">4 core services</span>
+                <span class="chip">Redis streams + PubSub + snapshots + heartbeats</span>
+                <span class="chip">SQLite WAL for candles, indicator snapshots, and signal journal</span>
+                <span class="chip">3 registered strategies in the live stratengine</span>
+                <span class="chip">Dynamic FNO token subscription via <code>cmd:subscribe_token</code></span>
+            </div>
+
+            <div class="meta-grid">
+                <article class="meta-card">
+                    <h3>Runtime Services</h3>
+                    <ul>
+                        <li><code>mdengine</code> owns live or staging ingest, 1s aggregation, TF building, raw tick PubSub, and market-state publishing.</li>
+                        <li><code>indengine</code> restores indicator state, consumes TF streams with consumer groups, runs <code>Process</code> and <code>ProcessPeek</code>, and checkpoints snapshots.</li>
+                        <li><code>stratengine</code> consumes closed 1m candles plus raw ticks, then handles signals, dynamic strikes, P&amp;L, notifications, and order execution.</li>
+                        <li><code>api_gateway</code> is the real REST/WS serving layer, including replay buffers, gap backfill, active config persistence, and latency tracking.</li>
+                    </ul>
+                </article>
+
+                <article class="meta-card">
+                    <h3>Storage Contract</h3>
+                    <ul>
+                        <li><code>candles.db</code> stores <code>candles_1s</code>, <code>candles_tf</code>, and <code>indicator_snapshots</code>.</li>
+                        <li><code>signals.db</code> is a separate append-only SQLite journal queried by the gateway.</li>
+                        <li><code>historical.db</code> belongs to offline tooling only and is produced by <code>histdata</code>.</li>
+                        <li>Redis carries streams, latest keys, PubSub fan-out, snapshots, active config, strike info, P&amp;L summary, and heartbeats.</li>
+                    </ul>
+                </article>
+
+                <article class="meta-card">
+                    <h3>Strategy Surface</h3>
+                    <ul>
+                        <li>The live <code>stratengine</code> registers <code>NIFTY50_FNO</code>, <code>EMA3_HYBRID_FNO</code>, and <code>NIFTY50_FNO_SL</code>.</li>
+                        <li>Closed 1m TF candles drive entries and regular exits; raw ticks drive stop-loss checks, FNO LTP tracking, and strike resolution.</li>
+                        <li>Dynamic strike automation uses <code>SearchScrip</code>, option-chain selection, and mid-session token subscription back into <code>mdengine</code>.</li>
+                    </ul>
+                </article>
+
+                <article class="meta-card">
+                    <h3>Serving Surface</h3>
+                    <ul>
+                        <li><code>/ws</code> streams candles, indicators, signals, P&amp;L, metrics, and strike updates.</li>
+                        <li>REST covers candles, indicators, signals, P&amp;L, strike info, config, missed-message replay, and health.</li>
+                        <li><code>/healthz/services</code> aggregates <code>heartbeat:*</code> keys from the four tracked services.</li>
+                        <li>Gateway compatibility code still reads <code>STRAT_IND_JOURNAL_PATH</code>, but there is no current <code>cmd/stratengine_ind</code> binary.</li>
+                    </ul>
+                </article>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="section-head">
+                <h2>1. Runtime Topology</h2>
+                <p>The current end-to-end runtime, from live or simulated market data to strategy execution and frontend delivery.</p>
+            </div>
+            <div class="panel diagram-panel">
+                <div class="mermaid">
+flowchart TB
+    subgraph External["External systems"]
+        AO_WS["Angel One SmartAPI<br/>WebSocket"]
+        AO_REST["Angel One SmartAPI REST<br/>orders, SearchScrip, history"]
+        Notify["Webhook / Telegram"]
+    end
+
+    subgraph Runtime["Current runtime services"]
+        TS["tickserver<br/>staging JSON WS :9001/ws"]
+
+        subgraph MD["mdengine"]
+            MD_WS["ws / wssim ingest"]
+            MD_AGG["1s aggregator<br/>event-time watermark<br/>market-close gate"]
+            MD_FAN["fan-out bus"]
+            MD_TF["tfbuilder<br/>forming + timer flush"]
+            MD_CMD["listen cmd:subscribe_token"]
+            MD_TICK["publish pub:tick:*"]
+            MD_WS --> MD_AGG --> MD_FAN --> MD_TF
+            MD_CMD --> MD_WS
+        end
+
+        subgraph IND["indengine"]
+            IND_RESTORE["restore snapshot<br/>Redis then SQLite fallback"]
+            IND_PROC["indicator engine<br/>Process + ProcessPeek"]
+            IND_SNAP["snapshot loop"]
+            IND_HTTP["HTTP :9095<br/>/reload + /healthz"]
+            IND_RESTORE --> IND_PROC --> IND_SNAP
+        end
+
+        subgraph STRAT["stratengine"]
+            STRAT_TF["TFEngine<br/>closed 1m streams only"]
+            STRAT_SET["registered strategies<br/>NIFTY50_FNO<br/>EMA3_HYBRID_FNO<br/>NIFTY50_FNO_SL"]
+            STRAT_TICK["tick router<br/>SL checks + LTP + strike resolve"]
+            STRAT_SIG["signal loop<br/>journal + pubsub + notify"]
+            STRAT_PICK["strike picker<br/>ATM + option automation"]
+            STRAT_ORD["order executor<br/>dry-run or live"]
+            STRAT_TF --> STRAT_SET --> STRAT_SIG --> STRAT_ORD
+            STRAT_TICK --> STRAT_SET
+            STRAT_TICK --> STRAT_PICK
+        end
+
+        subgraph GW["api_gateway"]
+            GW_PUB["PubSub router<br/>explicit + pattern"]
+            GW_HUB["WS hub<br/>replay buffers + coalescing<br/>latency tracker"]
+            GW_REST["REST API :9090<br/>candles, indicators, signals,<br/>pnl, strike, missed, config, health"]
+            GW_CFG["active config store<br/>gateway:active_config"]
+            GW_PUB --> GW_HUB
+            GW_CFG --> GW_REST
+        end
+    end
+
+    subgraph State["Shared state"]
+        Redis["Redis<br/>streams + pubsub + latest keys<br/>snapshots + heartbeats"]
+        CandlesDB["candles.db<br/>candles_1s + candles_tf<br/>indicator_snapshots"]
+        SignalsDB["signals.db<br/>signal journal"]
+        HistDB["historical.db"]
+    end
+
+    subgraph Clients["Clients and tooling"]
+        Frontend["React / Vite dashboard"]
+        Hist["histdata"]
+        Replay["backtest / stratbacktest"]
+        Misc["wstest / searchscrip / analyze"]
+    end
+
+    AO_WS --> MD_WS
+    TS --> MD_WS
+
+    MD_FAN -->|"1s candles"| Redis
+    MD_FAN -->|"1s candles"| CandlesDB
+    MD_TF -->|"TF candles"| Redis
+    MD_TF -->|"TF candles"| CandlesDB
+    MD_TICK --> Redis
+
+    Redis -->|"snapshots"| IND_RESTORE
+    CandlesDB -->|"snapshot fallback"| IND_RESTORE
+    Redis -->|"TF streams + 1s preview"| IND_PROC
+    IND_PROC -->|"indicator streams + pubsub"| Redis
+    IND_SNAP --> Redis
+    IND_SNAP --> CandlesDB
+
+    Redis -->|"1m streams"| STRAT_TF
+    Redis -->|"pub:tick:*"| STRAT_TICK
+    STRAT_PICK -->|"SearchScrip / option chain"| AO_REST
+    STRAT_ORD -->|"live orders"| AO_REST
+    STRAT_SIG -->|"pub:signal / pub:pnl / pub:strike"| Redis
+    STRAT_SIG -->|"signal journal"| SignalsDB
+    STRAT_SIG --> Notify
+    STRAT_SIG -->|"cmd:subscribe_token"| Redis
+    Redis --> MD_CMD
+
+    Redis --> GW_PUB
+    Redis --> GW_REST
+    CandlesDB --> GW_REST
+    SignalsDB --> GW_REST
+    GW_HUB --> Frontend
+    GW_REST --> Frontend
+
+    AO_REST --> Hist
+    Hist --> HistDB
+    HistDB --> Replay
+    AO_REST --> Misc
+    AO_WS --> Misc
+
+    classDef service fill:#16253a,stroke:#67b3ff,stroke-width:1.5px,color:#eef5ff
+    classDef storage fill:#142c24,stroke:#73d69b,stroke-width:1.5px,color:#e7fff0
+    classDef external fill:#36270f,stroke:#ffcc73,stroke-width:1.5px,color:#fff2d6
+    classDef strategy fill:#361a1e,stroke:#ff8d8d,stroke-width:1.5px,color:#ffe5e5
+    classDef gateway fill:#241c3a,stroke:#b7a3ff,stroke-width:1.5px,color:#f2edff
+    classDef client fill:#132436,stroke:#79e6d8,stroke-width:1.5px,color:#eafffb
+
+    class AO_WS,AO_REST,Notify external
+    class TS,MD_WS,MD_AGG,MD_FAN,MD_TF,MD_CMD,MD_TICK,IND_RESTORE,IND_PROC,IND_SNAP,IND_HTTP service
+    class STRAT_TF,STRAT_SET,STRAT_TICK,STRAT_SIG,STRAT_PICK,STRAT_ORD strategy
+    class GW_PUB,GW_HUB,GW_REST,GW_CFG gateway
+    class Redis,CandlesDB,SignalsDB,HistDB storage
+    class Frontend,Hist,Replay,Misc client
+                </div>
+            </div>
+            <div class="note-grid">
+                <article class="note-card">
+                    <h3>Market data ownership</h3>
+                    <p><code>mdengine</code> is the single source of live ticks and candles. It always publishes raw ticks to Redis for stop-loss and LTP tracking, even when candle aggregation is token-filtered.</p>
+                </article>
+                <article class="note-card">
+                    <h3>Serving ownership</h3>
+                    <p><code>api_gateway</code> is the actual backend API surface. It handles REST, WebSocket fan-out, replay-buffer gap backfill, active indicator config persistence, metrics broadcasts, and service-health aggregation.</p>
+                </article>
+                <article class="note-card">
+                    <h3>Legacy cleanup</h3>
+                    <p>The previous <code>stratengine_ind</code> split is no longer present as a binary. The current runtime uses one <code>stratengine</code> process with three registered strategies and one shared order executor.</p>
+                </article>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="section-head">
+                <h2>2. Redis and SQLite Contract</h2>
+                <p>The durable and realtime state contract that the services actually exchange today.</p>
+            </div>
+            <div class="panel diagram-panel">
+                <div class="mermaid">
+flowchart LR
+    MD["mdengine"]
+    IND["indengine"]
+    STRAT["stratengine"]
+    GW["api_gateway"]
+    HIST["histdata"]
+    REPLAY["backtest / stratbacktest"]
+
+    Redis["Redis"]
+    CandlesDB["candles.db"]
+    SignalsDB["signals.db"]
+    HistDB["historical.db"]
+
+    MD -->|"writes<br/>candle:1s:* latest + stream<br/>candle:{tf}s:* latest + stream<br/>pub:candle:*<br/>pub:tick:*<br/>market:state + pub:market:state"| Redis
+    MD -->|"batch inserts<br/>candles_1s<br/>candles_tf"| CandlesDB
+
+    Redis -->|"reads<br/>snapshots<br/>TF streams<br/>1s preview pubsub<br/>config:indicators"| IND
+    IND -->|"writes<br/>ind:{name}:{tf}s:* stream + latest<br/>pub:ind:*<br/>ind:snapshot:engine"| Redis
+    IND -->|"writes<br/>indicator_snapshots"| CandlesDB
+
+    Redis -->|"reads<br/>candle:60s:* streams<br/>pub:tick:*"| STRAT
+    STRAT -->|"writes<br/>snapshot:stratengine<br/>pnl:summary<br/>strike:info<br/>pub:signal<br/>pub:pnl<br/>pub:strike<br/>cmd:subscribe_token"| Redis
+    STRAT -->|"append-only journal"| SignalsDB
+
+    Redis -->|"reads<br/>pub:candle:*<br/>pub:ind:*<br/>pub:tick:*<br/>pub:signal<br/>pub:pnl<br/>pub:strike"| GW
+    GW -->|"writes<br/>gateway:active_config"| Redis
+    CandlesDB -->|"REST backfill<br/>candles + indicator snapshots"| GW
+    SignalsDB -->|"REST reads<br/>/api/signals"| GW
+
+    HIST -->|"downloads historical candles"| HistDB
+    HistDB -->|"offline replay"| REPLAY
+
+    classDef service fill:#16253a,stroke:#67b3ff,stroke-width:1.5px,color:#eef5ff
+    classDef storage fill:#142c24,stroke:#73d69b,stroke-width:1.5px,color:#e7fff0
+
+    class MD,IND,STRAT,GW,HIST,REPLAY service
+    class Redis,CandlesDB,SignalsDB,HistDB storage
+                </div>
+            </div>
+            <div class="note-grid">
+                <article class="note-card">
+                    <h3>Candle database split</h3>
+                    <p><code>candles.db</code> is the shared market-data SQLite store. It carries both raw 1s candles and finalized TF candles, plus <code>indicator_snapshots</code> for cold restore.</p>
+                </article>
+                <article class="note-card">
+                    <h3>Signal database split</h3>
+                    <p><code>signals.db</code> is separate and append-only. <code>stratengine</code> writes it, and <code>api_gateway</code> reads it directly for <code>/api/signals</code>.</p>
+                </article>
+                <article class="note-card">
+                    <h3>Gateway config loop</h3>
+                    <p>When the frontend updates <code>/api/indicators/active</code>, the gateway persists <code>gateway:active_config</code> and publishes <code>config:indicators</code> so <code>indengine</code> can reload.</p>
+                </article>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="section-head">
+                <h2>3. Strategy and Order Execution Path</h2>
+                <p>The current live strategy path inside the single <code>stratengine</code> service.</p>
+            </div>
+            <div class="panel diagram-panel">
+                <div class="mermaid">
+flowchart TB
+    TFStream["Redis stream<br/>candle:60s:*"]
+    TickPub["Redis PubSub<br/>pub:tick:*"]
+
+    TFEngine["TFEngine"]
+    Strategies["NIFTY50_FNO<br/>EMA3_HYBRID_FNO<br/>NIFTY50_FNO_SL"]
+    Kill{"Kill switch<br/>blocks BUY only"}
+    SignalLoop["signalLoop"]
+
+    TickRouter["tickRouterLoop"]
+    StrikePicker["StrikePicker<br/>ATM resolve + option automation"]
+    RedisCmd["Redis commands and state<br/>cmd:subscribe_token<br/>strike:info<br/>pub:strike"]
+    SnapshotStore["Redis snapshot:stratengine"]
+    SnapshotLoop["snapshotLoop"]
+    EOD["clearStalePositions<br/>eodAutoExitLoop"]
+
+    OrderExec["OrderExecutor<br/>LTP cache + mutual exclusion<br/>circuit breaker + rate limiter"]
+    Journal["signals.db"]
+    PnL["PnL tracker + portfolio"]
+    Notify["Webhook or log notifier"]
+    SignalPub["Redis pub:signal / pub:pnl"]
+    Gateway["api_gateway"]
+    Broker["Angel One REST"]
+
+    TFStream --> TFEngine --> Strategies --> Kill --> SignalLoop
+    TickPub --> TickRouter
+    TickRouter -->|"forward ticks"| TFEngine
+    TickRouter -->|"UpdateLTP"| OrderExec
+    TickRouter -->|"first NIFTY tick<br/>and retry loop"| StrikePicker
+
+    SignalLoop -->|"BUY signal option automation"| StrikePicker
+    StrikePicker -->|"SearchScrip / option chain"| Broker
+    StrikePicker --> RedisCmd
+    RedisCmd -->|"mdengine listens and adds live FNO subscriptions"| TickPub
+
+    SignalLoop -->|"attach current FNO LTP"| OrderExec
+    SignalLoop --> Journal
+    SignalLoop --> PnL
+    SignalLoop --> Notify
+    SignalLoop --> SignalPub
+    SignalLoop -->|"execute signal"| OrderExec
+    OrderExec -->|"live orders when enabled"| Broker
+    SignalPub --> Gateway
+
+    SnapshotLoop --> SnapshotStore
+    SnapshotStore -->|"restoreState on startup"| TFEngine
+    EOD --> TFEngine
+
+    classDef strategy fill:#361a1e,stroke:#ff8d8d,stroke-width:1.5px,color:#ffe5e5
+    classDef service fill:#16253a,stroke:#67b3ff,stroke-width:1.5px,color:#eef5ff
+    classDef storage fill:#142c24,stroke:#73d69b,stroke-width:1.5px,color:#e7fff0
+    classDef external fill:#36270f,stroke:#ffcc73,stroke-width:1.5px,color:#fff2d6
+    classDef gateway fill:#241c3a,stroke:#b7a3ff,stroke-width:1.5px,color:#f2edff
+
+    class TFEngine,Strategies,Kill,SignalLoop,TickRouter,StrikePicker,SnapshotLoop,EOD strategy
+    class TFStream,TickPub,RedisCmd,SnapshotStore,Journal,SignalPub,PnL storage
+    class OrderExec service
+    class Notify,Broker external
+    class Gateway gateway
+                </div>
+            </div>
+            <div class="note-grid">
+                <article class="note-card">
+                    <h3>Entry vs tick path</h3>
+                    <p>Entries and regular exits come from closed 1m TF candles. Raw ticks are used for live stop-loss evaluation, FNO LTP updates, and dynamic strike resolution.</p>
+                </article>
+                <article class="note-card">
+                    <h3>Dynamic strikes</h3>
+                    <p>Resolved CE/PE tokens are written back into Redis and republished through <code>cmd:subscribe_token</code>, allowing <code>mdengine</code> to expand the live WS subscription mid-session.</p>
+                </article>
+                <article class="note-card">
+                    <h3>Daily hygiene</h3>
+                    <p>Startup stale-position cleanup and 15:30 IST auto-exit both inject synthetic exits through the strategy engine, so order execution and journaling still use the same normal signal path.</p>
+                </article>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="section-head">
+                <h2>4. Modes and Tooling</h2>
+                <p>How staging, production, and offline analysis fit around the same backend core.</p>
+            </div>
+            <div class="panel diagram-panel">
+                <div class="mermaid">
+flowchart LR
+    subgraph Staging["Staging mode"]
+        S_TICK["tickserver<br/>:9001/ws"]
+        S_MD["mdengine<br/>STAGING_MODE=true"]
+        S_REDIS["Redis"]
+        S_DB["candles.db"]
+        S_IND["indengine<br/>:9095"]
+        S_STRAT["stratengine"]
+        S_GW["api_gateway<br/>:9090"]
+        S_FE["frontend<br/>:5173"]
+
+        S_TICK --> S_MD
+        S_MD --> S_REDIS
+        S_MD --> S_DB
+        S_REDIS --> S_IND
+        S_REDIS --> S_STRAT
+        S_REDIS --> S_GW
+        S_DB --> S_GW
+        S_GW --> S_FE
+    end
+
+    subgraph Production["Production mode"]
+        P_WS["Angel One WS"]
+        P_REST["Angel One REST"]
+        P_MD["mdengine"]
+        P_REDIS["Redis"]
+        P_DB["candles.db + signals.db"]
+        P_IND["indengine<br/>:9095"]
+        P_STRAT["stratengine"]
+        P_GW["api_gateway<br/>:9090"]
+        P_FE["frontend<br/>:5173"]
+
+        P_WS --> P_MD
+        P_MD --> P_REDIS
+        P_MD --> P_DB
+        P_REDIS --> P_IND
+        P_REDIS --> P_STRAT
+        P_REDIS --> P_GW
+        P_DB --> P_GW
+        P_STRAT --> P_REST
+        P_GW --> P_FE
+    end
+
+    subgraph Offline["Offline and research tools"]
+        H["histdata"]
+        HDB["historical.db"]
+        B["backtest"]
+        SB["stratbacktest"]
+        U["wstest / searchscrip / analyze"]
+
+        H --> HDB
+        HDB --> B
+        HDB --> SB
+    end
+
+    classDef stage fill:#362f11,stroke:#ffcc73,stroke-width:1.5px,color:#fff3dc
+    classDef prod fill:#142c24,stroke:#73d69b,stroke-width:1.5px,color:#ecfff4
+    classDef tools fill:#16253a,stroke:#67b3ff,stroke-width:1.5px,color:#eef5ff
+
+    class S_TICK,S_MD,S_REDIS,S_DB,S_IND,S_STRAT,S_GW,S_FE stage
+    class P_WS,P_REST,P_MD,P_REDIS,P_DB,P_IND,P_STRAT,P_GW,P_FE prod
+    class H,HDB,B,SB,U tools
+                </div>
+            </div>
+            <div class="note-grid">
+                <article class="note-card">
+                    <h3>Staging parity</h3>
+                    <p>Staging keeps the same Redis, SQLite, indicator, strategy, and gateway flow. Only the market-data source changes from Angel One WS to <code>tickserver</code>.</p>
+                </article>
+                <article class="note-card">
+                    <h3>Production-only behavior</h3>
+                    <p>Production <code>mdengine</code> adds market-hours gating, close detection, pre-open session handling, and live Angel authentication. Production <code>stratengine</code> can place real orders when enabled.</p>
+                </article>
+                <article class="note-card">
+                    <h3>Offline scope</h3>
+                    <p><code>histdata</code> builds a separate <code>historical.db</code>; replay and strategy backtests operate on that dataset rather than the live runtime databases.</p>
+                </article>
+            </div>
+        </section>
+
+        <div class="legend">
+            <span class="legend-item"><span class="legend-swatch" style="background:#67b3ff;"></span> Core service</span>
+            <span class="legend-item"><span class="legend-swatch" style="background:#73d69b;"></span> Storage or durable state</span>
+            <span class="legend-item"><span class="legend-swatch" style="background:#ffcc73;"></span> External broker or notifier</span>
+            <span class="legend-item"><span class="legend-swatch" style="background:#ff8d8d;"></span> Strategy / execution path</span>
+            <span class="legend-item"><span class="legend-swatch" style="background:#b7a3ff;"></span> Gateway / delivery layer</span>
+            <span class="legend-item"><span class="legend-swatch" style="background:#79e6d8;"></span> Client or tooling</span>
+        </div>
+
+        <div class="panel footer-note">
+            This page was rebuilt from the current Go entry points and internal packages, not from older docs.
+            Main sources were <code>backend/cmd/*</code> and the service packages under <code>backend/internal/*</code>.
+        </div>
+    </main>
+
+    <script type="module">
+        import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: "dark",
+            themeVariables: {
+                darkMode: true,
+                background: "#0d1827",
+                primaryColor: "#16253a",
+                primaryTextColor: "#eef5ff",
+                primaryBorderColor: "#67b3ff",
+                secondaryColor: "#142c24",
+                tertiaryColor: "#241c3a",
+                lineColor: "#7f96b3",
+                fontFamily: "Avenir Next, Segoe UI, Helvetica, Arial, sans-serif",
+                fontSize: "14px"
+            },
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true,
+                curve: "basis"
+            }
+        });
+    </script>
+</body>
+</html>

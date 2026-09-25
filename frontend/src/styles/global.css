@@ -1,0 +1,96 @@
+/* ── Design Tokens ─────────────────────────────── */
+:root {
+  /* Palette: shared by every page. */
+  --sg-bg: #0f141c;
+  --sg-surface: #151b25;
+  --sg-raised: #1b2330;
+  --sg-hover: #212a39;
+  --sg-line: #263041;
+  --sg-line-soft: #1e2633;
+  --sg-text: #e6e9ef;
+  --sg-text-2: #b8c0cd;
+  --sg-muted: #8a94a6;
+  --sg-faint: #5d6778;
+  --sg-accent: #5b8def;
+  --sg-accent-soft: rgba(91, 141, 239, 0.12);
+  --sg-profit: #3ecf8e;
+  --sg-profit-soft: rgba(62, 207, 142, 0.12);
+  --sg-loss: #f0616d;
+  --sg-loss-soft: rgba(240, 97, 109, 0.12);
+  --sg-warn: #e5a23a;
+  --sg-warn-soft: rgba(229, 162, 58, 0.12);
+  --sg-info: #4fb8d6;
+  --sg-info-soft: rgba(79, 184, 214, 0.12);
+  --sg-r-panel: 14px;
+  --sg-r-ctrl: 8px;
+  --sg-r-pill: 999px;
+  --sg-ring: 0 0 0 2px var(--sg-bg), 0 0 0 4px var(--sg-accent);
+
+  /* Legacy names, mapped onto the palette so older modules match. */
+  --bg-primary: var(--sg-bg);
+  --bg-secondary: var(--sg-surface);
+  --bg-card: var(--sg-surface);
+  --bg-card-hover: var(--sg-raised);
+  --border: var(--sg-line);
+  --border-hover: #34405a;
+  --text-primary: var(--sg-text);
+  --text-secondary: var(--sg-text-2);
+  --text-muted: var(--sg-muted);
+  --accent: var(--sg-accent);
+  --accent-glow: rgba(91, 141, 239, 0.25);
+  --green: var(--sg-profit);
+  --green-glow: rgba(62, 207, 142, 0.2);
+  --red: var(--sg-loss);
+  --red-glow: rgba(240, 97, 109, 0.2);
+  --yellow: var(--sg-warn);
+  --cyan: var(--sg-info);
+  --pink: #e879a6;
+  --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --radius: 14px;
+  --radius-sm: 8px;
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --transition: 0.15s ease;
+}
+
+/* ── Reset & Base ───────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { font-size: 14px; }
+
+body {
+  font-family: var(--font);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
+  line-height: 1.5;
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Animations ──────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.fade-in { animation: fadeIn 0.4s ease-out forwards; }
+
+/* ── Scrollbar ───────────────────────────────────── */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ── Responsive ──────────────────────────────────── */
+@media (max-width: 640px) {
+  html { font-size: 13px; }
+}

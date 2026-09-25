@@ -1,0 +1,101 @@
+package model
+
+import (
+	"encoding/json"
+	"strconv"
+	"time"
+)
+
+// TFCandle represents a resampled OHLC candle for a dynamic timeframe.
+// TF is the timeframe duration in seconds (e.g., 60 = 1 minute).
+// All prices are in paise (int64) to avoid floating-point drift.
+type TFCandle struct {
+	Token    string    `json:"token"`
+	Exchange string    `json:"exchange"`
+	TF       int       `json:"tf"`      // timeframe in seconds
+	TS       time.Time `json:"ts"`      // bucket start time (UTC, TF-aligned)
+	Open     int64     `json:"open"`    // paise
+	High     int64     `json:"high"`    // paise
+	Low      int64     `json:"low"`     // paise
+	Close    int64     `json:"close"`   // paise
+	Volume   int64     `json:"volume"`  // cumulative quantity
+	Count    int       `json:"count"`   // number of 1s candles merged
+	Forming  bool      `json:"forming"` // true if bucket is still open
+
+	// StreamID is the Redis stream entry the candle was read from ("" when
+	// it did not come from a stream). Set by the reader, never serialised;
+	// consumers checkpoint on it.
+	StreamID string `json:"-"`
+}
+
+// Key returns "exchange:token".
+func (c *TFCandle) Key() string {
+	return c.Exchange + ":" + c.Token
+}
+
+// StreamKey returns the Redis stream key: "candle:{TF}s:{exchange}:{token}".
+func (c *TFCandle) StreamKey() string {
+	return "candle:" + Itoa(c.TF) + "s:" + c.Exchange + ":" + c.Token
+}
+
+// JSON returns the JSON-encoded TF candle.
+func (c *TFCandle) JSON() []byte {
+	b, _ := json.Marshal(c)
+	return b
+}
+
+// IndicatorResult holds a computed indicator value for a specific token + TF.
+type IndicatorResult struct {
+	Name     string    `json:"name"` // e.g. "SMA_20", "EMA_9", "RSI_14"
+	Token    string    `json:"token"`
+	Exchange string    `json:"exchange"`
+	TF       int       `json:"tf"` // timeframe in seconds
+	Value    float64   `json:"value"`
+	TS       time.Time `json:"ts"`    // candle timestamp that produced this value
+	Ready    bool      `json:"ready"` // true when indicator has enough data
+	Live     bool      `json:"live"`  // true for preview values from forming candles
+}
+
+// StreamKey returns the Redis stream key: "ind:{name}:{TF}s:{exchange}:{token}".
+func (r *IndicatorResult) StreamKey() string {
+	return "ind:" + r.Name + ":" + Itoa(r.TF) + "s:" + r.Exchange + ":" + r.Token
+}
+
+// PubSubChannel returns the Redis PubSub channel for this indicator result.
+// Uses string concatenation instead of fmt.Sprintf for zero-alloc hot path.
+func (r *IndicatorResult) PubSubChannel() string {
+	return "pub:ind:" + r.Name + ":" + Itoa(r.TF) + "s:" + r.Exchange + ":" + r.Token
+}
+
+// JSON returns the JSON-encoded indicator result.
+// Hand-crafted to avoid reflection overhead from encoding/json.Marshal.
+// Benchmarks show ~10x faster than json.Marshal for this struct.
+func (r *IndicatorResult) JSON() []byte {
+	// Pre-size buffer: typical result is ~180 bytes
+	buf := make([]byte, 0, 256)
+
+	buf = append(buf, `{"name":"`...)
+	buf = append(buf, r.Name...)
+	buf = append(buf, `","token":"`...)
+	buf = append(buf, r.Token...)
+	buf = append(buf, `","exchange":"`...)
+	buf = append(buf, r.Exchange...)
+	buf = append(buf, `","tf":`...)
+	buf = strconv.AppendInt(buf, int64(r.TF), 10)
+	buf = append(buf, `,"value":`...)
+	buf = strconv.AppendFloat(buf, r.Value, 'f', 4, 64)
+	buf = append(buf, `,"ts":"`...)
+	buf = r.TS.AppendFormat(buf, time.RFC3339Nano)
+	buf = append(buf, `","ready":`...)
+	if r.Ready {
+		buf = append(buf, "true"...)
+	} else {
+		buf = append(buf, "false"...)
+	}
+	if r.Live {
+		buf = append(buf, `,"live":true`...)
+	}
+	buf = append(buf, '}')
+
+	return buf
+}
