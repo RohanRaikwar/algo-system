@@ -11,6 +11,10 @@ export interface OpenOrder {
     entryTime: string;
     stoplossPrice: number | null;
     stoplossKind: string | null;
+    /** Multi-leg (iron condor) leg id, strike and whether it was sold to open */
+    leg?: string;
+    strike?: number;
+    short?: boolean;
 }
 
 export interface CompletedEvent {
@@ -22,9 +26,33 @@ export interface CompletedEvent {
     exitPrice: number | null;
     exitTime: string;
     move: number | null;
+    leg?: string;
+    short?: boolean;
 }
 
 // ── Pure Helpers ──
+
+export interface LegInfo {
+    leg: string;
+    strike: number;
+    short: boolean;
+}
+
+const LEG_TAG = /^\[((LONG|SHORT)_(CE|PE)) (\d+)\]/;
+
+/**
+ * Multi-leg info for a signal: explicit fields from the live WS payload, or
+ * the "[SHORT_CE 24200]" tag the backend puts in the reason (REST history).
+ * Returns null for single-leg signals.
+ */
+export function legInfo(signal: SignalRecord): LegInfo | null {
+    if (signal.leg) {
+        return { leg: signal.leg, strike: signal.strike ?? 0, short: signal.short === true };
+    }
+    const m = signal.reason?.match(LEG_TAG);
+    if (!m) return null;
+    return { leg: m[1], strike: parseInt(m[4], 10), short: m[2] === 'SHORT' };
+}
 
 /** Infer CALL / PUT — prefers the explicit `side` field from backend. */
 export function inferSide(signal: SignalRecord): string {
@@ -73,8 +101,9 @@ export function extractStoploss(reason: string): number | null {
  * An order is open if a BUY has no subsequent matching EXIT
  * (matched by strategy + exchange:token).
  */
-function liveOrderKey(strategy: string, side: string): string {
-    return `${strategy}|${side.toUpperCase()}`;
+function liveOrderKey(strategy: string, side: string, leg?: string): string {
+    const base = `${strategy}|${side.toUpperCase()}`;
+    return leg ? `${base}|${leg}` : base;
 }
 
 export function buildOpenOrders(
@@ -88,9 +117,12 @@ export function buildOpenOrders(
     const open = new Map<string, OpenOrder>();
 
     for (const sig of chronological) {
+        // Legs are journaled under their own option token, so this key
+        // keeps the four legs of a condor apart.
         const key = `${sig.strategy}|${sig.exchange}:${sig.token}`;
         const side = inferSide(sig);
-        const live = liveOrdersByKey[liveOrderKey(sig.strategy, side)];
+        const li = legInfo(sig);
+        const live = liveOrdersByKey[liveOrderKey(sig.strategy, side, li?.leg)];
 
         if (sig.action === 'BUY') {
             // Use backend-computed SL price (paise → rupees), fallback to reason parsing
@@ -111,6 +143,7 @@ export function buildOpenOrders(
                 entryTime: sig.created_at,
                 stoplossPrice: sl,
                 stoplossKind: live?.stoploss_kind || null,
+                ...(li ? { leg: li.leg, strike: li.strike, short: li.short } : {}),
             });
         } else if (sig.action === 'EXIT') {
             open.delete(key);
@@ -127,7 +160,7 @@ export function buildOpenOrders(
     }
 
     for (const order of open.values()) {
-        const live = liveOrdersByKey[liveOrderKey(order.strategy, order.side)];
+        const live = liveOrdersByKey[liveOrderKey(order.strategy, order.side, order.leg)];
         if (!live) continue;
         if (live.entry_fno_price && order.buyPrice === null) {
             order.buyPrice = live.entry_fno_price / 100;
@@ -170,12 +203,13 @@ export function buildCompletedEvents(signals: SignalRecord[]): CompletedEvent[] 
             const buyP = extractPrice(buy);
             const exitP = extractPrice(sig);
             const side = inferSide(buy);
+            const li = legInfo(buy);
 
             let move: number | null = null;
             if (buyP !== null && exitP !== null) {
-                // FNO options: both CALL and PUT are BUY(entry) → SELL(exit)
-                // P&L = sell_price - buy_price (option premium appreciation)
-                move = +(exitP - buyP).toFixed(2);
+                // Long option: P&L = exit − entry (premium appreciation).
+                // Short leg (sold to open, bought to close): entry − exit.
+                move = li?.short ? +(buyP - exitP).toFixed(2) : +(exitP - buyP).toFixed(2);
             }
 
             events.push({
@@ -187,6 +221,7 @@ export function buildCompletedEvents(signals: SignalRecord[]): CompletedEvent[] 
                 exitPrice: exitP,
                 exitTime: sig.created_at,
                 move,
+                ...(li ? { leg: li.leg, short: li.short } : {}),
             });
         }
     }

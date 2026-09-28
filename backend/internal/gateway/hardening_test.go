@@ -150,8 +150,12 @@ func TestAttachLiveStatePrefersHubLatest(t *testing.T) {
 	if snap.LiveSeqs["pub:orders"] != 2 || snap.LiveSeqs["pub:pnl"] != 0 {
 		t.Fatalf("liveSeqs: got %v", snap.LiveSeqs)
 	}
-	if len(asked) != 1 || asked[0] != "pnl:summary" {
+	// orders came from the hub; pnl and range were missing, so only they fall back.
+	if len(asked) != 2 || asked[0] != "pnl:summary" || asked[1] != "range:state" {
 		t.Fatalf("fallback should only be used for missing state, asked %v", asked)
+	}
+	if snap.Range != nil {
+		t.Fatalf("range: fallback failed, want nil, got %s", *snap.Range)
 	}
 }
 
@@ -253,5 +257,25 @@ func TestSweepIdleChannels(t *testing.T) {
 	h.broadcast(tick, []byte(`{"price":2}`))
 	if m := recvJSON(t, c); m["channel_seq"].(float64) != 1 {
 		t.Fatalf("evicted channel must restart at seq 1, got %v", m["channel_seq"])
+	}
+}
+
+func TestAttachLiveStateIncludesRange(t *testing.T) {
+	h := newTestHub()
+	snap := &SnapshotResponse{}
+	h.attachLiveState(snap, func(key string) ([]byte, error) {
+		if key == "range:state" {
+			return []byte(`{"strategy":"NIFTY50_RANGE","regime":"RANGE"}`), nil
+		}
+		return nil, errors.New("nil")
+	})
+	if snap.Range == nil || string(*snap.Range) != `{"strategy":"NIFTY50_RANGE","regime":"RANGE"}` {
+		t.Fatalf("range not attached: %v", snap.Range)
+	}
+	if seq, ok := snap.LiveSeqs["pub:range"]; !ok || seq != 0 {
+		t.Fatalf("range seq = %d ok=%v", seq, ok)
+	}
+	if !isStickyChannel("pub:range") || !isLatestWins("pub:range") {
+		t.Fatal("pub:range must be sticky and latest-wins")
 	}
 }

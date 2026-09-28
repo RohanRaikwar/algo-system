@@ -51,15 +51,17 @@ function useFNOPrice(side: string): number | null {
 
 function LiveOrderRow({ order }: { order: OpenOrder }) {
     const fallbackPrice = useFNOPrice(order.side);
-    const currentPrice = order.currentPrice ?? fallbackPrice;
+    // The ATM CE/PE premium is not a condor leg's premium: no fallback for legs.
+    const currentPrice = order.currentPrice ?? (order.leg ? null : fallbackPrice);
 
     // P&L calculation using FNO option premium
     let pnl: number | null = null;
     let pnlClass = '';
     if (order.buyPrice !== null && currentPrice !== null) {
-        // FNO options: both CALL and PUT are BUY(entry) → SELL(exit)
-        // Live P&L = current_option_premium - entry_option_premium
-        pnl = +(currentPrice - order.buyPrice).toFixed(2);
+        // Long option: live P&L = current premium − entry premium.
+        // Short leg (sold to open): entry premium − current premium.
+        const diff = order.short ? order.buyPrice - currentPrice : currentPrice - order.buyPrice;
+        pnl = +diff.toFixed(2);
         pnlClass = pnl > 0 ? 'price-up' : pnl < 0 ? 'price-down' : 'price-flat';
     }
 
@@ -69,7 +71,15 @@ function LiveOrderRow({ order }: { order: OpenOrder }) {
             <td>
                 <span className={getSideBadge(order.side)}>{order.side}</span>
             </td>
-            <td>{order.instrument}</td>
+            <td>
+                {order.instrument}
+                {order.leg && (
+                    <span className="signal-time-sub">
+                        {order.leg.replace('_', ' ')}{order.strike ? ` ${order.strike}` : ''}
+                        {order.short && <span className="sl-kind hard" style={{ marginLeft: 6 }}>SHORT</span>}
+                    </span>
+                )}
+            </td>
             <td className="price-cell">
                 {order.buyPrice !== null ? `₹${order.buyPrice.toFixed(2)}` : '—'}
             </td>

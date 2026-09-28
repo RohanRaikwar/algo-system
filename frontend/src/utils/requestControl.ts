@@ -36,14 +36,14 @@ interface TrackerOptions {
 }
 
 /**
- * Tracks the latest SUBSCRIBE reqId. If its SNAPSHOT doesn't arrive within
- * timeoutMs (e.g. dropped by a full server queue) it calls `retry`, at most
- * maxRetries times per request. Only the SNAPSHOT for the latest reqId is accepted.
+ * Tracks the latest SUBSCRIBE reqId per subscription key ("symbol:tf"). If
+ * its SNAPSHOT doesn't arrive within timeoutMs (e.g. dropped by a full server
+ * queue) it calls `retry`, at most maxRetries times per request. Only the
+ * SNAPSHOT for a key's latest reqId is accepted, so several charts can each
+ * hold a subscription without discarding each other's snapshots.
  */
 export class SnapshotRequestTracker {
-    private latest: string | null = null;
-    private attempts = 0;
-    private timer: ReturnType<typeof setTimeout> | null = null;
+    private slots = new Map<string, { latest: string; attempts: number; timer: ReturnType<typeof setTimeout> | null }>();
     private readonly opts: TrackerOptions;
 
     constructor(opts: TrackerOptions) {
@@ -51,39 +51,40 @@ export class SnapshotRequestTracker {
     }
 
     /** Record a sent SUBSCRIBE. `isRetry` keeps the retry budget of the request being retried. */
-    track(reqId: string, retry: () => void, isRetry = false) {
-        this.latest = reqId;
-        if (!isRetry) this.attempts = 0;
-        this.stopTimer();
-        this.timer = setTimeout(() => {
-            this.timer = null;
-            if (this.attempts >= this.opts.maxRetries) {
-                console.warn(`[ws] SNAPSHOT for ${reqId} not received after ${this.attempts} retries`);
+    track(reqId: string, retry: () => void, isRetry = false, key = '') {
+        const prev = this.slots.get(key);
+        if (prev?.timer) clearTimeout(prev.timer);
+        const slot = { latest: reqId, attempts: isRetry && prev ? prev.attempts : 0, timer: null as ReturnType<typeof setTimeout> | null };
+        this.slots.set(key, slot);
+        slot.timer = setTimeout(() => {
+            slot.timer = null;
+            if (slot.attempts >= this.opts.maxRetries) {
+                console.warn(`[ws] SNAPSHOT for ${reqId} not received after ${slot.attempts} retries`);
                 return;
             }
-            this.attempts++;
-            console.warn(`[ws] SNAPSHOT for ${reqId} timed out; retry ${this.attempts}/${this.opts.maxRetries}`);
+            slot.attempts++;
+            console.warn(`[ws] SNAPSHOT for ${reqId} timed out; retry ${slot.attempts}/${this.opts.maxRetries}`);
             retry();
         }, this.opts.timeoutMs);
     }
 
     /** Whether a SNAPSHOT with this reqId should be applied; accepting stops retries. */
-    accept(reqId: string | undefined): boolean {
+    accept(reqId: string | undefined, key = ''): boolean {
         if (!reqId) return true;
-        if (reqId !== this.latest) return false;
-        this.stopTimer();
+        const slot = this.slots.get(key);
+        if (!slot || reqId !== slot.latest) return false;
+        if (slot.timer) {
+            clearTimeout(slot.timer);
+            slot.timer = null;
+        }
         return true;
     }
 
     /** Cancel any pending retry (e.g. on unmount). */
     clear() {
-        this.stopTimer();
-    }
-
-    private stopTimer() {
-        if (this.timer) {
-            clearTimeout(this.timer);
-            this.timer = null;
+        for (const slot of this.slots.values()) {
+            if (slot.timer) clearTimeout(slot.timer);
+            slot.timer = null;
         }
     }
 }

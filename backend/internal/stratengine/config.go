@@ -2,6 +2,8 @@ package stratengine
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -61,9 +63,24 @@ type Config struct {
 	DynamicStrikes bool // true = auto-resolve ATM CE/PE at market open
 
 	// ── End of day ──
-	EODExitTime string // "HH:MM" IST: auto-exit all positions and stop entries (default 15:20)
+	EODExitTime string // "HH:MM" IST: auto-exit all positions and stop entries (default 15:05)
 
 	// ── Signal-Time Option Automation ──
+	// ── Range-market strategies (NIFTY_RANGE_MARKET_GUIDE.md), paper only ──
+	RangeEnabled    bool // NIFTY50_RANGE: S1 mean reversion + S2 breakout
+	RangeICEnabled  bool // NIFTY50_RANGE_IC: iron condor (multi-leg paper path)
+	RangeDeltaGuard bool // check the entry strike's delta via OptionGreek; refuse if out of band or unavailable
+	// Checks that run with the delta guard (they need the option chain). 0 = off.
+	RangeMinLiquidity int64   // min max(volume, OI) of any contract traded
+	RangeMaxBuyIV     float64 // max IV % for a bought option
+	RangeMinSellIV    float64 // min average IV % of the condor's short legs
+	RangeCostMultiple int64   // expected option gain at target ≥ this × round-trip slippage
+
+	PaperSlippageBps      int64 // paper fills cross the spread: LTP ± max(LTP×bps/10000, min)
+	PaperSlippageMinPaise int64
+	WarmupDays            int    // calendar days of 1m history replayed at startup
+	SQLitePath            string // candle store for warmup
+
 	OptionAutomation bool   // true = choose expiry/strike per BUY signal using greeks
 	OptionHoldType   string // intraday / carry
 	ExpectedIVMove   string // rise / neutral / fall
@@ -105,7 +122,19 @@ func LoadConfig() Config {
 
 		// Dynamic strikes
 		DynamicStrikes: config.GetEnvBool("STRAT_DYNAMIC_STRIKES", false),
-		EODExitTime:    config.GetEnv("STRAT_EOD_EXIT_TIME", "15:20"),
+		EODExitTime:    config.GetEnv("STRAT_EOD_EXIT_TIME", "15:05"),
+		// Range-market strategies
+		RangeEnabled:          config.GetEnvBool("STRAT_RANGE_ENABLED", true),
+		RangeICEnabled:        config.GetEnvBool("STRAT_RANGE_IC_ENABLED", true),
+		RangeDeltaGuard:       config.GetEnvBool("STRAT_RANGE_DELTA_GUARD", true),
+		RangeMinLiquidity:     config.GetEnvInt64("STRAT_RANGE_MIN_LIQUIDITY", 5000),
+		RangeMaxBuyIV:         getEnvFloat("STRAT_RANGE_MAX_BUY_IV", 25),
+		RangeMinSellIV:        getEnvFloat("STRAT_RANGE_MIN_SELL_IV", 11),
+		RangeCostMultiple:     config.GetEnvInt64("STRAT_RANGE_COST_MULTIPLE", 3),
+		PaperSlippageBps:      config.GetEnvInt64("STRAT_PAPER_SLIPPAGE_BPS", 50),
+		PaperSlippageMinPaise: config.GetEnvInt64("STRAT_PAPER_SLIPPAGE_MIN_PAISE", 50),
+		WarmupDays:            config.GetEnvInt("STRAT_RANGE_WARMUP_DAYS", 5),
+		SQLitePath:            config.GetEnv("SQLITE_PATH", "data/candles.db"),
 		// Signal-time option automation
 		OptionAutomation: config.GetEnvBool("STRAT_OPTION_AUTOMATION", false),
 		OptionHoldType:   config.GetEnv("STRAT_OPTION_HOLD_TYPE", "intraday"),
@@ -161,7 +190,9 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-const defaultEODExitHour, defaultEODExitMin = 15, 20
+// 15:05: after the strategies' own 15:00 exits, before NSE's closing
+// auction session (15:00-15:30) gets going.
+const defaultEODExitHour, defaultEODExitMin = 15, 5
 
 // parseHHMM parses a 24-hour "HH:MM" time of day.
 func parseHHMM(v string) (int, int, error) {
@@ -170,4 +201,13 @@ func parseHHMM(v string) (int, int, error) {
 		return 0, 0, fmt.Errorf("want HH:MM, got %q", v)
 	}
 	return t.Hour(), t.Minute(), nil
+}
+
+func getEnvFloat(key string, def float64) float64 {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
+	}
+	return def
 }

@@ -19,6 +19,8 @@ import type {
     SubscribeMsg, IndicatorSpecMsg,
 } from '../types/ws';
 import type { LiveOrdersPayload, SignalPayload } from '../types/signal';
+import { useRangeStore, parseRangeView } from '../store/useRangeStore';
+import { listPaneSubs } from '../services/paneSubscriptions';
 
 /**
  * Convert an IndicatorEntry to an IndicatorSpec for SUBSCRIBE.
@@ -82,8 +84,19 @@ export function sendSubscribe(
     };
 
     send(JSON.stringify(msg));
-    snapshotTracker.track(msg.reqId, () => sendSubscribe(symbol, tf, entries, candleCount, true), isRetry);
+    snapshotTracker.track(msg.reqId, () => sendSubscribe(symbol, tf, entries, candleCount, true), isRetry, `${symbol}:${tf}`);
     console.log('[ws] SUBSCRIBE sent', msg);
+}
+
+/**
+ * Re-send the extra dashboard panes' subscriptions (after connect/resync);
+ * the one equal to the main chart's is already covered.
+ */
+function resubscribePanes(mainSymbol: string, mainTF: number) {
+    for (const p of listPaneSubs()) {
+        if (p.symbol === mainSymbol && p.tf === mainTF) continue;
+        sendSubscribe(p.symbol, p.tf, []);
+    }
 }
 
 /**
@@ -158,6 +171,7 @@ export function useWebSocket() {
             if (!state.selectedToken) return;
             console.warn(`[ws] resync (${reason}): requesting fresh SNAPSHOT`);
             sendSubscribe(state.selectedToken, state.selectedTF || 60, state.activeIndicators || []);
+            resubscribePanes(state.selectedToken, state.selectedTF || 60);
         }
 
         /**
@@ -237,7 +251,7 @@ export function useWebSocket() {
             if (staleEpoch && envelope.type !== 'SNAPSHOT') return;
 
             // Only the SNAPSHOT for the latest SUBSCRIBE is applied.
-            if (envelope.type === 'SNAPSHOT' && !snapshotTracker.accept(envelope.reqId)) {
+            if (envelope.type === 'SNAPSHOT' && !snapshotTracker.accept(envelope.reqId, `${envelope.symbol}:${envelope.tf}`)) {
                 console.log(`[ws] ignoring SNAPSHOT for superseded reqId ${envelope.reqId}`);
                 return;
             }
@@ -343,6 +357,13 @@ export function useWebSocket() {
                 } else if (envelope.channel === 'pub:analyst:breakout') {
                     store.setBreakout(analystData as import('../types/analyst').BreakoutEvent);
                 }
+                return;
+            }
+
+            // ── Range strategy view (pub:range channel, full state) ──
+            if (envelope.channel === 'pub:range' && envelope.data) {
+                const view = parseRangeView(envelope.data);
+                if (view) useRangeStore.getState().setView(view);
                 return;
             }
 
@@ -478,7 +499,10 @@ export function useWebSocket() {
                     lastResyncAt = Date.now(); // this SUBSCRIBE is the connect-time resync
                     subscribeTimer = setTimeout(() => {
                         subscribeTimer = null;
-                        if (!disposed) sendSubscribe(token, tf, entries);
+                        if (!disposed) {
+                            sendSubscribe(token, tf, entries);
+                            resubscribePanes(token, tf);
+                        }
                     }, 100);
                     subscribedRef.current = true;
                 }
@@ -584,6 +608,9 @@ export function useWebSocket() {
                     if (u.channel === 'pub:orders') {
                         const orders = (u.data as LiveOrdersPayload)?.orders;
                         useLiveOrderStore.getState().setOrders(Array.isArray(orders) ? orders : []);
+                    } else if (u.channel === 'pub:range') {
+                        const view = parseRangeView(u.data);
+                        if (view) useRangeStore.getState().setView(view);
                     } else if (u.channel === 'pub:pnl') {
                         // PnL is consumed by ws:message listeners.
                         window.dispatchEvent(new CustomEvent('ws:message', {

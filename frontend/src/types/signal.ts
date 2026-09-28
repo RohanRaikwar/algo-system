@@ -17,6 +17,12 @@ export interface SignalPayload {
     stoploss_kind?: string;
     order_mode?: string;
     profit_cap_hit?: boolean;
+    /** Multi-leg (iron condor) fields — paper legs only */
+    leg?: string;
+    strike?: number;
+    short?: boolean;
+    fno_token?: string;
+    fno_symbol?: string;
 }
 
 export interface SignalRecord {
@@ -36,6 +42,10 @@ export interface SignalRecord {
     stoploss_price?: number;
     live_mode?: boolean;
     profit_cap?: boolean;
+    /** Multi-leg fields (live WS only; REST history carries a "[LEG STRIKE]" reason tag) */
+    leg?: string;
+    strike?: number;
+    short?: boolean;
 }
 
 export interface LiveOrderStatePayload {
@@ -47,6 +57,9 @@ export interface LiveOrderStatePayload {
     best_fno_price?: number;
     stoploss_price?: number;
     stoploss_kind?: string;
+    leg?: string;
+    strike?: number;
+    short?: boolean;
 }
 
 export interface LiveOrdersPayload {

@@ -7,15 +7,25 @@ import { useChartInit } from './hooks/useChartInit';
 import { useCandleSeries } from './hooks/useCandleSeries';
 import { useIndicatorLines } from './hooks/useIndicatorLines';
 import { useChartInteraction } from './hooks/useChartInteraction';
-import { useChartSubscription } from './hooks/useChartSubscription';
+import { useChartSubscription, usePaneSubscription } from './hooks/useChartSubscription';
 import { useChartLazyLoad } from './hooks/useChartLazyLoad';
 import { useChartMarkers } from './hooks/useChartMarkers';
+import { useRangeLines } from './hooks/useRangeLines';
 import { ChartLegend } from './ChartLegend';
 import styles from './Chart.module.css';
 
 interface TradingChartProps {
     onOpenIndicators?: () => void;
+    /**
+     * Compact pane for the multi-chart layout: its own timeframe (paneTF),
+     * candles only (no indicators), sharing the main chart's instrument.
+     */
+    compact?: boolean;
+    paneTF?: number;
+    onPaneTFChange?: (tf: number) => void;
 }
+
+const NO_INDICATORS: never[] = [];
 
 const IST_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' });
 
@@ -23,14 +33,17 @@ function fmtPrice(v: number): string {
     return v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export function TradingChart({ onOpenIndicators }: TradingChartProps) {
+export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPaneTFChange }: TradingChartProps) {
     // App state (atomic selectors)
     const config = useAppStore(s => s.config);
     const selectedToken = useAppStore(s => s.selectedToken);
     const setSelectedToken = useAppStore(s => s.setSelectedToken);
-    const selectedTF = useAppStore(s => s.selectedTF);
-    const setSelectedTF = useAppStore(s => s.setSelectedTF);
-    const activeIndicators = useAppStore(s => s.activeIndicators);
+    const globalTF = useAppStore(s => s.selectedTF);
+    const setGlobalTF = useAppStore(s => s.setSelectedTF);
+    const globalIndicators = useAppStore(s => s.activeIndicators);
+    const selectedTF = compact ? (paneTF || 60) : globalTF;
+    const setSelectedTF = compact ? (tf: number) => onPaneTFChange?.(tf) : setGlobalTF;
+    const activeIndicators = compact ? NO_INDICATORS : globalIndicators;
 
     // Show only indicators whose TF is <= chart TF (e.g. allow 3m on 5m, block >5m)
     const activeEntries = useMemo(
@@ -84,17 +97,23 @@ export function TradingChart({ onOpenIndicators }: TradingChartProps) {
     useCandleSeries(candleSeries, selectedTF, selectedToken);
     useIndicatorLines(chartApi, indLineSeries, activeEntries, selectedTF, selectedToken);
     const { ohlcData, indValues, crosshairTime, isPinned } = useChartInteraction(chartApi, candleSeries, indLineSeries, chartContainer);
-    useChartSubscription(selectedTF, selectedToken, activeEntries);
+    // The main chart owns the global subscription; a pane holds its own.
+    useChartSubscription(compact ? 0 : selectedTF, compact ? null : selectedToken, activeEntries);
+    usePaneSubscription(compact ? selectedToken : null, selectedTF);
     useChartLazyLoad(chartApi, selectedTF, selectedToken);
     useChartMarkers(candleSeries, selectedToken, selectedTF);
+    useRangeLines(candleSeries, selectedToken);
 
     const tone = !quote || quote.change === 0 ? '' : quote.change > 0 ? styles.up : styles.down;
     const sign = !quote ? '' : quote.change > 0 ? '+' : quote.change < 0 ? '−' : '';
 
     return (
-        <section className={styles.chartCard} aria-label="Price chart">
+        <section className={`${styles.chartCard}${compact ? ` ${styles.compact}` : ''}`} aria-label={`Price chart ${tfLabel(selectedTF)}`}>
             <div className={styles.toolbar}>
                 <div className={styles.symbolGroup}>
+                    {compact ? (
+                        <span className={styles.paneSymbol}>{selectedToken}</span>
+                    ) : (
                     <select
                         className={styles.symbolSelect}
                         value={selectedToken || ''}
@@ -105,6 +124,7 @@ export function TradingChart({ onOpenIndicators }: TradingChartProps) {
                             <option key={t} value={t}>{t}</option>
                         ))}
                     </select>
+                    )}
                     {quote && (
                         <div className={styles.quote}>
                             <span className={styles.lastPrice}>{fmtPrice(quote.price)}</span>
@@ -130,7 +150,7 @@ export function TradingChart({ onOpenIndicators }: TradingChartProps) {
                 </div>
 
                 <div className={styles.indGroup}>
-                    {onOpenIndicators && (
+                    {onOpenIndicators && !compact && (
                         <button
                             className={styles.toolBtn}
                             onClick={onOpenIndicators}

@@ -27,6 +27,44 @@ type Signal struct {
 	EntryFNOPrice int64        `json:"entry_fno_price"`        // FNO option price at entry (paise, set on exit signals)
 	MarketState   string       `json:"market_state,omitempty"` // trending/sideways/choppy/range
 	Reason        string       `json:"reason"`
+
+	// ── Multi-leg (paper-only) ──
+	// A strategy emits one basket signal with Legs; stratengine resolves
+	// each strike and fans it out into one executor signal per leg with
+	// Leg/FNOToken/Short set. The executor keeps leg positions apart
+	// (strategy|side|leg) and never sends them to the broker.
+	Legs      []LegSpec `json:"legs,omitempty"`
+	Leg       string    `json:"leg,omitempty"`        // leg id, e.g. SHORT_CE
+	FNOToken  string    `json:"fno_token,omitempty"`  // option token of this leg
+	FNOSymbol string    `json:"fno_symbol,omitempty"` // option symbol of this leg
+	Strike    int64     `json:"strike,omitempty"`     // strike in index points
+	Short     bool      `json:"short,omitempty"`      // leg is sold to open
+
+	// TargetMove is the index move (paise) from entry to target, so the
+	// engine can check the expected option gain covers trading costs.
+	TargetMove int64 `json:"target_move,omitempty"`
+
+	// SameDayExpiry asks for today's expiry contract (gamma blast); every
+	// other strategy trades the nearest expiry after today.
+	SameDayExpiry bool `json:"same_day_expiry,omitempty"`
+}
+
+// LegSpec is one option leg of a basket signal.
+type LegSpec struct {
+	Leg        string `json:"leg"`
+	Strike     int64  `json:"strike"`      // index points, e.g. 24200
+	OptionType string `json:"option_type"` // CE or PE
+	Short      bool   `json:"short"`
+	Token      string `json:"token,omitempty"`  // filled by stratengine
+	Symbol     string `json:"symbol,omitempty"` // filled by stratengine
+}
+
+// Side returns the position side a leg trades (CE → CALL, PE → PUT).
+func (l LegSpec) Side() PositionSide {
+	if l.OptionType == "PE" {
+		return SidePut
+	}
+	return SideCall
 }
 
 // Action represents a trading action.
@@ -281,6 +319,10 @@ func sortSignals(batch []Signal) {
 		case "NIFTY50_10PTS":
 			return 3
 		case "NIFTY50_RANGE":
+			return 4
+		case "NIFTY50_RANGE_IC":
+			return 4
+		case "NIFTY50_GAMMA":
 			return 4
 		case "NIFTY50_FNO":
 			return 5

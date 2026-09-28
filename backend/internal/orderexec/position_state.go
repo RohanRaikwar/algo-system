@@ -95,6 +95,9 @@ func opposite(side strategy.PositionSide) strategy.PositionSide {
 func (oe *OrderExecutor) oppositeConflictLocked(sig strategy.Signal, real bool) bool {
 	opp := string(opposite(sig.Side))
 	for _, r := range oe.entryOrders {
+		if r.Leg != "" {
+			continue // paper legs are hedged baskets, not a directional side
+		}
 		if r.PositionSide == opp && (r.StrategyName == sig.StrategyName || (real && r.Real)) {
 			return true
 		}

@@ -91,6 +91,14 @@ func (svc *Service) persistSnapshot(ctx context.Context) error {
 		snapshots["nifty50_range"] = rangeSnap
 	}
 
+	if svc.nifty50RangeICStrategy != nil {
+		if icSnap, err := svc.nifty50RangeICStrategy.Snapshot(); err != nil {
+			log.Printf("[stratengine] NIFTY50_RANGE_IC snapshot error: %v", err)
+		} else {
+			snapshots["nifty50_range_ic"] = icSnap
+		}
+	}
+
 	fno5m3mSnap, err := svc.nifty50FnO5M3MStrategy.Snapshot()
 	if err != nil {
 		log.Printf("[stratengine] NIFTY50_FNO_5M3M snapshot error: %v", err)
@@ -267,6 +275,14 @@ func (svc *Service) restoreState(ctx context.Context) {
 		}
 	}
 
+	if icData, ok := snapshots["nifty50_range_ic"]; ok && svc.nifty50RangeICStrategy != nil {
+		if err := svc.nifty50RangeICStrategy.Restore(icData); err != nil {
+			log.Printf("[stratengine] NIFTY50_RANGE_IC restore error: %v", err)
+		} else {
+			log.Println("[stratengine] ✅ NIFTY50_RANGE_IC strategy state restored")
+		}
+	}
+
 	// Restore P&L tracker state
 	if pnlData, ok := snapshots["pnl_tracker"]; ok {
 		if err := svc.pnlTracker.RestorePnL(pnlData); err != nil {
@@ -434,6 +450,7 @@ func (svc *Service) dailyResetLoop(ctx context.Context) {
 		case <-time.After(wait):
 			svc.pnlTracker.ResetDaily()
 			log.Println("[stratengine] 🌅 09:00 IST — pnlTracker daily counters reset (pre-market)")
+			svc.refreshVolumeToken(ctx, time.Now()) // futures roll monthly
 		}
 	}
 }
@@ -589,6 +606,9 @@ func (svc *Service) forceExitAllStrategies(reason string) []strategy.Signal {
 	if svc.nifty50FnO5M3MStrategy != nil {
 		sigs = append(sigs, svc.nifty50FnO5M3MStrategy.ForceExitAll(reason)...)
 	}
+	if svc.nifty50RangeICStrategy != nil {
+		sigs = append(sigs, svc.nifty50RangeICStrategy.ForceExitAll(reason)...)
+	}
 	return sigs
 }
 
@@ -610,6 +630,9 @@ func (svc *Service) exitExecutorEntries(ctx context.Context, reason string) int 
 			Token:        rec.IndexToken,
 			Exchange:     rec.IndexExchange,
 			Reason:       reason,
+			Leg:          rec.Leg, // a paper leg closes under its own key
+			FNOToken:     rec.Token,
+			Short:        rec.Short,
 		})
 		n++
 	}

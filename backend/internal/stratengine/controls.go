@@ -244,24 +244,41 @@ func (svc *Service) onFill(f orderexec.FillReport) {
 	if qty <= 0 {
 		qty = sig.Qty
 	}
+	// Single-leg fills are booked on the index instrument that opened them.
+	// A leg of a basket is booked on its own option contract, so the four
+	// legs of a condor never share a cost basis.
+	token, exchange := sig.Token, sig.Exchange
+	opening := f.Direction == "BUY"
+	if sig.Leg != "" && sig.FNOToken != "" {
+		token, exchange = sig.FNOToken, svc.cfg.FNOExchange
+		if exchange == "" {
+			exchange = "NFO"
+		}
+		opening = (f.Direction == "BUY") != sig.Short
+	}
 	realized := svc.pnlTracker.RecordTrade(portfolio.Trade{
 		StrategyName: sig.StrategyName,
-		Token:        sig.Token,
-		Exchange:     sig.Exchange,
+		Token:        token,
+		Exchange:     exchange,
 		Action:       f.Direction,
 		Qty:          qty,
 		Price:        f.FillPricePaise,
 		Timestamp:    time.Now(),
+		Short:        sig.Leg != "" && sig.Short,
 	})
 	if svc.portfolio != nil {
-		if f.Direction == "BUY" {
-			svc.portfolio.OpenPosition(sig.Token, sig.Exchange, qty, f.FillPricePaise)
+		if opening {
+			openQty := qty
+			if sig.Leg != "" && sig.Short {
+				openQty = -qty
+			}
+			svc.portfolio.OpenPosition(token, exchange, openQty, f.FillPricePaise)
 		} else {
-			svc.portfolio.ClosePosition(sig.Token, sig.Exchange)
+			svc.portfolio.ClosePosition(token, exchange)
 		}
 	}
-	log.Printf("[stratengine] P&L: %s %s %s:%s qty=%d fill=%d paise real=%v realized=%d paise",
-		sig.StrategyName, f.Direction, sig.Exchange, sig.Token, qty, f.FillPricePaise, f.Real, realized)
+	log.Printf("[stratengine] P&L: %s %s %s:%s leg=%q qty=%d fill=%d paise real=%v realized=%d paise",
+		sig.StrategyName, f.Direction, exchange, token, sig.Leg, qty, f.FillPricePaise, f.Real, realized)
 
 	if svc.redisWriter != nil {
 		go func() {
