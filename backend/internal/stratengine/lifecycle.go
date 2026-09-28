@@ -39,13 +39,11 @@ func (svc *Service) executeAndPersist(ctx context.Context, sig strategy.Signal) 
 	svc.saveSnapshot(ctx)
 }
 
-// saveSnapshot persists all strategy states to Redis and publishes the
-// indicator snapshot.
+// saveSnapshot persists all strategy states to Redis.
 func (svc *Service) saveSnapshot(ctx context.Context) {
 	if err := svc.persistSnapshot(ctx); err != nil {
 		log.Printf("[stratengine] %v", err)
 	}
-	svc.publishIndicators(ctx)
 }
 
 // persistSnapshot writes all strategy, P&L and executor state to Redis and
@@ -55,34 +53,6 @@ func (svc *Service) persistSnapshot(ctx context.Context) error {
 	svc.snapshotMu.Lock()
 	defer svc.snapshotMu.Unlock()
 	snapshots := make(map[string]json.RawMessage, 4)
-
-	nifty50Snap, err := svc.nifty50Strategy.Snapshot()
-	if err != nil {
-		log.Printf("[stratengine] NIFTY50_FNO snapshot error: %v", err)
-	} else {
-		snapshots["nifty50_fno"] = nifty50Snap
-	}
-
-	slSnap, err := svc.nifty50SLStrategy.Snapshot()
-	if err != nil {
-		log.Printf("[stratengine] NIFTY50_FNO_SL snapshot error: %v", err)
-	} else {
-		snapshots["nifty50_fno_sl"] = slSnap
-	}
-
-	pts10Snap, err := svc.nifty5010PtsStrategy.Snapshot()
-	if err != nil {
-		log.Printf("[stratengine] NIFTY50_10PTS snapshot error: %v", err)
-	} else {
-		snapshots["nifty50_10pts"] = pts10Snap
-	}
-
-	sl2Snap, err := svc.nifty50SL2Strategy.Snapshot()
-	if err != nil {
-		log.Printf("[stratengine] NIFTY50_FNO_SL2 snapshot error: %v", err)
-	} else {
-		snapshots["nifty50_fno_sl2"] = sl2Snap
-	}
 
 	rangeSnap, err := svc.nifty50RangeStrategy.Snapshot()
 	if err != nil {
@@ -97,13 +67,6 @@ func (svc *Service) persistSnapshot(ctx context.Context) error {
 		} else {
 			snapshots["nifty50_range_ic"] = icSnap
 		}
-	}
-
-	fno5m3mSnap, err := svc.nifty50FnO5M3MStrategy.Snapshot()
-	if err != nil {
-		log.Printf("[stratengine] NIFTY50_FNO_5M3M snapshot error: %v", err)
-	} else {
-		snapshots["nifty50_fno_5m3m"] = fno5m3mSnap
 	}
 
 	// Snapshot P&L tracker state
@@ -149,46 +112,6 @@ func (svc *Service) persistSnapshot(ctx context.Context) error {
 	return nil
 }
 
-// publishIndicators publishes live indicator values to Redis for the frontend.
-func (svc *Service) publishIndicators(ctx context.Context) {
-	if svc.redisWriter == nil {
-		return
-	}
-
-	cctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-
-	// ── NIFTY50_FNO indicators ──
-	if svc.nifty50Strategy != nil {
-		if indSnap := svc.nifty50Strategy.IndicatorSnapshot(); indSnap != nil {
-			if payload, err := json.Marshal(indSnap); err == nil {
-				svc.redisWriter.Client().Set(cctx, "indicator:nifty50_fno", payload, 24*time.Hour)
-				svc.redisWriter.Client().Publish(cctx, "pub:indicator", string(payload))
-			}
-		}
-	}
-
-	// ── NIFTY50_FNO_SL indicators ──
-	if svc.nifty50SLStrategy != nil {
-		if indSnap := svc.nifty50SLStrategy.IndicatorSnapshot(); indSnap != nil {
-			if payload, err := json.Marshal(indSnap); err == nil {
-				svc.redisWriter.Client().Set(cctx, "indicator:nifty50_fno_sl", payload, 24*time.Hour)
-				svc.redisWriter.Client().Publish(cctx, "pub:indicator", string(payload))
-			}
-		}
-	}
-
-	// ── NIFTY50_10PTS indicators ──
-	if svc.nifty5010PtsStrategy != nil {
-		if indSnap := svc.nifty5010PtsStrategy.IndicatorSnapshot(); indSnap != nil {
-			if payload, err := json.Marshal(indSnap); err == nil {
-				svc.redisWriter.Client().Set(cctx, "indicator:nifty50_10pts", payload, 24*time.Hour)
-				svc.redisWriter.Client().Publish(cctx, "pub:indicator", string(payload))
-			}
-		}
-	}
-}
-
 // restoreAndWire restores state from the Redis snapshot and wires the
 // executor's listeners around it. Order matters:
 //   - alerts and fill corrections are wired BEFORE restore, so anything
@@ -220,51 +143,6 @@ func (svc *Service) restoreState(ctx context.Context) {
 	if err := json.Unmarshal(data, &snapshots); err != nil {
 		log.Printf("[stratengine] snapshot unmarshal error: %v", err)
 		return
-	}
-
-	if nifty50Data, ok := snapshots["nifty50_fno"]; ok {
-		if err := svc.nifty50Strategy.Restore(nifty50Data); err != nil {
-			log.Printf("[stratengine] NIFTY50_FNO restore error: %v", err)
-		} else {
-			log.Println("[stratengine] ✅ NIFTY50_FNO strategy state restored")
-		}
-	}
-
-	if slData, ok := snapshots["nifty50_fno_sl"]; ok {
-		if err := svc.nifty50SLStrategy.Restore(slData); err != nil {
-			log.Printf("[stratengine] NIFTY50_FNO_SL restore error: %v", err)
-		} else {
-			log.Println("[stratengine] ✅ NIFTY50_FNO_SL strategy state restored")
-		}
-	}
-
-	if sl2Data, ok := snapshots["nifty50_fno_sl2"]; ok {
-		if err := svc.nifty50SL2Strategy.Restore(sl2Data); err != nil {
-			log.Printf("[stratengine] NIFTY50_FNO_SL2 restore error: %v", err)
-		} else {
-			log.Println("[stratengine] ✅ NIFTY50_FNO_SL2 strategy state restored")
-		}
-	}
-
-	if pts10Data, ok := snapshots["nifty50_10pts"]; ok {
-		if err := svc.nifty5010PtsStrategy.Restore(pts10Data); err != nil {
-			log.Printf("[stratengine] NIFTY50_10PTS restore error: %v", err)
-		} else {
-			log.Println("[stratengine] ✅ NIFTY50_10PTS strategy state restored")
-		}
-	} else if pts4Data, ok := snapshots["nifty50_4pts"]; ok {
-		// attempt fallback restore from 4pts snapshot
-		if err := svc.nifty5010PtsStrategy.Restore(pts4Data); err == nil {
-			log.Println("[stratengine] ✅ NIFTY50_10PTS strategy state restored from 4pts fallback")
-		}
-	}
-
-	if fno5m3mData, ok := snapshots["nifty50_fno_5m3m"]; ok {
-		if err := svc.nifty50FnO5M3MStrategy.Restore(fno5m3mData); err != nil {
-			log.Printf("[stratengine] NIFTY50_FNO_5M3M restore error: %v", err)
-		} else {
-			log.Println("[stratengine] ✅ NIFTY50_FNO_5M3M strategy state restored")
-		}
 	}
 
 	if rangeData, ok := snapshots["nifty50_range"]; ok {
@@ -588,23 +466,8 @@ func (svc *Service) runEODExit(ctx context.Context) {
 // forceExitAllStrategies collects every strategy's exit signals.
 func (svc *Service) forceExitAllStrategies(reason string) []strategy.Signal {
 	var sigs []strategy.Signal
-	if svc.nifty50Strategy != nil {
-		sigs = append(sigs, svc.nifty50Strategy.ForceExitAll(reason)...)
-	}
-	if svc.nifty50SLStrategy != nil {
-		sigs = append(sigs, svc.nifty50SLStrategy.ForceExitAll(reason)...)
-	}
-	if svc.nifty50SL2Strategy != nil {
-		sigs = append(sigs, svc.nifty50SL2Strategy.ForceExitAll(reason)...)
-	}
-	if svc.nifty5010PtsStrategy != nil {
-		sigs = append(sigs, svc.nifty5010PtsStrategy.ForceExitAll(reason)...)
-	}
 	if svc.nifty50RangeStrategy != nil {
 		sigs = append(sigs, svc.nifty50RangeStrategy.ForceExitAll(reason)...)
-	}
-	if svc.nifty50FnO5M3MStrategy != nil {
-		sigs = append(sigs, svc.nifty50FnO5M3MStrategy.ForceExitAll(reason)...)
 	}
 	if svc.nifty50RangeICStrategy != nil {
 		sigs = append(sigs, svc.nifty50RangeICStrategy.ForceExitAll(reason)...)

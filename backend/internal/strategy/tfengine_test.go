@@ -28,7 +28,8 @@ func makeTFC(token string, tf int, closePaise int64, ts time.Time) model.TFCandl
 // TestTFEngine_FormingCandleRejection verifies forming candles never reach strategies.
 func TestTFEngine_FormingCandleRejection(t *testing.T) {
 	engine := NewTFEngine(100)
-	engine.Register(NewNifty50FnO(1))
+	// dummy signals on every candle it sees, so any signal means leakage.
+	engine.Register(&dummyTFStrategy{})
 
 	ch := make(chan model.TFCandle, 10)
 	forming := makeTFC("A", 60, 10000, time.Now())
@@ -52,7 +53,7 @@ func TestTFEngine_FormingCandleRejection(t *testing.T) {
 // TestTFEngine_RoutesCorrectTFs verifies only TF=60 candles reach the 1m strategy.
 func TestTFEngine_RoutesCorrectTFs(t *testing.T) {
 	engine := NewTFEngine(100)
-	strat := NewNifty50FnO(1)
+	strat := NewNifty50Range(1)
 	engine.Register(strat)
 
 	ch := make(chan model.TFCandle, 20)

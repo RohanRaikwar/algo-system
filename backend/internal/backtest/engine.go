@@ -42,9 +42,7 @@ type Config struct {
 	To               string                       // optional end date "YYYY-MM-DD" (empty = all)
 	Output           string                       // "console", "json", "csv"
 	OutDir           string                       // output directory for file exports
-	StrategyType     string                       // "nifty50_fno" (default), "nifty50_fno_sl", "ema3_hybrid"
-	StrategyCfg      strategy.Nifty50FnOConfig    // strategy-level config (optional, uses defaults if zero)
-	StrategyCfg10Pts *strategy.Nifty5010PtsConfig // optional override for nifty50_10pts
+	StrategyType     string                       // "nifty50_range" (default), "nifty50_gamma"
 	StrategyCfgRange *strategy.Nifty50RangeConfig // optional override for nifty50_range
 	StrategyCfgGamma *strategy.Nifty50GammaConfig // optional override for nifty50_gamma
 	CandleTF         int                          // candle timeframe in minutes (1=1m, 2=2m, 5=5m; default=1)
@@ -194,6 +192,12 @@ func New(cfg Config) *Engine {
 
 // Run executes the backtest: load candles → replay strategy → compute metrics.
 func (e *Engine) Run() (*Result, error) {
+	switch strings.ToLower(strings.TrimSpace(e.cfg.StrategyType)) {
+	case "", "nifty50_range", "nifty50_gamma":
+	default:
+		return nil, fmt.Errorf("unknown strategy %q (want nifty50_range or nifty50_gamma)", e.cfg.StrategyType)
+	}
+
 	// ── Open DB ──
 	db, err := sql.Open("sqlite3", e.cfg.DBPath+"?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000")
 	if err != nil {
@@ -303,13 +307,6 @@ func (e *Engine) loadCandles(db *sql.DB) ([]model.TFCandle, error) {
 	log.Printf("[backtest] Using %s for backtest candle data", source)
 
 	tfMin := e.cfg.CandleTF
-	stratLower := strings.ToLower(strings.TrimSpace(e.cfg.StrategyType))
-	if stratLower == "nifty50_fno_sl2" {
-		if tfMin != 2 {
-			log.Printf("[backtest] Forcing 2m candles for %s (requested tf=%dm)", e.cfg.StrategyType, tfMin)
-		}
-		tfMin = 2
-	}
 	if tfMin <= 1 {
 		return raw, nil
 	}
@@ -640,89 +637,7 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 	var strat backtestStrategy
 
 	switch strings.ToLower(strings.TrimSpace(e.cfg.StrategyType)) {
-	case "nifty50_fno_sl":
-		slCfg := strategy.DefaultNifty50FnOSLConfig()
-		src := e.cfg.StrategyCfg
-		if src.EMA6Period > 0 {
-			slCfg.EMA6Period = src.EMA6Period
-		}
-		if src.BufferSize > 0 {
-			slCfg.BufferSize = src.BufferSize
-		}
-		if src.CooldownCandles >= 0 {
-			slCfg.CooldownCandles = src.CooldownCandles
-		}
-		slCfg.MinReEntrySeparationPct = src.MinReEntrySeparationPct
-		slCfg.SidewaysEnabled = src.SidewaysEnabled
-		if src.MaxChopCrosses > 0 {
-			slCfg.MaxChopCrosses = src.MaxChopCrosses
-		}
-		if src.MA21FlatPct > 0 {
-			slCfg.MA21FlatPct = src.MA21FlatPct
-		}
-		if src.NarrowRangePct > 0 {
-			slCfg.NarrowRangePct = src.NarrowRangePct
-		}
-		// Explicitly disable momentum bypass for NIFTY50_FNO_SL.
-		slCfg.MomentumBypassPct = 0
-		if src.SkipFirstMinutes >= 0 {
-			slCfg.SkipFirstMinutes = src.SkipFirstMinutes
-		}
-		if src.SkipLastMinutes >= 0 {
-			slCfg.SkipLastMinutes = src.SkipLastMinutes
-		}
-		slCfg.LunchFilterEnabled = src.LunchFilterEnabled
-		if src.LunchStartHHMM != "" {
-			slCfg.LunchStartHHMM = src.LunchStartHHMM
-		}
-		if src.LunchEndHHMM != "" {
-			slCfg.LunchEndHHMM = src.LunchEndHHMM
-		}
-		slCfg.TrendEnabled = src.TrendEnabled
-		if src.TrendLookback > 0 {
-			slCfg.TrendLookback = src.TrendLookback
-		}
-		if src.TrendSlopePct > 0 {
-			slCfg.TrendSlopePct = src.TrendSlopePct
-		}
-		if src.HardSLPct > 0 {
-			slCfg.IndexHardSLPct = src.HardSLPct
-		}
-		if src.TrailSLPct > 0 {
-			slCfg.IndexTrailSLPct = src.TrailSLPct
-		}
-		if src.TrailStartPct > 0 {
-			slCfg.IndexTrailStartPct = src.TrailStartPct
-		}
-		slCfg.ReEntryAfterSL = src.ReEntryAfterSL
-		// Bind the SL strategy to whichever index stream is under test.
-		slCfg.IndexToken = e.cfg.Exchange + ":" + e.cfg.Token
-
-		strat = strategy.NewNifty50FnOSLWithConfig(e.cfg.Qty, slCfg)
-		log.Printf("[backtest] Using NIFTY50_FNO_SL strategy (momentum=off, sep=%.3f%%, idxHardSL=%.2f%%, idxTrailSL=%.2f%%)",
-			slCfg.MinReEntrySeparationPct, slCfg.IndexHardSLPct, slCfg.IndexTrailSLPct)
-	case "nifty50_fno_sl2":
-		sl2Cfg := strategy.DefaultNifty50FnOSL2Config()
-		src := e.cfg.StrategyCfg
-		if src.MinReEntrySeparationPct > 0 {
-			sl2Cfg.MinReEntrySeparationPct = src.MinReEntrySeparationPct
-		}
-		if src.HardSLPct > 0 {
-			sl2Cfg.IndexHardSLPct = src.HardSLPct
-		}
-		if src.TrailSLPct > 0 {
-			sl2Cfg.IndexTrailSLPct = src.TrailSLPct
-		}
-		if src.TrailStartPct > 0 {
-			sl2Cfg.IndexTrailStartPct = src.TrailStartPct
-		}
-		sl2Cfg.ReEntryAfterSL = src.ReEntryAfterSL
-		sl2Cfg.IndexToken = e.cfg.Exchange + ":" + e.cfg.Token
-
-		strat = strategy.NewNifty50FnOSL2WithConfig(e.cfg.Qty, sl2Cfg)
-		log.Printf("[backtest] Using NIFTY50_FNO_SL2 strategy (EMA2/EMA6/SMA15, sep=%.3f%%, trailSL=%.2f%%)",
-			sl2Cfg.MinReEntrySeparationPct, sl2Cfg.IndexTrailSLPct)
-	case "nifty50_range":
+	case "", "nifty50_range":
 		// Range-market S1 mean reversion + S2 breakout. The iron condor
 		// (nifty50_range_ic) is not replayable here: its legs are priced
 		// from per-strike option ticks this engine does not load.
@@ -744,24 +659,9 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 		strat = strategy.NewNifty50Gamma(e.cfg.Qty, gCfg)
 		log.Printf("[backtest] Using NIFTY50_GAMMA strategy (range≤%dbps, adx<%.0f, SL %d%%, target %d%%)",
 			gCfg.MaxRangeBps, gCfg.MaxADX, gCfg.PremiumSLPct, gCfg.PremiumTargetPct)
-	case "nifty50_10pts":
-		// Pull the baseline 6-month optimized configuration
-		optCfg := strategy.DefaultNifty5010PtsConfig()
-		if e.cfg.StrategyCfg10Pts != nil {
-			optCfg = *e.cfg.StrategyCfg10Pts
-		}
-
-		strat = strategy.NewNifty5010PtsWithConfig(e.cfg.Qty, optCfg)
-		log.Printf("[backtest] Using NIFTY50_10PTS strategy (optimized defaults: target=%.2f%%, momentum=%.2f%%)",
-			optCfg.FNOTargetProfitPct, optCfg.MomentumBypassPct)
 	default:
-		// Use provided StrategyCfg if non-zero, otherwise fall back to defaults.
-		cfg := e.cfg.StrategyCfg
-		if cfg.EMA6Period == 0 {
-			cfg = strategy.DefaultNifty50FnOConfig()
-		}
-		strat = strategy.NewNifty50FnOWithConfig(e.cfg.Qty, cfg)
-		log.Printf("[backtest] Using NIFTY50_FNO strategy (sep=%.3f%%)", cfg.MinReEntrySeparationPct)
+		// Run rejects unknown strategy types before replay starts.
+		return nil
 	}
 
 	var trades []Trade

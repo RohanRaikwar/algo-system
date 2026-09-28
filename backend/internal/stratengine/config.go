@@ -31,8 +31,7 @@ type Config struct {
 	JournalPath string // SQLite path for signal journal
 
 	// Strategy parameters
-	ActiveStrategy string // e.g. "nifty50_10pts"
-	Qty            int64  // default quantity per trade
+	Qty int64 // default quantity per trade
 
 	// Operational
 	NotifyWebhook string // webhook URL for signal notifications
@@ -96,7 +95,6 @@ func LoadConfig() Config {
 		SnapshotKey:       config.GetEnv("STRAT_SNAPSHOT_KEY", "snapshot:stratengine"),
 		SnapshotIntervalS: config.GetEnvInt("STRAT_SNAPSHOT_INTERVAL_S", 30),
 		JournalPath:       config.GetEnv("STRAT_JOURNAL_PATH", "data/signals.db"),
-		ActiveStrategy:    config.GetEnv("STRAT_ACTIVE_STRATEGY", "nifty50_10pts"),
 		Qty:               int64(config.GetEnvInt("STRAT_QTY", 1)),
 		NotifyWebhook:     config.GetEnv("STRAT_NOTIFY_WEBHOOK", ""),
 		KillSwitch:        config.GetEnvBool("STRAT_KILL_SWITCH", false),

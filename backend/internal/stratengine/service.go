@@ -37,18 +37,13 @@ func getEnvInt(key string, defaultVal int) int {
 }
 
 // Service is the top-level orchestrator for the strategy engine.
-// Runs only NIFTY50_FNO in production.
+// Runs the range-market strategies (paper only).
 type Service struct {
 	cfg Config
 
 	tfEngine               *strategy.TFEngine
-	nifty50Strategy        *strategy.Nifty50FnO
-	nifty50SLStrategy      *strategy.Nifty50FnOSL
-	nifty50SL2Strategy     *strategy.Nifty50FnOSL2
-	nifty5010PtsStrategy   *strategy.Nifty5010Pts
 	nifty50RangeStrategy   *strategy.Nifty50Range
 	nifty50RangeICStrategy *strategy.Nifty50RangeIC
-	nifty50FnO5M3MStrategy *strategy.Nifty50FnO5M3M
 
 	redisReader   *redisstore.Reader
 	redisWriter   *redisstore.Writer
@@ -64,12 +59,12 @@ type Service struct {
 	legPickerOnce sync.Once
 	testBasket    basketStrategy // test hook for basketFor
 
-	ladderState // strike ladder + per-entry option selection (option_select.go)
-	deltaState  // delta guard on range entries (delta_guard.go)
+	ladderState                // strike ladder + per-entry option selection (option_select.go)
+	deltaState                 // delta guard on range entries (delta_guard.go)
 	futures     futureResolver // test hook; nil = instrument master
 
 	rangePublishHook func(payload string) // test hook for publishRangeState
-	legPriceWait  time.Duration  // 0 = defaultLegPriceWait
+	legPriceWait     time.Duration        // 0 = defaultLegPriceWait
 
 	// Portfolio & P&L tracking
 	pnlTracker *portfolio.PnLTracker
@@ -201,16 +196,6 @@ func New(cfg Config) (*Service, error) {
 	svc.pnlTracker = portfolio.NewPnLTracker()
 
 	// ── Strategies ──
-	// Set IndexToken so live ticks are keyed correctly for dual-layer SL.
-	nifty50Cfg := strategy.DefaultNifty50FnOConfig()
-	nifty50Cfg.IndexToken = "NSE:99926000"
-	svc.nifty50Strategy = strategy.NewNifty50FnOWithConfig(cfg.Qty, nifty50Cfg)
-	svc.nifty50SLStrategy = strategy.NewNifty50FnOSL(cfg.Qty)
-	svc.nifty50SL2Strategy = strategy.NewNifty50FnOSL2(cfg.Qty)
-
-	nifty5010PtsCfg := strategy.DefaultNifty5010PtsConfig()
-	svc.nifty5010PtsStrategy = strategy.NewNifty5010PtsWithConfig(cfg.Qty, nifty5010PtsCfg)
-
 	// NIFTY50_RANGE: range-market S1 mean reversion + S2 breakout (paper).
 	nifty50RangeCfg := strategy.DefaultNifty50RangeConfig()
 	nifty50RangeCfg.IndexToken = "NSE:99926000"
@@ -223,48 +208,10 @@ func New(cfg Config) (*Service, error) {
 	svc.nifty50RangeICStrategy = strategy.NewNifty50RangeIC(cfg.Qty, rangeICCfg)
 	svc.nifty50RangeICStrategy.SetExpiry(orderexec.NewStrikePicker(nil).NextExpiry(time.Now()))
 
-	// Initialize NIFTY50_FNO_5M3M strategy (5m entry, 3m exit with SMA21/EMA6)
-	nifty50FnO5M3MCfg := strategy.DefaultNifty50FnO5M3MConfig()
-	nifty50FnO5M3MCfg.IndexToken = "NSE:99926000"
-	svc.nifty50FnO5M3MStrategy = strategy.NewNifty50FnO5M3MWithConfig(cfg.Qty, nifty50FnO5M3MCfg)
-
-	// Wire external market state: 10PTS and FNO_SL query FNO strategy's regime detection.
-	if svc.nifty50Strategy != nil {
-		fnoStrat := svc.nifty50Strategy
-		if svc.nifty5010PtsStrategy != nil {
-			svc.nifty5010PtsStrategy.SetMarketStateProvider(func() strategy.EntryMarketState {
-				ctx := fnoStrat.EntryAutomationContext("NSE", "99926000")
-				if ctx.Available {
-					return ctx.MarketState
-				}
-				return strategy.EntryMarketStateTrending
-			})
-		}
-		if svc.nifty50SLStrategy != nil {
-			svc.nifty50SLStrategy.SetMarketStateProvider(func() strategy.EntryMarketState {
-				ctx := fnoStrat.EntryAutomationContext("NSE", "99926000")
-				if ctx.Available {
-					return ctx.MarketState
-				}
-				return strategy.EntryMarketStateTrending
-			})
-		}
-	}
-
 	svc.syncStrategyFNOTokens(cfg.CallFNOToken, cfg.PutFNOToken)
 
 	svc.tfEngine = strategy.NewTFEngine(1000)
 
-	// All strategies detached from the engine. Instances are still constructed
-	// and wired above (market-state providers, FNO token sync, snapshots), but
-	// none are registered, so the engine emits no signals.
-	// Re-enable by uncommenting the desired line(s).
-	// svc.tfEngine.Register(svc.nifty50Strategy)
-	// svc.tfEngine.Register(svc.nifty50SLStrategy)
-	// svc.tfEngine.Register(svc.nifty50SL2Strategy)
-	// svc.tfEngine.Register(svc.nifty5010PtsStrategy)
-	// svc.tfEngine.Register(svc.nifty50FnO5M3MStrategy)
-	//
 	// Range-market strategies are paper-only (the executor's real-order gate
 	// is NIFTY50_FNO alone; legs never reach the broker).
 	registered := 0
@@ -309,7 +256,7 @@ func New(cfg Config) (*Service, error) {
 		FNOExchange:      cfg.FNOExchange,
 		FNOOrderType:     cfg.FNOOrderType,
 		FNOProductType:   cfg.FNOProductType,
-		FNOStopLossPaise: nifty50Cfg.FNOStopLossPaise, // mirror system SL in GTT
+		FNOStopLossPaise: 1000, // ₹10 below entry premium, GTT stop on real orders
 		AngelAPIKey:      cfg.AngelAPIKey,
 		AngelClientID:    cfg.AngelClientID,
 		AngelPassword:    cfg.AngelPassword,
@@ -620,8 +567,6 @@ func (svc *Service) signalLoop(ctx context.Context) {
 				sig := expandedSig
 				now := time.Now()
 
-				svc.applySyntheticStrategyEntry(sig)
-
 				// Kill switch: block new entries but allow exits
 				if svc.killSwitchActive() && sig.Action == strategy.ActionBuy {
 					log.Printf("[stratengine] KILL SWITCH: blocked entry signal %s %s:%s",
@@ -881,25 +826,6 @@ func expandReverseSignals(sig strategy.Signal) []strategy.Signal {
 	return []strategy.Signal{sig, buySig}
 }
 
-func (svc *Service) applySyntheticStrategyEntry(sig strategy.Signal) {
-	if sig.Action != strategy.ActionBuy {
-		return
-	}
-	if !strings.Contains(sig.Reason, "REVERSE_FROM_") {
-		return
-	}
-	if svc.nifty50Strategy == nil || sig.StrategyName != svc.nifty50Strategy.Name() {
-		return
-	}
-
-	indexPrice := parseSignalClose(sig.Reason)
-	if indexPrice <= 0 {
-		return
-	}
-
-	svc.nifty50Strategy.ApplySyntheticEntry(sig.Exchange, sig.Token, sig.Side, indexPrice)
-}
-
 func (svc *Service) applyOptionAutomation(ctx context.Context, sig *strategy.Signal, now time.Time) {
 	if !svc.cfg.OptionAutomation || !svc.cfg.DynamicStrikes || sig == nil || sig.Action != strategy.ActionBuy {
 		return
@@ -1007,48 +933,13 @@ func (svc *Service) syncStrategyFNOTokens(callToken, putToken string) {
 	callToken = svc.qualifyFNOToken(callToken)
 	putToken = svc.qualifyFNOToken(putToken)
 
-	if svc.nifty50SLStrategy != nil {
-		svc.nifty50SLStrategy.SetFNOTokens(callToken, putToken)
-	}
-	if svc.nifty50Strategy != nil {
-		svc.nifty50Strategy.SetFNOTokens(callToken, putToken)
-	}
-	if svc.nifty5010PtsStrategy != nil {
-		svc.nifty5010PtsStrategy.SetFNOTokens(callToken, putToken)
-	}
-	if svc.nifty50SL2Strategy != nil {
-		svc.nifty50SL2Strategy.SetFNOTokens(callToken, putToken)
-	}
 	if svc.nifty50RangeStrategy != nil {
 		svc.nifty50RangeStrategy.SetFNOTokens(callToken, putToken)
-	}
-	if svc.nifty50FnO5M3MStrategy != nil {
-		svc.nifty50FnO5M3MStrategy.SetFNOTokens(callToken, putToken)
 	}
 }
 
 func (svc *Service) setStrategyFNOEntryPrice(strategyName string, price int64) {
 	if price <= 0 {
-		return
-	}
-	if svc.nifty50SLStrategy != nil && strategyName == svc.nifty50SLStrategy.Name() {
-		svc.nifty50SLStrategy.SetFNOEntryPrice(price)
-		return
-	}
-	if svc.nifty50Strategy != nil && strategyName == svc.nifty50Strategy.Name() {
-		svc.nifty50Strategy.SetFNOEntryPrice(price)
-		return
-	}
-	if svc.nifty5010PtsStrategy != nil && strategyName == svc.nifty5010PtsStrategy.Name() {
-		svc.nifty5010PtsStrategy.SetFNOEntryPrice(price)
-		return
-	}
-	if svc.nifty50SL2Strategy != nil && strategyName == svc.nifty50SL2Strategy.Name() {
-		svc.nifty50SL2Strategy.SetFNOEntryPrice(price)
-		return
-	}
-	if svc.nifty50FnO5M3MStrategy != nil && strategyName == svc.nifty50FnO5M3MStrategy.Name() {
-		svc.nifty50FnO5M3MStrategy.SetFNOEntryPrice(price)
 		return
 	}
 	if svc.nifty50RangeStrategy != nil && strategyName == svc.nifty50RangeStrategy.Name() {
@@ -1084,31 +975,6 @@ func (svc *Service) unqualifyToken(token string) string {
 }
 
 func (svc *Service) seedLiveOrdersFromStrategies() {
-	if svc.nifty50SLStrategy != nil {
-		if pos := svc.nifty50SLStrategy.CurrentFNOPosition(); pos != nil {
-			svc.setLiveOrderFromPosition(svc.nifty50SLStrategy.Name(), pos)
-		}
-	}
-	if svc.nifty50SL2Strategy != nil {
-		if pos := svc.nifty50SL2Strategy.CurrentFNOPosition(); pos != nil {
-			svc.setLiveOrderFromPosition(svc.nifty50SL2Strategy.Name(), pos)
-		}
-	}
-	if svc.nifty50Strategy != nil {
-		if pos := svc.nifty50Strategy.CurrentFNOPosition(); pos != nil {
-			svc.setLiveOrderFromPosition(svc.nifty50Strategy.Name(), pos)
-		}
-	}
-	if svc.nifty5010PtsStrategy != nil {
-		if pos := svc.nifty5010PtsStrategy.CurrentFNOPosition(); pos != nil {
-			svc.setLiveOrderFromPosition(svc.nifty5010PtsStrategy.Name(), pos)
-		}
-	}
-	if svc.nifty50FnO5M3MStrategy != nil {
-		if pos := svc.nifty50FnO5M3MStrategy.CurrentFNOPosition(); pos != nil {
-			svc.setLiveOrderFromPosition(svc.nifty50FnO5M3MStrategy.Name(), pos)
-		}
-	}
 	if svc.nifty50RangeStrategy != nil {
 		if pos := svc.nifty50RangeStrategy.CurrentFNOPosition(); pos != nil {
 			svc.setLiveOrderFromPosition(svc.nifty50RangeStrategy.Name(), pos)
@@ -1225,18 +1091,6 @@ func (svc *Service) updateLiveOrdersFromTick(ctx context.Context, tick model.Tic
 
 func (svc *Service) stopConfig(strategyName string) (hardSL, trailSL, trailStart float64, ok bool) {
 	switch {
-	case svc.nifty50SLStrategy != nil && strategyName == svc.nifty50SLStrategy.Name():
-		cfg := svc.nifty50SLStrategy.Config()
-		return cfg.FNOHardSLPct, cfg.FNOTrailSLPct, cfg.FNOTrailStartPct, true
-	case svc.nifty50SL2Strategy != nil && strategyName == svc.nifty50SL2Strategy.Name():
-		cfg := svc.nifty50SL2Strategy.Config()
-		return cfg.FNOHardSLPct, cfg.FNOTrailSLPct, cfg.FNOTrailStartPct, true
-	case svc.nifty50Strategy != nil && strategyName == svc.nifty50Strategy.Name():
-		cfg := svc.nifty50Strategy.Config()
-		return cfg.FNOHardSLPct, cfg.FNOTrailSLPct, cfg.FNOTrailStartPct, true
-	case svc.nifty5010PtsStrategy != nil && strategyName == svc.nifty5010PtsStrategy.Name():
-		cfg := svc.nifty5010PtsStrategy.Config()
-		return cfg.FNOHardSLPct, cfg.FNOTrailSLPct, cfg.FNOTrailStartPct, true
 	case svc.nifty50RangeStrategy != nil && strategyName == svc.nifty50RangeStrategy.Name():
 		cfg := svc.nifty50RangeStrategy.Config()
 		return float64(cfg.FNOHardSLPct), float64(cfg.FNOTrailSLPct), float64(cfg.FNOTrailStartPct), true
@@ -1443,24 +1297,8 @@ func automationSignalType(side strategy.PositionSide) orderexec.AutomationSignal
 }
 
 func (svc *Service) strategyAutomationContext(sig strategy.Signal) (strategy.EntryAutomationContext, bool) {
-	if svc.nifty50Strategy != nil && sig.StrategyName == svc.nifty50Strategy.Name() {
-		ctx := svc.nifty50Strategy.EntryAutomationContext(sig.Exchange, sig.Token)
-		if ctx.Available {
-			return ctx, true
-		}
-	}
-
-	// FNO_SL / FNO_SL2 / 10PTS strategies trade the same NIFTY50 index but
-	// don't compute their own market state.  Fall back to the primary
-	// NIFTY50_FNO strategy's regime detection so signals always carry a
-	// market_state label in the journal.
-	if svc.nifty50Strategy != nil && sig.StrategyName != svc.nifty50Strategy.Name() {
-		ctx := svc.nifty50Strategy.EntryAutomationContext(sig.Exchange, sig.Token)
-		if ctx.Available {
-			return ctx, true
-		}
-	}
-
+	// No registered strategy exposes its own automation context; callers
+	// fall back to reason parsing.
 	return strategy.EntryAutomationContext{}, false
 }
 
