@@ -45,6 +45,7 @@ type Config struct {
 	StrategyType     string                       // "nifty50_range" (default), "nifty50_gamma"
 	StrategyCfgRange *strategy.Nifty50RangeConfig // optional override for nifty50_range
 	StrategyCfgGamma *strategy.Nifty50GammaConfig // optional override for nifty50_gamma
+	StrategyCfgSR    *strategy.Nifty50SRConfig    // optional override for nifty50_sr
 	CandleTF         int                          // candle timeframe in minutes (1=1m, 2=2m, 5=5m; default=1)
 
 	// ── FNO option price tracking ──
@@ -193,9 +194,9 @@ func New(cfg Config) *Engine {
 // Run executes the backtest: load candles → replay strategy → compute metrics.
 func (e *Engine) Run() (*Result, error) {
 	switch strings.ToLower(strings.TrimSpace(e.cfg.StrategyType)) {
-	case "", "nifty50_range", "nifty50_gamma":
+	case "", "nifty50_range", "nifty50_gamma", "nifty50_sr":
 	default:
-		return nil, fmt.Errorf("unknown strategy %q (want nifty50_range or nifty50_gamma)", e.cfg.StrategyType)
+		return nil, fmt.Errorf("unknown strategy %q (want nifty50_range, nifty50_gamma or nifty50_sr)", e.cfg.StrategyType)
 	}
 
 	// ── Open DB ──
@@ -659,6 +660,18 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 		strat = strategy.NewNifty50Gamma(e.cfg.Qty, gCfg)
 		log.Printf("[backtest] Using NIFTY50_GAMMA strategy (range≤%dbps, adx<%.0f, SL %d%%, target %d%%)",
 			gCfg.MaxRangeBps, gCfg.MaxADX, gCfg.PremiumSLPct, gCfg.PremiumTargetPct)
+	case "nifty50_sr":
+		// Regime-aware S/R. Live strikes come from the option chain by
+		// greeks; here the ATM strike is priced by -option-model. The index
+		// has no volume, so VWAP is a session TWAP.
+		srCfg := strategy.DefaultNifty50SRConfig()
+		if e.cfg.StrategyCfgSR != nil {
+			srCfg = *e.cfg.StrategyCfgSR
+		}
+		srCfg.IndexToken = e.cfg.Exchange + ":" + e.cfg.Token
+		strat = strategy.NewNifty50SR(e.cfg.Qty, srCfg)
+		log.Printf("[backtest] Using NIFTY50_SR strategy (range ADX<%.0f, trend ADX>%.0f, %d/4 confirmations, %d trades/day)",
+			srCfg.Context.RangeMaxADX, srCfg.Context.TrendMinADX, srCfg.MinConfirmations, srCfg.MaxTradesPerDay)
 	default:
 		// Run rejects unknown strategy types before replay starts.
 		return nil

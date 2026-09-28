@@ -69,6 +69,7 @@ type OptionContract struct {
 	Expiry         time.Time
 	OptionType     OptionType
 	Delta          float64
+	Gamma          float64
 	Theta          float64
 	Vega           float64
 	IV             float64
@@ -916,6 +917,7 @@ func (sp *StrikePicker) loadOptionGreekExpiry(expiry time.Time) ([]OptionContrac
 			Expiry:         expiry,
 			OptionType:     optionType,
 			Delta:          readFloat(row, "delta"),
+			Gamma:          readFloat(row, "gamma"),
 			Theta:          readFloat(row, "theta"),
 			Vega:           readFloat(row, "vega"),
 			IV:             readFloat(row, "impliedVolatility", "iv"),

@@ -44,6 +44,7 @@ type Service struct {
 	tfEngine               *strategy.TFEngine
 	nifty50RangeStrategy   *strategy.Nifty50Range
 	nifty50RangeICStrategy *strategy.Nifty50RangeIC
+	srStrategy             *strategy.Nifty50SR
 
 	redisReader   *redisstore.Reader
 	redisWriter   *redisstore.Writer
@@ -208,6 +209,14 @@ func New(cfg Config) (*Service, error) {
 	svc.nifty50RangeICStrategy = strategy.NewNifty50RangeIC(cfg.Qty, rangeICCfg)
 	svc.nifty50RangeICStrategy.SetExpiry(orderexec.NewStrikePicker(nil).NextExpiry(time.Now()))
 
+	// NIFTY50_SR: regime-aware support/resistance (fade, breakout-retest,
+	// trend pullback); strike picked from the live chain by greeks.
+	srCfg := strategy.DefaultNifty50SRConfig()
+	srCfg.IndexToken = "NSE:99926000"
+	srCfg.MaxDayLossPts = cfg.SRMaxDayLossPts
+	svc.srStrategy = strategy.NewNifty50SR(cfg.Qty, srCfg)
+	svc.srStrategy.SetExpiry(orderexec.NewStrikePicker(nil).NextExpiry(time.Now()))
+
 	svc.syncStrategyFNOTokens(cfg.CallFNOToken, cfg.PutFNOToken)
 
 	svc.tfEngine = strategy.NewTFEngine(1000)
@@ -224,6 +233,11 @@ func New(cfg Config) (*Service, error) {
 		svc.tfEngine.Register(svc.nifty50RangeICStrategy)
 		registered++
 		log.Println("[stratengine] 🟢 registered NIFTY50_RANGE_IC (iron condor, paper legs)")
+	}
+	if cfg.SREnabled {
+		svc.tfEngine.Register(svc.srStrategy)
+		registered++
+		log.Println("[stratengine] 🟢 registered NIFTY50_SR (S/R fade + breakout-retest + trend pullback, greeks strike, paper)")
 	}
 	if registered == 0 {
 		log.Println("[stratengine] ⚪ No strategies registered — all detached from engine")
@@ -471,6 +485,9 @@ func (svc *Service) tickRouterLoop(ctx context.Context, tfTickCh chan<- model.Ti
 					}
 					if svc.nifty50RangeStrategy != nil {
 						svc.nifty50RangeStrategy.SetExpiry(picker.NextExpiry(time.Now()))
+					}
+					if svc.srStrategy != nil {
+						svc.srStrategy.SetExpiry(picker.NextExpiry(time.Now()))
 					}
 
 					ce := picker.GetCallToken()
@@ -936,6 +953,9 @@ func (svc *Service) syncStrategyFNOTokens(callToken, putToken string) {
 	if svc.nifty50RangeStrategy != nil {
 		svc.nifty50RangeStrategy.SetFNOTokens(callToken, putToken)
 	}
+	if svc.srStrategy != nil {
+		svc.srStrategy.SetFNOTokens(callToken, putToken)
+	}
 }
 
 func (svc *Service) setStrategyFNOEntryPrice(strategyName string, price int64) {
@@ -944,6 +964,9 @@ func (svc *Service) setStrategyFNOEntryPrice(strategyName string, price int64) {
 	}
 	if svc.nifty50RangeStrategy != nil && strategyName == svc.nifty50RangeStrategy.Name() {
 		svc.nifty50RangeStrategy.SetFNOEntryPrice(price)
+	}
+	if svc.srStrategy != nil && strategyName == svc.srStrategy.Name() {
+		svc.srStrategy.SetFNOEntryPrice(price)
 	}
 }
 
@@ -978,6 +1001,11 @@ func (svc *Service) seedLiveOrdersFromStrategies() {
 	if svc.nifty50RangeStrategy != nil {
 		if pos := svc.nifty50RangeStrategy.CurrentFNOPosition(); pos != nil {
 			svc.setLiveOrderFromPosition(svc.nifty50RangeStrategy.Name(), pos)
+		}
+	}
+	if svc.srStrategy != nil {
+		if pos := svc.srStrategy.CurrentFNOPosition(); pos != nil {
+			svc.setLiveOrderFromPosition(svc.srStrategy.Name(), pos)
 		}
 	}
 	svc.seedLiveLegsFromExecutor()
@@ -1093,6 +1121,9 @@ func (svc *Service) stopConfig(strategyName string) (hardSL, trailSL, trailStart
 	switch {
 	case svc.nifty50RangeStrategy != nil && strategyName == svc.nifty50RangeStrategy.Name():
 		cfg := svc.nifty50RangeStrategy.Config()
+		return float64(cfg.FNOHardSLPct), float64(cfg.FNOTrailSLPct), float64(cfg.FNOTrailStartPct), true
+	case svc.srStrategy != nil && strategyName == svc.srStrategy.Name():
+		cfg := svc.srStrategy.Config()
 		return float64(cfg.FNOHardSLPct), float64(cfg.FNOTrailSLPct), float64(cfg.FNOTrailStartPct), true
 	default:
 		return 0, 0, 0, false
