@@ -56,6 +56,12 @@ type Config struct {
 	AngelTOTP        string
 	LogPrefix        string // log prefix, e.g. "[order_executor]" or "[order_executor_ind]"
 
+	// Paper fills cross the spread like a real order would: a paper BUY
+	// fills at LTP + slip, a SELL at LTP − slip, slip = max(LTP×bps/10000,
+	// min). Zero = fill at LTP. Real orders are never touched.
+	PaperSlippageBps      int64
+	PaperSlippageMinPaise int64
+
 	// Circuit breaker config (optional — defaults used if zero)
 	CBMaxFailures  int           // consecutive failures before circuit opens (default: 3)
 	CBResetTimeout time.Duration // time to wait before half-open probe (default: 30s)
@@ -168,6 +174,8 @@ type OrderRecord struct {
 	Pending       bool      // real BUY whose outcome is not yet known; being settled in background
 	ExitOrderID   string    // real SELL sent but not yet confirmed filled
 	ExitRequested bool      // exit asked for while the BUY was Pending; sent once it settles
+	Leg           string    `json:",omitempty"` // multi-leg id (paper legs only); "" for single-leg positions
+	Short         bool      `json:",omitempty"` // leg was sold to open
 }
 
 // NewOrderExecutor creates a new order executor.
@@ -397,6 +405,9 @@ func (oe *OrderExecutor) reportMetrics() {
 }
 
 func (oe *OrderExecutor) positionKey(sig strategy.Signal) string {
+	if sig.Leg != "" {
+		return sig.StrategyName + "|" + string(sig.Side) + "|" + sig.Leg
+	}
 	return sig.StrategyName + "|" + string(sig.Side)
 }
 
@@ -441,6 +452,12 @@ func (oe *OrderExecutor) resolveInstrument(sig strategy.Signal, direction string
 			prefix, direction, sig.StrategyName, sig.Side)
 	}
 
+	// An entry that names its own contract (range strategies pick the strike
+	// from the signal close) buys exactly that one.
+	if direction == "BUY" && sig.FNOToken != "" {
+		return sig.FNOToken, sig.FNOSymbol, nil
+	}
+
 	if oe.picker != nil && oe.picker.Resolved() {
 		if isCall {
 			ce := oe.picker.GetCallToken()
@@ -483,6 +500,13 @@ func (oe *OrderExecutor) resolveInstrument(sig strategy.Signal, direction string
 func (oe *OrderExecutor) ExecuteSignal(sig strategy.Signal) {
 	prefix := oe.logPrefix()
 	defer oe.reportMetrics()
+
+	// Multi-leg signals take the paper-only leg path before any routing,
+	// so no leg can ever reach the broker (see legs.go).
+	if sig.Leg != "" {
+		oe.executeLegPaper(sig)
+		return
+	}
 
 	var direction string
 	switch sig.Action {
@@ -619,8 +643,10 @@ func (oe *OrderExecutor) executePaper(sig strategy.Signal, posKey, direction, fn
 	if !isRealOrderStrategy {
 		paperReason = "PAPER (strategy not enabled for real orders)"
 	}
-	log.Printf("%s 📋 %s: would %s %d lots of %s (%s) at LTP=%d",
-		prefix, paperReason, direction, oe.cfg.Qty, fnoSymbol, fnoToken, ltp)
+	fill := oe.paperFillPrice(direction, ltp)
+	log.Printf("%s 📋 %s: would %s %d lots of %s (%s) at LTP=%d (paper fill %d)",
+		prefix, paperReason, direction, oe.cfg.Qty, fnoSymbol, fnoToken, ltp, fill)
+	ltp = fill
 
 	if direction == "BUY" {
 		oe.setPositionInstrument(sig, fnoToken, fnoSymbol)
@@ -660,6 +686,28 @@ func (oe *OrderExecutor) executePaper(sig strategy.Signal, posKey, direction, fn
 	if hadEntry {
 		oe.reportFill(sig, direction, ltp, entryOrder.Quantity, false)
 	}
+}
+
+// paperFillPrice applies paper slippage to an LTP: buys pay more, sells
+// get less, never below one tick (5 paise). No LTP stays 0 (no fill).
+func (oe *OrderExecutor) paperFillPrice(direction string, ltp int64) int64 {
+	if ltp <= 0 {
+		return 0
+	}
+	slip := ltp * oe.cfg.PaperSlippageBps / 10000
+	if slip < oe.cfg.PaperSlippageMinPaise {
+		slip = oe.cfg.PaperSlippageMinPaise
+	}
+	if slip <= 0 {
+		return ltp
+	}
+	if direction == "BUY" {
+		return ltp + slip
+	}
+	if p := ltp - slip; p > 5 {
+		return p
+	}
+	return 5
 }
 
 // executeReal sends an order to the broker and settles it. The position
@@ -1181,4 +1229,13 @@ func (oe *OrderExecutor) GetEntryOrder(strategyName string, side strategy.Positi
 
 	order, ok := oe.entryOrders[key]
 	return order, ok
+}
+
+// PaperSlippage is the per-side slippage a paper fill at ltp would take
+// (paise), for callers estimating round-trip costs.
+func (oe *OrderExecutor) PaperSlippage(ltp int64) int64 {
+	if ltp <= 0 {
+		return 0
+	}
+	return oe.paperFillPrice("BUY", ltp) - ltp
 }

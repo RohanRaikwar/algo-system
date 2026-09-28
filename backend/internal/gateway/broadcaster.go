@@ -110,6 +110,7 @@ var latestWinsChannels = map[string]bool{
 	"pub:orders": true,
 	"pub:pnl":    true,
 	"pub:strike": true,
+	"pub:range":  true,
 }
 
 // isLatestWins also covers pub:analyst:* — each frame is the full analyst

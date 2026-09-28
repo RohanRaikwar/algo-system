@@ -489,7 +489,8 @@ func (sc *SmartConnect) LoginURL() string {
 
 // GenerateSession(clientCode,password,totp) -> sets tokens and returns user profile payload
 func (sc *SmartConnect) GenerateSession(clientCode, password, totp string) (map[string]any, error) {
-	fmt.Println("Generating session for clientCode:", clientCode, "password:", password, "totp:", totp)
+	// Never log the password or TOTP: logs are kept and shared.
+	fmt.Println("Generating session for clientCode:", clientCode)
 	params := map[string]any{"clientcode": clientCode, "password": password, "totp": totp}
 	res, err := sc.post("api.login", params)
 

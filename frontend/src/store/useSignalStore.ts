@@ -45,6 +45,9 @@ function liveToRecord(sig: SignalPayload): SignalRecord {
         stoploss_price: sig.stoploss_price,
         live_mode: sig.order_mode === 'REAL',
         profit_cap: sig.profit_cap_hit === true,
+        leg: sig.leg,
+        strike: sig.strike,
+        short: sig.short,
     };
 }
 

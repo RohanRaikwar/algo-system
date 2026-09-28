@@ -92,3 +92,17 @@ describe('SnapshotRequestTracker', () => {
         expect(retry).not.toHaveBeenCalled();
     });
 });
+
+describe('SnapshotRequestTracker per key', () => {
+    it('keeps each chart subscription\'s latest reqId separately', () => {
+        const t = new SnapshotRequestTracker({ timeoutMs: 5000, maxRetries: 3 });
+        t.track('r1', () => {}, false, 'NSE:1:60');
+        t.track('r2', () => {}, false, 'NSE:1:300');
+        expect(t.accept('r1', 'NSE:1:60')).toBe(true);
+        expect(t.accept('r2', 'NSE:1:300')).toBe(true);
+        t.track('r3', () => {}, false, 'NSE:1:60');
+        expect(t.accept('r1', 'NSE:1:60')).toBe(false);
+        expect(t.accept('r3', 'NSE:1:60')).toBe(true);
+        t.clear();
+    });
+});

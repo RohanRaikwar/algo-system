@@ -438,6 +438,7 @@ func buildMissedResponse(h *Hub, channel string, fromSeq, toSeq int64, clientEpo
 var liveStateChannels = []struct{ channel, key string }{
 	{"pub:orders", "orders:live"},
 	{"pub:pnl", "pnl:summary"},
+	{"pub:range", "range:state"},
 }
 
 // snapshotSignalCount is how many recent pub:signal envelopes a SNAPSHOT
@@ -485,6 +486,8 @@ func (h *Hub) attachLiveState(snap *SnapshotResponse, fallback func(key string) 
 			snap.Orders = &raw
 		case "pub:pnl":
 			snap.PnL = &raw
+		case "pub:range":
+			snap.Range = &raw
 		}
 	}
 }
@@ -500,7 +503,7 @@ const (
 // channels whose latest value must survive long quiet periods.
 func isStickyChannel(ch string) bool {
 	switch ch {
-	case "pub:orders", "pub:pnl", "pub:signal", "pub:strike":
+	case "pub:orders", "pub:pnl", "pub:signal", "pub:strike", "pub:range":
 		return true
 	}
 	return strings.HasPrefix(ch, "pub:analyst:")

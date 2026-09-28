@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { sendSubscribe, sendUnsubscribe } from '../../../hooks/useWebSocket';
 import { entryKey } from '../../../utils/helpers';
+import { acquirePaneSub, isPaneSub, releasePaneSub } from '../../../services/paneSubscriptions';
+import { useAppStore } from '../../../store/useAppStore';
 import type { IndicatorEntry } from '../../../types/api';
 
 /**
@@ -28,7 +30,7 @@ export function useChartSubscription(
             currentKeys.some(k => !prevKeys.has(k));
 
         // Unsubscribe from previous subscription if symbol/TF changed
-        if (tfOrTokenChanged && prevTokenRef.current && prevTFRef.current > 0) {
+        if (tfOrTokenChanged && prevTokenRef.current && prevTFRef.current > 0 && !isPaneSub(prevTokenRef.current, prevTFRef.current)) {
             sendUnsubscribe(prevTokenRef.current, prevTFRef.current);
         }
 
@@ -43,4 +45,22 @@ export function useChartSubscription(
             sendSubscribe(token, tf, activeEntries);
         }
     }, [selectedTF, selectedToken, activeEntries]);
+}
+
+/**
+ * Subscription for an extra dashboard pane: candles only, reference-counted
+ * so panes (and the main chart) showing the same symbol:tf share it.
+ */
+export function usePaneSubscription(token: string | null, tf: number) {
+    useEffect(() => {
+        if (!token || !tf) return;
+        const isMain = () => {
+            const s = useAppStore.getState();
+            return s.selectedToken === token && (s.selectedTF || 60) === tf;
+        };
+        if (acquirePaneSub(token, tf) && !isMain()) sendSubscribe(token, tf, []);
+        return () => {
+            if (releasePaneSub(token, tf) && !isMain()) sendUnsubscribe(token, tf);
+        };
+    }, [token, tf]);
 }

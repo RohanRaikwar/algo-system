@@ -66,6 +66,7 @@ type SnapshotResponse struct {
 	// than what they already applied.
 	Orders   *json.RawMessage `json:"orders,omitempty"`
 	PnL      *json.RawMessage `json:"pnl,omitempty"`
+	Range    *json.RawMessage `json:"range,omitempty"` // NIFTY50_RANGE dashboard view (pub:range)
 	LiveSeqs map[string]int64 `json:"liveSeqs,omitempty"`
 	// Most recent pub:signal envelopes (oldest first, each with its
 	// channel_seq); clients apply the ones they have not seen.

@@ -1443,3 +1443,18 @@
         transition: none !important;
     }
 }
+
+/* Range strategy entry type (Breakout / Flag / Mean rev.) */
+.range-kind-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 6px;
+    border-radius: var(--sg-r-pill);
+    font-size: 10px;
+    font-weight: 600;
+    vertical-align: 1px;
+    color: var(--sg-info);
+    background: var(--sg-info-soft);
+}
+.range-kind-badge.flag { color: var(--sg-warn); background: var(--sg-warn-soft); }
+.range-kind-badge.mean_reversion { color: var(--sg-muted); background: var(--sg-line-soft); }

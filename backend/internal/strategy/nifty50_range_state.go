@@ -3,77 +3,110 @@ package strategy
 import (
 	"encoding/json"
 	"time"
-
-	"trading-systemv1/internal/indicator"
-	"trading-systemv1/internal/model"
 )
 
 // ════════════════════════════════════════════════════════════════════
-//  NIFTY50 RANGE — Support/Resistance Range Trading Strategy
+//  NIFTY50 RANGE — range-market strategy (NIFTY_RANGE_MARKET_GUIDE.md)
 //
-//  Detects support/resistance levels and trades within ranges:
-//    • BUY near support (expecting bounce)
-//    • SELL near resistance (expecting rejection)
-//    • Exit on range breakout or opposite level touch
+//  S1 mean reversion: BUY CALL at support / PUT at resistance on a 1m
+//     reversal candle with 5m RSI and volume confirmation.
+//  S2 breakout: BUY in the break direction after a 1m close beyond the
+//     range edge, with volume and a follow-through bar.
 //
-//  Key Features:
-//    • Dynamic S/R level detection using swing highs/lows
-//    • Range confirmation (multiple touches)
-//    • Breakout detection and position reversal
-//    • Risk management with range-based stops
+//  Situation (range, levels, ADX, RSI) comes from 5m/15m bars built
+//  from the 1m stream (see range_context.go). Index levels are int64 paise.
 // ════════════════════════════════════════════════════════════════════
+
+// Entry kinds recorded on a position.
+const (
+	RangeKindMeanReversion = "MEAN_REVERSION"
+	RangeKindBreakout      = "BREAKOUT"
+	RangeKindFlag          = "FLAG" // consolidation breakout in the day's trend direction
+)
+
+// timeWindow is [From, To) in minutes after midnight IST.
+type timeWindow struct {
+	From int
+	To   int
+}
+
+func inWindows(min int, ws []timeWindow) bool {
+	for _, w := range ws {
+		if min >= w.From && min < w.To {
+			return true
+		}
+	}
+	return false
+}
 
 // Nifty50RangeConfig holds all configurable parameters.
 type Nifty50RangeConfig struct {
-	// ── Indicators ──
-	EMA9Period  int // 9  (trend filter)
-	SMA21Period int // 21 (trend filter)
+	Range RangeContextConfig
 
-	// ── Support/Resistance Detection ──
-	SwingLookback       int     // Candles to look back for swing highs/lows (e.g., 20)
-	MinTouchesForLevel  int     // Min touches to confirm S/R level (e.g., 2-3)
-	TouchTolerancePct   float64 // % tolerance for level touch (e.g., 0.15%)
-	MinLevelSeparation  float64 // Min % separation between S/R levels (e.g., 0.3%)
-	LevelExpiryCandles  int     // Candles before level expires if not touched (e.g., 50)
+	// ── S1 mean reversion ──
+	MeanReversionEnabled bool
+	EntryZonePct         int64   // % of range width from an edge that counts as "at the edge"
+	RSIBuyMax            float64 // 5m RSI must be below this for CALL (guide: 45)
+	RSISellMin           float64 // 5m RSI must be above this for PUT (guide: 55)
+	ReversalVolPct       int64   // reversal bar volume ≥ this % of average
+	RequireVolume        bool    // false: skip volume checks when no volume data (index)
+	RequirePrevOpposite  bool    // previous entry bar must be bearish (CALL) / bullish (PUT)
+	StopBufferPts        int64   // minimum paise beyond the edge for the index stop
+	StopATRPct           int64   // stop buffer ≥ this % of 15m ATR (noise-sized stop), 0 = fixed only
 
-	// ── Range Detection ──
-	MinRangeSizePts     int64   // Min range size in index points (e.g., 100 = 10 NIFTY points)
-	MaxRangeSizePts     int64   // Max range size in index points (e.g., 5000 = 500 NIFTY points)
-	MinRangeSizePct     float64 // Min range size as % of price (e.g., 0.5%) - DEPRECATED, use MinRangeSizePts
-	MaxRangeSizePct     float64 // Max range size as % of price (e.g., 2.0%) - DEPRECATED, use MaxRangeSizePts
-	RangeConfirmCandles int     // Candles to confirm range (e.g., 10)
+	// EntryTFMinutes is the bar entries are judged on (5 = guide's "5-min
+	// entry"; 1 = every 1m close). Stops, targets and the time exit are
+	// always checked on 1m closes.
+	EntryTFMinutes int
 
-	// ── Entry Zones ──
-	SupportEntryZonePct    float64 // % above support to enter CALL (e.g., 0.1%)
-	ResistanceEntryZonePct float64 // % below resistance to enter PUT (e.g., 0.1%)
+	// HTFTrendFilter takes breakouts and flags only with the 1h trend
+	// (price above the 1h EMA for CALL, below for PUT).
+	HTFTrendFilter bool
 
-	// ── Breakout Detection ──
-	BreakoutConfirmPct    float64 // % beyond level to confirm breakout (e.g., 0.2%)
-	BreakoutVolumeMultiple float64 // Volume multiple for breakout confirmation (e.g., 1.5x)
+	// VolumeToken is an instrument whose ticks supply volume ("NFO:<fut
+	// token>", the NIFTY future). The index has none; "" = no volume data.
+	VolumeToken    string
+	MeanRevWindows []timeWindow
 
-	// ── Position Management ──
-	TargetAtOppositeLevelPct float64 // % before opposite level to take profit (e.g., 0.15%)
-	StopBeyondLevelPct       float64 // % beyond entry level for stop loss (e.g., 0.2%)
+	// ── S2 breakout ──
+	BreakoutEnabled    bool
+	BreakoutConfirmPts int64 // paise beyond the edge for a breakout close
+	BreakoutVolPct     int64 // breakout bar volume ≥ this % of average
+	BreakoutStopPts    int64 // paise back inside the range for the stop
+	BreakoutTargetPct  int64 // target = edge ± this % of range width (trail arms at half of it)
+	BreakoutWindows    []timeWindow
 
-	// ── FNO Target & SL ──
-	FNOTargetProfitPct float64 // FNO target profit % (e.g., 1.5%)
-	FNOHardSLPct       float64 // FNO hard stop loss % (e.g., 3.0%)
-	FNOTrailSLPct      float64 // FNO trailing stop loss % (e.g., 1.5%)
-	FNOTrailStartPct   float64 // Profit % to start trailing (e.g., 2.0%)
+	// ── Option selection ──
+	// Each entry names its own strike from the signal close, so a position
+	// never inherits a stale 09:15 ATM. OTMSteps shifts it out of the money
+	// by range class (guide: narrow ATM only, wide 1-2 OTM); breakouts use
+	// BreakoutOTMSteps.
+	StrikeStep       int64
+	OTMSteps         map[RangeClass]int
+	BreakoutOTMSteps int
+	ATMWithinDTE     int // at or below this many days to expiry, always buy ATM
 
-	// ── Time-of-day filter ──
-	SkipFirstMinutes int
-	SkipLastMinutes  int
+	// ── S2b flag: consolidation breakout on trend days ──
+	// When the range regime is off (15m ADX high after a strong move), a
+	// tight 5m box that forms in the day's trend and then breaks in the
+	// trend direction is traded like a breakout. Target = FlagTargetPolePct
+	// of the day's move ("pole") projected from the box edge.
+	FlagEnabled       bool
+	FlagBars          int   // 5m bars in the box (12 = 1 hour)
+	FlagMaxWidthBps   int64 // box height ≤ this many bps of price (30 = 0.30%)
+	FlagMinTrendPts   int64 // |close − day open| ≥ this (paise) for a trend day
+	FlagTargetPolePct int64
+	FlagWindows       []timeWindow
 
-	// ── Trend Filter ──
-	TrendFilterEnabled bool // Only trade with trend
-	TrendLookback      int  // Candles for trend detection
-
-	// ── Cooldown ──
-	CooldownCandles int // Candles to wait after exit
-
-	// ── Prefetch buffer ──
-	BufferSize int
+	// ── Exits / risk ──
+	MinRewardRiskPct int64 // index reward ≥ this % of index risk (120 = 1.2:1), 0 = off
+	TimeExitMin      int   // minutes after midnight IST; 15:00 (before NSE's closing auction session)
+	MaxTradesPerDay  int   // guide: "don't overtrade"
+	CooldownCandles  int   // 1m candles after an exit before a new entry
+	FNOHardSLPct     int64 // premium hard SL % (guide: 15-20% of premium)
+	FNOTargetPct     int64 // premium target %, 0 = off (index targets decide)
+	FNOTrailStartPct int64 // premium gain % that arms the trailing SL
+	FNOTrailSLPct    int64 // premium drop % from best once armed
 
 	// ── FNO token identifiers ──
 	FNOCallToken string
@@ -82,303 +115,197 @@ type Nifty50RangeConfig struct {
 	// ── Candle filter ──
 	IndexToken string // e.g. "NSE:99926000"
 
-	// ── Name override ──
 	NameOverride string
 }
 
-// DefaultNifty50RangeConfig returns sensible defaults.
+// DefaultNifty50RangeConfig returns the guide's values.
 func DefaultNifty50RangeConfig() Nifty50RangeConfig {
+	rc := DefaultRangeContextConfig()
+	// NIFTY's 15m ADX sits ≥ 25 on ~60% of bars; the guide's 25 starved the
+	// strategy. 30 was chosen on Mar-Jun 2026 and held on Jul-Sep 2026.
+	rc.MaxADX = 30
 	return Nifty50RangeConfig{
-		EMA9Period:  9,
-		SMA21Period: 21,
+		Range: rc,
 
-		// S/R Detection
-		SwingLookback:      20,
-		MinTouchesForLevel: 2,
-		TouchTolerancePct:  0.15,
-		MinLevelSeparation: 0.3,
-		LevelExpiryCandles: 50,
+		// Off: the 2026-03..09 backtest lost on mean reversion (8 trades,
+		// -79 pts) while breakouts carried the result (28 trades, +440 pts).
+		MeanReversionEnabled: false,
+		EntryZonePct:         20,
+		RSIBuyMax:            45,
+		RSISellMin:           55,
+		ReversalVolPct:       120,
+		RequireVolume:        false,
+		RequirePrevOpposite:  false, // hammer/engulfing already encode the reversal
+		StopBufferPts:        2500,  // ≥ 25 pts beyond the level
+		StopATRPct:           50,    // …or half a 15m ATR, whichever is wider
+		EntryTFMinutes:       5,
+		MeanRevWindows: []timeWindow{
+			{From: hhmm(9, 45), To: hhmm(11, 30)},
+			{From: hhmm(14, 0), To: hhmm(14, 45)},
+		},
 
-		// Range Detection
-		MinRangeSizePts:     1000, // 10 NIFTY points (in paise: 10 * 100 = 1000)
-		MaxRangeSizePts:     50000, // 500 NIFTY points (in paise: 500 * 100 = 50000)
-		MinRangeSizePct:     0.5,  // Fallback if MinRangeSizePts is 0
-		MaxRangeSizePct:     2.0,  // Fallback if MaxRangeSizePts is 0
-		RangeConfirmCandles: 10,
+		BreakoutEnabled:    true,
+		BreakoutConfirmPts: 1000, // 10 pts
+		BreakoutVolPct:     150,
+		BreakoutStopPts:    2500, // ≥ 25 pts back inside the range (or half a 15m ATR, if wider)
+		// Full measured move: a 50% target cut trades (reward:risk) and win
+		// rate in the Mar-Jun 2026 backtest; time exits bank what's left.
+		BreakoutTargetPct: 100,
+		BreakoutWindows: []timeWindow{
+			{From: hhmm(9, 45), To: hhmm(14, 45)}, // 15 min before the 15:00 exit
+		},
 
-		// Entry Zones
-		SupportEntryZonePct:    0.1,
-		ResistanceEntryZonePct: 0.1,
+		StrikeStep:       50,
+		OTMSteps:         map[RangeClass]int{RangeNarrow: 0, RangeMedium: 0, RangeWide: 1},
+		BreakoutOTMSteps: 0,
+		ATMWithinDTE:     2, // OTM delta collapses near expiry
 
-		// Breakout
-		BreakoutConfirmPct:     0.2,
-		BreakoutVolumeMultiple: 1.5,
+		MinRewardRiskPct:  120,
+		FlagEnabled:       true,
+		FlagBars:          12,
+		FlagMaxWidthBps:   30,
+		FlagMinTrendPts:   10000, // 100 pts
+		FlagTargetPolePct: 50,
+		FlagWindows:       []timeWindow{{From: hhmm(10, 15), To: hhmm(14, 45)}},
 
-		// Position Management
-		TargetAtOppositeLevelPct: 0.15,
-		StopBeyondLevelPct:       0.2,
+		// Flat by 15:00: NSE's closing auction session makes the last half hour erratic.
+		TimeExitMin:      hhmm(15, 0),
+		MaxTradesPerDay:  4,
+		CooldownCandles:  5,
+		FNOHardSLPct:     20,
+		FNOTargetPct:     0,
+		FNOTrailStartPct: 25,
+		FNOTrailSLPct:    10,
 
-		// FNO
-		FNOTargetProfitPct: 1.5,
-		FNOHardSLPct:       3.0,
-		FNOTrailSLPct:      1.5,
-		FNOTrailStartPct:   2.0,
-
-		// Time filter
-		SkipFirstMinutes: 0,
-		SkipLastMinutes:  0,
-
-		// Trend filter
-		TrendFilterEnabled: false,
-		TrendLookback:      50,
-
-		// Cooldown
-		CooldownCandles: 0,
-
-		// Buffer
-		BufferSize: 50,
-
-		// Tokens
-		FNOCallToken: "",
-		FNOPutToken:  "",
 		IndexToken:   "NSE:99926000",
 		NameOverride: "NIFTY50_RANGE",
 	}
 }
 
-// ── Support/Resistance Level ──
-
-type SRLevel struct {
-	Price       float64   // Level price
-	Type        string    // "support" or "resistance"
-	Touches     int       // Number of times price touched this level
-	LastTouch   time.Time // Last time price touched this level
-	Strength    float64   // Level strength (0-1, based on touches and age)
-	CreatedAt   time.Time // When level was first detected
-	IsActive    bool      // Whether level is still valid
+// targetFraction returns the % of range width used as the S1 target.
+// The executor has one quantity per position, so the guide's partial
+// bookings (50% / 75% / 100%) collapse to one exit per range class;
+// the trailing stop armed at 50% protects the rest of the move.
+func targetFraction(c RangeClass) int64 {
+	switch c {
+	case RangeNarrow:
+		return 50
+	case RangeMedium:
+		return 75
+	default:
+		return 100
+	}
 }
 
-// ── Range Structure ──
-
-type PriceRange struct {
-	Support    float64   // Support level price
-	Resistance float64   // Resistance level price
-	MidPoint   float64   // Range midpoint
-	Size       float64   // Range size in points
-	SizePct    float64   // Range size as % of price
-	Confirmed  bool      // Whether range is confirmed
-	CreatedAt  time.Time // When range was detected
-	TouchCount int       // Total touches of both levels
+// atmStrike rounds an index price (paise) to the nearest strike (points).
+func atmStrike(pricePaise, step int64) int64 {
+	unit := step * 100
+	return (pricePaise + unit/2) / unit * step
 }
 
-// ── Buffer entry ──
-
-type nifty50RangeBufferEntry struct {
-	Time   time.Time
-	Open   float64
-	High   float64
-	Low    float64
-	Close  float64
-	Volume int64
-	EMA9   float64
-	SMA21  float64
+// entryStrike is the strike to buy: ATM shifted otm steps out of the money
+// (up for a CALL, down for a PUT).
+func entryStrike(side PositionSide, pricePaise, step int64, otm int) int64 {
+	k := atmStrike(pricePaise, step)
+	if side == SidePut {
+		return k - int64(otm)*step
+	}
+	return k + int64(otm)*step
 }
 
-// ── Per-instrument state ──
-
+// nifty50RangeState is the per-index state.
 type nifty50RangeState struct {
-	// ── Indicators ──
-	EMA9  *indicator.EMA
-	SMA21 *indicator.SMA
+	ctx *rangeContext
 
-	// ── Ring buffer ──
-	Buffer      []nifty50RangeBufferEntry
-	BufferIdx   int
-	BufferCount int
-
-	// ── Support/Resistance Levels ──
-	SupportLevels    []SRLevel
-	ResistanceLevels []SRLevel
-
-	// ── Active Range ──
-	ActiveRange *PriceRange
-
-	// ── Position state ──
-	Side            PositionSide
-	EntryPrice      int64
-	EntryLevel      float64 // S/R level at entry
-	TargetLevel     float64 // Opposite S/R level (target)
-	StopLevel       float64 // Stop loss level
-	IndexEntryPrice int64
-	IndexBestPrice  int64
+	// ── Position ──
+	Side        PositionSide
+	Kind        string
+	IndexEntry  int64
+	StopLevel   int64
+	TargetLevel int64
+	TrailArm    int64 // index level that arms the index trailing stop
+	TrailArmed  bool
+	IndexBest   int64 // best index close since entry (in trade direction)
+	RangeSup    int64 // range at entry
+	RangeRes    int64
 
 	// ── FNO tracking ──
+	Strike        int64  // strike asked for at entry (points)
+	FNOToken      string // "NFO:<token>" of the held contract, once known
 	FNOEntryPrice int64
 	FNOBestPrice  int64
 
-	// ── Cooldown ──
-	InCooldown       bool
-	CandlesSinceExit int
+	// ── Last range seen with price inside it (breakout reference) ──
+	LastSup, LastRes, LastWidth int64
 
-	// ── Swing tracking ──
-	RecentSwingHighs []SwingPoint
-	RecentSwingLows  []SwingPoint
+	// ── Breakout tracking ──
+	PendingBreak PositionSide // SideCall = above resistance, SidePut = below support
+	PendingEdge  int64
+	PendingWidth int64  // target distance from the edge (paise) once confirmed
+	PendingKind  string // RangeKindBreakout or RangeKindFlag
 
-	// ── Volume tracking ──
-	AvgVolume float64
+	// ── Session ──
+	DayOpen   int64 // first 1m open of the session
+	BrokenSup int64 // levels of a range that broke; not traded again
+	BrokenRes int64
 
-	// ── Dedup ──
+	// ── Pacing ──
+	TradeDay     string
+	TradesToday  int
+	CooldownLeft int
+
 	LastCloseTS time.Time
 }
 
-// SwingPoint represents a swing high or low.
-type SwingPoint struct {
-	Price float64
-	Time  time.Time
-	Index int // Buffer index
-}
-
-// newNifty50RangeState creates a fresh state with the given config.
 func newNifty50RangeState(cfg Nifty50RangeConfig) *nifty50RangeState {
-	bufSize := cfg.BufferSize
-	if bufSize <= 0 {
-		bufSize = 50
-	}
-	return &nifty50RangeState{
-		EMA9:             indicator.NewEMA(cfg.EMA9Period),
-		SMA21:            indicator.NewSMA(cfg.SMA21Period),
-		Buffer:           make([]nifty50RangeBufferEntry, bufSize),
-		Side:             SideNone,
-		SupportLevels:    make([]SRLevel, 0, 10),
-		ResistanceLevels: make([]SRLevel, 0, 10),
-		RecentSwingHighs: make([]SwingPoint, 0, 20),
-		RecentSwingLows:  make([]SwingPoint, 0, 20),
-	}
+	return &nifty50RangeState{ctx: newRangeContext(rangeCtxCfg(cfg)), Side: SideNone}
 }
 
-// bufferReady returns true when enough data exists.
-func (st *nifty50RangeState) bufferReady() bool {
-	return st.BufferCount >= 3
-}
-
-// pushBuffer appends a new entry to the ring buffer.
-func (st *nifty50RangeState) pushBuffer(entry nifty50RangeBufferEntry) {
-	st.Buffer[st.BufferIdx] = entry
-	st.BufferIdx = (st.BufferIdx + 1) % len(st.Buffer)
-	if st.BufferCount < len(st.Buffer) {
-		st.BufferCount++
-	}
-}
-
-// latestBufferEntry returns the most recent buffer entry.
-func (st *nifty50RangeState) latestBufferEntry() (nifty50RangeBufferEntry, bool) {
-	if st.BufferCount == 0 {
-		return nifty50RangeBufferEntry{}, false
-	}
-	size := len(st.Buffer)
-	idx := (st.BufferIdx - 1 + size) % size
-	return st.Buffer[idx], true
-}
-
-// getBufferEntry returns entry at offset from current (0 = latest, 1 = previous, etc.)
-func (st *nifty50RangeState) getBufferEntry(offset int) (nifty50RangeBufferEntry, bool) {
-	if offset >= st.BufferCount {
-		return nifty50RangeBufferEntry{}, false
-	}
-	size := len(st.Buffer)
-	idx := (st.BufferIdx - 1 - offset + size*10) % size
-	return st.Buffer[idx], true
-}
-
-// updateIndicators feeds indicators and pushes to buffer.
-func (st *nifty50RangeState) updateIndicators(candle model.Candle) {
-	st.EMA9.Update(candle)
-	st.SMA21.Update(candle)
-
-	if st.EMA9.Ready() && st.SMA21.Ready() {
-		st.pushBuffer(nifty50RangeBufferEntry{
-			Time:   candle.TS,
-			Open:   float64(candle.Open),
-			High:   float64(candle.High),
-			Low:    float64(candle.Low),
-			Close:  float64(candle.Close),
-			Volume: candle.Volume,
-			EMA9:   st.EMA9.Value(),
-			SMA21:  st.SMA21.Value(),
-		})
-	}
+// rangeCtxCfg is cfg.Range with the entry series matching EntryTFMinutes.
+func rangeCtxCfg(cfg Nifty50RangeConfig) RangeContextConfig {
+	rc := cfg.Range
+	rc.EntryMinutes = cfg.EntryTFMinutes
+	return rc
 }
 
 // ── Snapshot / Restore ──
 
-type nifty50RangeBufferEntrySnapshot struct {
-	Time   time.Time `json:"time"`
-	Open   float64   `json:"open"`
-	High   float64   `json:"high"`
-	Low    float64   `json:"low"`
-	Close  float64   `json:"close"`
-	Volume int64     `json:"volume"`
-	EMA9   float64   `json:"ema9"`
-	SMA21  float64   `json:"sma21"`
-}
-
-type SRLevelSnapshot struct {
-	Price     float64   `json:"price"`
-	Type      string    `json:"type"`
-	Touches   int       `json:"touches"`
-	LastTouch time.Time `json:"last_touch"`
-	Strength  float64   `json:"strength"`
-	CreatedAt time.Time `json:"created_at"`
-	IsActive  bool      `json:"is_active"`
-}
-
-type PriceRangeSnapshot struct {
-	Support    float64   `json:"support"`
-	Resistance float64   `json:"resistance"`
-	MidPoint   float64   `json:"mid_point"`
-	Size       float64   `json:"size"`
-	SizePct    float64   `json:"size_pct"`
-	Confirmed  bool      `json:"confirmed"`
-	CreatedAt  time.Time `json:"created_at"`
-	TouchCount int       `json:"touch_count"`
-}
-
-type SwingPointSnapshot struct {
-	Price float64   `json:"price"`
-	Time  time.Time `json:"time"`
-	Index int       `json:"index"`
-}
-
 type nifty50RangeSnapshot struct {
 	Key string `json:"key"`
 
-	EMA9Snap  indicator.IndicatorSnapshot `json:"ema9"`
-	SMA21Snap indicator.IndicatorSnapshot `json:"sma21"`
+	Context rangeContextSnapshot `json:"context"`
 
-	Buffer      []nifty50RangeBufferEntrySnapshot `json:"buffer"`
-	BufferIdx   int                               `json:"buffer_idx"`
-	BufferCount int                               `json:"buffer_count"`
+	Side        PositionSide `json:"side"`
+	Kind        string       `json:"kind"`
+	IndexEntry  int64        `json:"index_entry"`
+	StopLevel   int64        `json:"stop_level"`
+	TargetLevel int64        `json:"target_level"`
+	TrailArm    int64        `json:"trail_arm"`
+	TrailArmed  bool         `json:"trail_armed"`
+	IndexBest   int64        `json:"index_best"`
+	RangeSup    int64        `json:"range_sup"`
+	RangeRes    int64        `json:"range_res"`
 
-	SupportLevels    []SRLevelSnapshot `json:"support_levels"`
-	ResistanceLevels []SRLevelSnapshot `json:"resistance_levels"`
-	ActiveRange      *PriceRangeSnapshot `json:"active_range,omitempty"`
+	Strike        int64  `json:"strike"`
+	FNOToken      string `json:"fno_token"`
+	FNOEntryPrice int64  `json:"fno_entry_price"`
+	FNOBestPrice  int64  `json:"fno_best_price"`
 
-	Side            PositionSide `json:"side"`
-	EntryPrice      int64        `json:"entry_price"`
-	EntryLevel      float64      `json:"entry_level"`
-	TargetLevel     float64      `json:"target_level"`
-	StopLevel       float64      `json:"stop_level"`
-	IndexEntryPrice int64        `json:"index_entry_price"`
-	IndexBestPrice  int64        `json:"index_best_price"`
-	FNOEntryPrice   int64        `json:"fno_entry_price"`
-	FNOBestPrice    int64        `json:"fno_best_price"`
+	LastSup   int64 `json:"last_sup"`
+	LastRes   int64 `json:"last_res"`
+	LastWidth int64 `json:"last_width"`
 
-	InCooldown       bool `json:"in_cooldown"`
-	CandlesSinceExit int  `json:"candles_since_exit"`
+	PendingBreak PositionSide `json:"pending_break"`
+	PendingEdge  int64        `json:"pending_edge"`
+	PendingWidth int64        `json:"pending_width"`
+	PendingKind  string       `json:"pending_kind"`
+	DayOpen      int64        `json:"day_open"`
+	BrokenSup    int64        `json:"broken_sup"`
+	BrokenRes    int64        `json:"broken_res"`
 
-	RecentSwingHighs []SwingPointSnapshot `json:"recent_swing_highs"`
-	RecentSwingLows  []SwingPointSnapshot `json:"recent_swing_lows"`
-	AvgVolume        float64              `json:"avg_volume"`
+	TradeDay     string `json:"trade_day"`
+	TradesToday  int    `json:"trades_today"`
+	CooldownLeft int    `json:"cooldown_left"`
 
 	LastCloseTS time.Time `json:"last_close_ts"`
 }
@@ -389,161 +316,55 @@ type nifty50RangeStrategySnapshot struct {
 	Instruments []nifty50RangeSnapshot `json:"instruments"`
 }
 
+// nifty50RangeSnapshotVersion 2: int64 levels + multi-TF context.
+// Version 1 snapshots (float64 levels) are dropped on restore.
+const nifty50RangeSnapshotVersion = 2
+
 func snapshotNifty50Range(key string, s *nifty50RangeState) nifty50RangeSnapshot {
-	bufSnap := make([]nifty50RangeBufferEntrySnapshot, len(s.Buffer))
-	for i, b := range s.Buffer {
-		bufSnap[i] = nifty50RangeBufferEntrySnapshot{
-			Time: b.Time, Open: b.Open, High: b.High, Low: b.Low, Close: b.Close,
-			Volume: b.Volume, EMA9: b.EMA9, SMA21: b.SMA21,
-		}
-	}
-
-	supportSnap := make([]SRLevelSnapshot, len(s.SupportLevels))
-	for i, l := range s.SupportLevels {
-		supportSnap[i] = SRLevelSnapshot{
-			Price: l.Price, Type: l.Type, Touches: l.Touches,
-			LastTouch: l.LastTouch, Strength: l.Strength,
-			CreatedAt: l.CreatedAt, IsActive: l.IsActive,
-		}
-	}
-
-	resistanceSnap := make([]SRLevelSnapshot, len(s.ResistanceLevels))
-	for i, l := range s.ResistanceLevels {
-		resistanceSnap[i] = SRLevelSnapshot{
-			Price: l.Price, Type: l.Type, Touches: l.Touches,
-			LastTouch: l.LastTouch, Strength: l.Strength,
-			CreatedAt: l.CreatedAt, IsActive: l.IsActive,
-		}
-	}
-
-	var rangeSnap *PriceRangeSnapshot
-	if s.ActiveRange != nil {
-		rangeSnap = &PriceRangeSnapshot{
-			Support: s.ActiveRange.Support, Resistance: s.ActiveRange.Resistance,
-			MidPoint: s.ActiveRange.MidPoint, Size: s.ActiveRange.Size,
-			SizePct: s.ActiveRange.SizePct, Confirmed: s.ActiveRange.Confirmed,
-			CreatedAt: s.ActiveRange.CreatedAt, TouchCount: s.ActiveRange.TouchCount,
-		}
-	}
-
-	swingHighsSnap := make([]SwingPointSnapshot, len(s.RecentSwingHighs))
-	for i, sp := range s.RecentSwingHighs {
-		swingHighsSnap[i] = SwingPointSnapshot{Price: sp.Price, Time: sp.Time, Index: sp.Index}
-	}
-
-	swingLowsSnap := make([]SwingPointSnapshot, len(s.RecentSwingLows))
-	for i, sp := range s.RecentSwingLows {
-		swingLowsSnap[i] = SwingPointSnapshot{Price: sp.Price, Time: sp.Time, Index: sp.Index}
-	}
-
 	return nifty50RangeSnapshot{
-		Key:              key,
-		EMA9Snap:         s.EMA9.Snapshot(),
-		SMA21Snap:        s.SMA21.Snapshot(),
-		Buffer:           bufSnap,
-		BufferIdx:        s.BufferIdx,
-		BufferCount:      s.BufferCount,
-		SupportLevels:    supportSnap,
-		ResistanceLevels: resistanceSnap,
-		ActiveRange:      rangeSnap,
-		Side:             s.Side,
-		EntryPrice:       s.EntryPrice,
-		EntryLevel:       s.EntryLevel,
-		TargetLevel:      s.TargetLevel,
-		StopLevel:        s.StopLevel,
-		IndexEntryPrice:  s.IndexEntryPrice,
-		IndexBestPrice:   s.IndexBestPrice,
-		FNOEntryPrice:    s.FNOEntryPrice,
-		FNOBestPrice:     s.FNOBestPrice,
-		InCooldown:       s.InCooldown,
-		CandlesSinceExit: s.CandlesSinceExit,
-		RecentSwingHighs: swingHighsSnap,
-		RecentSwingLows:  swingLowsSnap,
-		AvgVolume:        s.AvgVolume,
-		LastCloseTS:      s.LastCloseTS,
+		Key: key, Context: s.ctx.snapshot(),
+		Side: s.Side, Kind: s.Kind, IndexEntry: s.IndexEntry,
+		StopLevel: s.StopLevel, TargetLevel: s.TargetLevel,
+		TrailArm: s.TrailArm, TrailArmed: s.TrailArmed, IndexBest: s.IndexBest,
+		RangeSup: s.RangeSup, RangeRes: s.RangeRes,
+		Strike: s.Strike, FNOToken: s.FNOToken,
+		FNOEntryPrice: s.FNOEntryPrice, FNOBestPrice: s.FNOBestPrice,
+		LastSup: s.LastSup, LastRes: s.LastRes, LastWidth: s.LastWidth,
+		PendingBreak: s.PendingBreak, PendingEdge: s.PendingEdge, PendingWidth: s.PendingWidth,
+		PendingKind: s.PendingKind, DayOpen: s.DayOpen,
+		BrokenSup: s.BrokenSup, BrokenRes: s.BrokenRes,
+		TradeDay: s.TradeDay, TradesToday: s.TradesToday, CooldownLeft: s.CooldownLeft,
+		LastCloseTS: s.LastCloseTS,
 	}
 }
 
-func restoreNifty50Range(snap nifty50RangeSnapshot) *nifty50RangeState {
-	s := newNifty50RangeState(DefaultNifty50RangeConfig())
-	_ = s.EMA9.RestoreFromSnapshot(snap.EMA9Snap)
-	_ = s.SMA21.RestoreFromSnapshot(snap.SMA21Snap)
-
-	if len(snap.Buffer) > 0 {
-		s.Buffer = make([]nifty50RangeBufferEntry, len(snap.Buffer))
-		for i, b := range snap.Buffer {
-			s.Buffer[i] = nifty50RangeBufferEntry{
-				Time: b.Time, Open: b.Open, High: b.High, Low: b.Low, Close: b.Close,
-				Volume: b.Volume, EMA9: b.EMA9, SMA21: b.SMA21,
-			}
-		}
+func restoreNifty50Range(cfg Nifty50RangeConfig, snap nifty50RangeSnapshot) *nifty50RangeState {
+	s := &nifty50RangeState{
+		ctx:  restoreRangeContext(rangeCtxCfg(cfg), snap.Context),
+		Side: snap.Side, Kind: snap.Kind, IndexEntry: snap.IndexEntry,
+		StopLevel: snap.StopLevel, TargetLevel: snap.TargetLevel,
+		TrailArm: snap.TrailArm, TrailArmed: snap.TrailArmed, IndexBest: snap.IndexBest,
+		RangeSup: snap.RangeSup, RangeRes: snap.RangeRes,
+		Strike: snap.Strike, FNOToken: snap.FNOToken,
+		FNOEntryPrice: snap.FNOEntryPrice, FNOBestPrice: snap.FNOBestPrice,
+		LastSup: snap.LastSup, LastRes: snap.LastRes, LastWidth: snap.LastWidth,
+		PendingBreak: snap.PendingBreak, PendingEdge: snap.PendingEdge, PendingWidth: snap.PendingWidth,
+		PendingKind: snap.PendingKind, DayOpen: snap.DayOpen,
+		BrokenSup: snap.BrokenSup, BrokenRes: snap.BrokenRes,
+		TradeDay: snap.TradeDay, TradesToday: snap.TradesToday, CooldownLeft: snap.CooldownLeft,
+		LastCloseTS: snap.LastCloseTS,
 	}
-	s.BufferIdx = snap.BufferIdx
-	s.BufferCount = snap.BufferCount
-
-	s.SupportLevels = make([]SRLevel, len(snap.SupportLevels))
-	for i, l := range snap.SupportLevels {
-		s.SupportLevels[i] = SRLevel{
-			Price: l.Price, Type: l.Type, Touches: l.Touches,
-			LastTouch: l.LastTouch, Strength: l.Strength,
-			CreatedAt: l.CreatedAt, IsActive: l.IsActive,
-		}
-	}
-
-	s.ResistanceLevels = make([]SRLevel, len(snap.ResistanceLevels))
-	for i, l := range snap.ResistanceLevels {
-		s.ResistanceLevels[i] = SRLevel{
-			Price: l.Price, Type: l.Type, Touches: l.Touches,
-			LastTouch: l.LastTouch, Strength: l.Strength,
-			CreatedAt: l.CreatedAt, IsActive: l.IsActive,
-		}
-	}
-
-	if snap.ActiveRange != nil {
-		s.ActiveRange = &PriceRange{
-			Support: snap.ActiveRange.Support, Resistance: snap.ActiveRange.Resistance,
-			MidPoint: snap.ActiveRange.MidPoint, Size: snap.ActiveRange.Size,
-			SizePct: snap.ActiveRange.SizePct, Confirmed: snap.ActiveRange.Confirmed,
-			CreatedAt: snap.ActiveRange.CreatedAt, TouchCount: snap.ActiveRange.TouchCount,
-		}
-	}
-
-	s.Side = snap.Side
 	if s.Side == "" {
 		s.Side = SideNone
 	}
-	s.EntryPrice = snap.EntryPrice
-	s.EntryLevel = snap.EntryLevel
-	s.TargetLevel = snap.TargetLevel
-	s.StopLevel = snap.StopLevel
-	s.IndexEntryPrice = snap.IndexEntryPrice
-	s.IndexBestPrice = snap.IndexBestPrice
-	s.FNOEntryPrice = snap.FNOEntryPrice
-	s.FNOBestPrice = snap.FNOBestPrice
-	s.InCooldown = snap.InCooldown
-	s.CandlesSinceExit = snap.CandlesSinceExit
-
-	s.RecentSwingHighs = make([]SwingPoint, len(snap.RecentSwingHighs))
-	for i, sp := range snap.RecentSwingHighs {
-		s.RecentSwingHighs[i] = SwingPoint{Price: sp.Price, Time: sp.Time, Index: sp.Index}
+	if s.PendingBreak == "" {
+		s.PendingBreak = SideNone
 	}
-
-	s.RecentSwingLows = make([]SwingPoint, len(snap.RecentSwingLows))
-	for i, sp := range snap.RecentSwingLows {
-		s.RecentSwingLows[i] = SwingPoint{Price: sp.Price, Time: sp.Time, Index: sp.Index}
-	}
-
-	s.AvgVolume = snap.AvgVolume
-	s.LastCloseTS = snap.LastCloseTS
-
 	return s
 }
 
 func marshalNifty50RangeSnapshot(name string, instruments map[string]*nifty50RangeState) ([]byte, error) {
-	snap := nifty50RangeStrategySnapshot{
-		Version:  1,
-		Strategy: name,
-	}
+	snap := nifty50RangeStrategySnapshot{Version: nifty50RangeSnapshotVersion, Strategy: name}
 	for k, v := range instruments {
 		snap.Instruments = append(snap.Instruments, snapshotNifty50Range(k, v))
 	}
@@ -558,10 +379,9 @@ func unmarshalNifty50RangeSnapshot(data []byte) (*nifty50RangeStrategySnapshot, 
 	return &snap, nil
 }
 
-func restoreNifty50RangeInstruments(snap *nifty50RangeStrategySnapshot) map[string]*nifty50RangeState {
-	m := make(map[string]*nifty50RangeState, len(snap.Instruments))
-	for _, is := range snap.Instruments {
-		m[is.Key] = restoreNifty50Range(is)
+// SetBreakoutWindowEnd sets when new breakout entries stop (HH, MM IST).
+func (c *Nifty50RangeConfig) SetBreakoutWindowEnd(h, m int) {
+	for i := range c.BreakoutWindows {
+		c.BreakoutWindows[i].To = hhmm(h, m)
 	}
-	return m
 }

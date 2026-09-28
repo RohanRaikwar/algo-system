@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -33,23 +34,27 @@ var istLoc = func() *time.Location {
 
 // Config holds all parameters for a backtest run.
 type Config struct {
-	DBPath       string                    // path to historical SQLite DB
-	Exchange     string                    // e.g. "NSE"
-	Token        string                    // e.g. "99926000"
-	Qty          int64                     // trade quantity for P&L
-	From         string                    // optional start date "YYYY-MM-DD" (empty = all)
-	To           string                    // optional end date "YYYY-MM-DD" (empty = all)
-	Output       string                    // "console", "json", "csv"
-	OutDir       string                    // output directory for file exports
-	StrategyType string                    // "nifty50_fno" (default), "nifty50_fno_sl", "ema3_hybrid"
-	StrategyCfg  strategy.Nifty50FnOConfig // strategy-level config (optional, uses defaults if zero)
-	StrategyCfg10Pts *strategy.Nifty5010PtsConfig // optional override for nifty50_10pts
-	CandleTF     int                       // candle timeframe in minutes (1=1m, 2=2m, 5=5m; default=1)
+	DBPath           string                       // path to historical SQLite DB
+	Exchange         string                       // e.g. "NSE"
+	Token            string                       // e.g. "99926000"
+	Qty              int64                        // trade quantity for P&L
+	From             string                       // optional start date "YYYY-MM-DD" (empty = all)
+	To               string                       // optional end date "YYYY-MM-DD" (empty = all)
+	Output           string                       // "console", "json", "csv"
+	OutDir           string                       // output directory for file exports
+	StrategyType     string                       // "nifty50_range" (default), "nifty50_gamma"
+	StrategyCfgRange *strategy.Nifty50RangeConfig // optional override for nifty50_range
+	StrategyCfgGamma *strategy.Nifty50GammaConfig // optional override for nifty50_gamma
+	CandleTF         int                          // candle timeframe in minutes (1=1m, 2=2m, 5=5m; default=1)
 
 	// ── FNO option price tracking ──
 	CallFNOToken string // NFO token for CALL option (e.g. "57709")
 	PutFNOToken  string // NFO token for PUT option (e.g. "57710")
 	FNOExchange  string // exchange for FNO tokens (default: "NFO")
+
+	// Option prices each trade's own contract with Black-Scholes when no
+	// real option history exists (expired contracts). See optionmodel.go.
+	Option OptionModel
 }
 
 // ── Trade ─────────────────────────────────────────────────────────────
@@ -68,6 +73,10 @@ type Trade struct {
 	// FNO option contract prices (paise). Zero if FNO data unavailable.
 	FNOEntryPrice int64 `json:"fno_entry_price,omitempty"`
 	FNOExitPrice  int64 `json:"fno_exit_price,omitempty"`
+
+	Strike   int64 `json:"strike,omitempty"` // option strike traded (points)
+	SameDay  bool  `json:"same_day_expiry,omitempty"`
+	modelMid int64 // modeled entry premium before slippage (premium SL reference)
 }
 
 // PnLPaise returns the trade P&L in paise.
@@ -165,6 +174,8 @@ type Engine struct {
 	// FNO candle price maps: unix timestamp → close price (paise)
 	callPrices map[int64]int64
 	putPrices  map[int64]int64
+
+	vix map[int64]int64 // India VIX close (paise) by minute, for modeled IV
 }
 
 type candleSource string
@@ -181,6 +192,12 @@ func New(cfg Config) *Engine {
 
 // Run executes the backtest: load candles → replay strategy → compute metrics.
 func (e *Engine) Run() (*Result, error) {
+	switch strings.ToLower(strings.TrimSpace(e.cfg.StrategyType)) {
+	case "", "nifty50_range", "nifty50_gamma":
+	default:
+		return nil, fmt.Errorf("unknown strategy %q (want nifty50_range or nifty50_gamma)", e.cfg.StrategyType)
+	}
+
 	// ── Open DB ──
 	db, err := sql.Open("sqlite3", e.cfg.DBPath+"?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000")
 	if err != nil {
@@ -189,6 +206,9 @@ func (e *Engine) Run() (*Result, error) {
 	defer db.Close()
 
 	// ── Load index candles ──
+	if e.cfg.Option.Enabled {
+		e.loadVIX(db)
+	}
 	candles, err := e.loadCandles(db)
 	if err != nil {
 		return nil, fmt.Errorf("load candles: %w", err)
@@ -287,13 +307,6 @@ func (e *Engine) loadCandles(db *sql.DB) ([]model.TFCandle, error) {
 	log.Printf("[backtest] Using %s for backtest candle data", source)
 
 	tfMin := e.cfg.CandleTF
-	stratLower := strings.ToLower(strings.TrimSpace(e.cfg.StrategyType))
-	if stratLower == "nifty50_fno_sl2" {
-		if tfMin != 2 {
-			log.Printf("[backtest] Forcing 2m candles for %s (requested tf=%dm)", e.cfg.StrategyType, tfMin)
-		}
-		tfMin = 2
-	}
 	if tfMin <= 1 {
 		return raw, nil
 	}
@@ -624,106 +637,31 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 	var strat backtestStrategy
 
 	switch strings.ToLower(strings.TrimSpace(e.cfg.StrategyType)) {
-	case "nifty50_fno_sl":
-		slCfg := strategy.DefaultNifty50FnOSLConfig()
-		src := e.cfg.StrategyCfg
-		if src.EMA6Period > 0 {
-			slCfg.EMA6Period = src.EMA6Period
+	case "", "nifty50_range":
+		// Range-market S1 mean reversion + S2 breakout. The iron condor
+		// (nifty50_range_ic) is not replayable here: its legs are priced
+		// from per-strike option ticks this engine does not load.
+		rangeCfg := strategy.DefaultNifty50RangeConfig()
+		if e.cfg.StrategyCfgRange != nil {
+			rangeCfg = *e.cfg.StrategyCfgRange
 		}
-		if src.BufferSize > 0 {
-			slCfg.BufferSize = src.BufferSize
+		rangeCfg.IndexToken = e.cfg.Exchange + ":" + e.cfg.Token
+		strat = strategy.NewNifty50RangeWithConfig(e.cfg.Qty, rangeCfg)
+		log.Printf("[backtest] Using NIFTY50_RANGE strategy (maxADX=%.0f, 15m levels, 5m RSI)", rangeCfg.Range.MaxADX)
+	case "nifty50_gamma":
+		// Expiry-day gamma blast. Holiday-shifted expiries aren't modeled
+		// (Tuesday only); run with -option-model for premium P&L.
+		gCfg := strategy.DefaultNifty50GammaConfig()
+		if e.cfg.StrategyCfgGamma != nil {
+			gCfg = *e.cfg.StrategyCfgGamma
 		}
-		if src.CooldownCandles >= 0 {
-			slCfg.CooldownCandles = src.CooldownCandles
-		}
-		slCfg.MinReEntrySeparationPct = src.MinReEntrySeparationPct
-		slCfg.SidewaysEnabled = src.SidewaysEnabled
-		if src.MaxChopCrosses > 0 {
-			slCfg.MaxChopCrosses = src.MaxChopCrosses
-		}
-		if src.MA21FlatPct > 0 {
-			slCfg.MA21FlatPct = src.MA21FlatPct
-		}
-		if src.NarrowRangePct > 0 {
-			slCfg.NarrowRangePct = src.NarrowRangePct
-		}
-		// Explicitly disable momentum bypass for NIFTY50_FNO_SL.
-		slCfg.MomentumBypassPct = 0
-		if src.SkipFirstMinutes >= 0 {
-			slCfg.SkipFirstMinutes = src.SkipFirstMinutes
-		}
-		if src.SkipLastMinutes >= 0 {
-			slCfg.SkipLastMinutes = src.SkipLastMinutes
-		}
-		slCfg.LunchFilterEnabled = src.LunchFilterEnabled
-		if src.LunchStartHHMM != "" {
-			slCfg.LunchStartHHMM = src.LunchStartHHMM
-		}
-		if src.LunchEndHHMM != "" {
-			slCfg.LunchEndHHMM = src.LunchEndHHMM
-		}
-		slCfg.TrendEnabled = src.TrendEnabled
-		if src.TrendLookback > 0 {
-			slCfg.TrendLookback = src.TrendLookback
-		}
-		if src.TrendSlopePct > 0 {
-			slCfg.TrendSlopePct = src.TrendSlopePct
-		}
-		if src.HardSLPct > 0 {
-			slCfg.IndexHardSLPct = src.HardSLPct
-		}
-		if src.TrailSLPct > 0 {
-			slCfg.IndexTrailSLPct = src.TrailSLPct
-		}
-		if src.TrailStartPct > 0 {
-			slCfg.IndexTrailStartPct = src.TrailStartPct
-		}
-		slCfg.ReEntryAfterSL = src.ReEntryAfterSL
-		// Bind the SL strategy to whichever index stream is under test.
-		slCfg.IndexToken = e.cfg.Exchange + ":" + e.cfg.Token
-
-		strat = strategy.NewNifty50FnOSLWithConfig(e.cfg.Qty, slCfg)
-		log.Printf("[backtest] Using NIFTY50_FNO_SL strategy (momentum=off, sep=%.3f%%, idxHardSL=%.2f%%, idxTrailSL=%.2f%%)",
-			slCfg.MinReEntrySeparationPct, slCfg.IndexHardSLPct, slCfg.IndexTrailSLPct)
-	case "nifty50_fno_sl2":
-		sl2Cfg := strategy.DefaultNifty50FnOSL2Config()
-		src := e.cfg.StrategyCfg
-		if src.MinReEntrySeparationPct > 0 {
-			sl2Cfg.MinReEntrySeparationPct = src.MinReEntrySeparationPct
-		}
-		if src.HardSLPct > 0 {
-			sl2Cfg.IndexHardSLPct = src.HardSLPct
-		}
-		if src.TrailSLPct > 0 {
-			sl2Cfg.IndexTrailSLPct = src.TrailSLPct
-		}
-		if src.TrailStartPct > 0 {
-			sl2Cfg.IndexTrailStartPct = src.TrailStartPct
-		}
-		sl2Cfg.ReEntryAfterSL = src.ReEntryAfterSL
-		sl2Cfg.IndexToken = e.cfg.Exchange + ":" + e.cfg.Token
-
-		strat = strategy.NewNifty50FnOSL2WithConfig(e.cfg.Qty, sl2Cfg)
-		log.Printf("[backtest] Using NIFTY50_FNO_SL2 strategy (EMA2/EMA6/SMA15, sep=%.3f%%, trailSL=%.2f%%)",
-			sl2Cfg.MinReEntrySeparationPct, sl2Cfg.IndexTrailSLPct)
-	case "nifty50_10pts":
-		// Pull the baseline 6-month optimized configuration
-		optCfg := strategy.DefaultNifty5010PtsConfig()
-		if e.cfg.StrategyCfg10Pts != nil {
-			optCfg = *e.cfg.StrategyCfg10Pts
-		}
-		
-		strat = strategy.NewNifty5010PtsWithConfig(e.cfg.Qty, optCfg)
-		log.Printf("[backtest] Using NIFTY50_10PTS strategy (optimized defaults: target=%.2f%%, momentum=%.2f%%)",
-			optCfg.FNOTargetProfitPct, optCfg.MomentumBypassPct)
+		gCfg.IndexToken = e.cfg.Exchange + ":" + e.cfg.Token
+		strat = strategy.NewNifty50Gamma(e.cfg.Qty, gCfg)
+		log.Printf("[backtest] Using NIFTY50_GAMMA strategy (range≤%dbps, adx<%.0f, SL %d%%, target %d%%)",
+			gCfg.MaxRangeBps, gCfg.MaxADX, gCfg.PremiumSLPct, gCfg.PremiumTargetPct)
 	default:
-		// Use provided StrategyCfg if non-zero, otherwise fall back to defaults.
-		cfg := e.cfg.StrategyCfg
-		if cfg.EMA6Period == 0 {
-			cfg = strategy.DefaultNifty50FnOConfig()
-		}
-		strat = strategy.NewNifty50FnOWithConfig(e.cfg.Qty, cfg)
-		log.Printf("[backtest] Using NIFTY50_FNO strategy (sep=%.3f%%)", cfg.MinReEntrySeparationPct)
+		// Run rejects unknown strategy types before replay starts.
+		return nil
 	}
 
 	var trades []Trade
@@ -742,7 +680,7 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 			// New day started: force-close the previous day's open trade
 			openTrade.ExitTime = candle.TS.In(istLoc)
 			openTrade.ExitPrice = candle.Open // use next day's open as exit price
-			openTrade.FNOExitPrice = e.lookupFNOPrice(openTrade.Side, candle.TS.Unix())
+			openTrade.FNOExitPrice = e.exitFNO(openTrade, candle.TS)
 			openTrade.ExitReason = "end of day (forced close)"
 			trades = append(trades, *openTrade)
 			log.Printf("[backtest] ⚠️  EOD FORCE EXIT %s @ %s", openTrade.Side, openTrade.ExitTime.In(istLoc).Format("15:04"))
@@ -769,7 +707,7 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 			if openTrade != nil {
 				openTrade.ExitTime = candle.TS.In(istLoc)
 				openTrade.ExitPrice = candle.Close
-				openTrade.FNOExitPrice = e.lookupFNOPrice(openTrade.Side, candle.TS.Unix())
+				openTrade.FNOExitPrice = e.exitFNO(openTrade, candle.TS)
 				openTrade.ExitReason = "end of day (15:29 close)"
 				trades = append(trades, *openTrade)
 				log.Printf("[backtest] ⚠️  EOD FORCE EXIT %s @ %s index=%d fno=%d",
@@ -787,7 +725,7 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 			if slSignal != nil {
 				openTrade.ExitTime = candle.TS.In(istLoc)
 				openTrade.ExitPrice = candle.Close
-				openTrade.FNOExitPrice = e.lookupFNOPrice(openTrade.Side, candle.TS.Unix())
+				openTrade.FNOExitPrice = e.exitFNO(openTrade, candle.TS)
 				openTrade.ExitReason = slSignal.Reason
 				trades = append(trades, *openTrade)
 				log.Printf("[backtest] 🔴 SL EXIT %s @ %s index=%d fno=%d reason=%s",
@@ -795,6 +733,34 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 				openTrade = nil
 				continue
 			}
+		}
+
+		// Strategies that exit on premium ticks get the modeled premium each
+		// minute (live: option ticks), so their own stops/targets/trails run.
+		if openTrade != nil && e.modelTicks(strat) {
+			if ex := strat.OnTick(model.Tick{Token: "MODEL", Exchange: "NFO", Price: e.modelMidAt(openTrade, candle)}); ex != nil && ex.Action == strategy.ActionExit {
+				openTrade.ExitTime = candle.TS.In(istLoc)
+				openTrade.ExitPrice = candle.Close
+				openTrade.FNOExitPrice = e.exitFNO(openTrade, candle.TS)
+				openTrade.ExitReason = ex.Reason
+				trades = append(trades, *openTrade)
+				openTrade = nil
+				strat.OnTFCandle(candle)
+				continue
+			}
+		}
+
+		// Modeled premium hard SL (live: the strategy's premium stop on ticks).
+		if openTrade != nil && !e.modelTicks(strat) && e.premiumStopHit(openTrade, candle) {
+			openTrade.ExitTime = candle.TS.In(istLoc)
+			openTrade.ExitPrice = candle.Close
+			openTrade.FNOExitPrice = e.exitFNO(openTrade, candle.TS)
+			openTrade.ExitReason = fmt.Sprintf("MODEL PREMIUM SL %d%%", e.cfg.Option.PremiumSLPct)
+			trades = append(trades, *openTrade)
+			openTrade = nil
+			strat.ResetPositions()
+			strat.OnTFCandle(candle) // keep indicators warm
+			continue
 		}
 
 		sig := strat.OnTFCandle(candle)
@@ -808,7 +774,7 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 				// Close existing trade first
 				openTrade.ExitTime = candle.TS.In(istLoc)
 				openTrade.ExitPrice = candle.Close
-				openTrade.FNOExitPrice = e.lookupFNOPrice(openTrade.Side, candle.TS.Unix())
+				openTrade.FNOExitPrice = e.exitFNO(openTrade, candle.TS)
 				openTrade.ExitReason = "replaced by new entry"
 				trades = append(trades, *openTrade)
 			}
@@ -821,6 +787,9 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 				EntryReason:   sig.Reason,
 				FNOEntryPrice: e.lookupFNOPrice(sig.Side, candle.TS.Unix()),
 			}
+			openTrade.SameDay = sig.SameDayExpiry
+			e.modelEntry(openTrade, sig.Strike, candle.TS)
+			e.armModelTicks(strat, openTrade)
 			log.Printf("[backtest] 🟢 ENTRY %s @ %s index=%d fno=%d reason=%s",
 				sig.Side, candle.TS.In(istLoc).Format("15:04"), candle.Close, openTrade.FNOEntryPrice, sig.Reason)
 
@@ -828,14 +797,32 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 			if openTrade != nil {
 				openTrade.ExitTime = candle.TS.In(istLoc)
 				openTrade.ExitPrice = candle.Close
-				openTrade.FNOExitPrice = e.lookupFNOPrice(openTrade.Side, candle.TS.Unix())
+				openTrade.FNOExitPrice = e.exitFNO(openTrade, candle.TS)
 				openTrade.ExitReason = sig.Reason
 				trades = append(trades, *openTrade)
 				log.Printf("[backtest] 🔴 EXIT %s @ %s index=%d fno=%d reason=%s",
 					sig.Side, candle.TS.In(istLoc).Format("15:04"), candle.Close, openTrade.FNOExitPrice, sig.Reason)
 				openTrade = nil
 			}
+			// A reversing exit opens the other side at once (live: expandReverseSignals).
+			if sig.ReverseTo == strategy.SideCall || sig.ReverseTo == strategy.SidePut {
+				tradeID++
+				openTrade = &Trade{
+					ID:            tradeID,
+					Side:          sig.ReverseTo,
+					EntryTime:     candle.TS.In(istLoc),
+					EntryPrice:    candle.Close,
+					EntryReason:   "REVERSE: " + sig.Reason,
+					FNOEntryPrice: e.lookupFNOPrice(sig.ReverseTo, candle.TS.Unix()),
+				}
+				e.modelEntry(openTrade, sig.Strike, candle.TS)
+				log.Printf("[backtest] 🔁 REVERSE to %s @ %s index=%d", sig.ReverseTo, candle.TS.In(istLoc).Format("15:04"), candle.Close)
+			}
 		}
+	}
+
+	if rs, ok := strat.(interface{ RejectStats() map[string]int }); ok {
+		logRejectStats(rs.RejectStats())
 	}
 
 	// Close any open trade at end of data
@@ -843,7 +830,7 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 		lastCandle := candles[len(candles)-1]
 		openTrade.ExitTime = lastCandle.TS.In(istLoc)
 		openTrade.ExitPrice = lastCandle.Close
-		openTrade.FNOExitPrice = e.lookupFNOPrice(openTrade.Side, lastCandle.TS.Unix())
+		openTrade.FNOExitPrice = e.exitFNO(openTrade, lastCandle.TS)
 		openTrade.ExitReason = "end of data"
 		trades = append(trades, *openTrade)
 		log.Printf("[backtest] ⚠️  FORCE EXIT %s @ %s (end of data)", openTrade.Side, lastCandle.TS.In(istLoc).Format("15:04"))
@@ -1126,4 +1113,135 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dm %ds", int(d.Minutes()), int(d.Seconds())%60)
 	}
 	return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
+}
+
+// logRejectStats prints which entry filter refused candidate bars, most
+// frequent first, so a starved strategy shows which filter to loosen.
+func logRejectStats(stats map[string]int) {
+	type kv struct {
+		k string
+		v int
+	}
+	var rows []kv
+	total := 0
+	for k, v := range stats {
+		rows = append(rows, kv{k, v})
+		total += v
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].v > rows[j].v })
+	log.Printf("[backtest] entry rejections (first failing filter per entry bar, total %d):", total)
+	for _, r := range rows {
+		log.Printf("[backtest]   %-24s %6d  %5.1f%%", r.k, r.v, 100*float64(r.v)/float64(total))
+	}
+}
+
+// modelEntry prices a new trade's contract when the option model is on:
+// the signal's strike (ATM of the entry if none), bought with slippage.
+func (e *Engine) modelEntry(t *Trade, strike int64, ts time.Time) {
+	m := e.cfg.Option
+	if !m.Enabled || t == nil {
+		return
+	}
+	if strike <= 0 {
+		strike = m.atmStrike(t.EntryPrice)
+	}
+	t.Strike = strike
+	t.modelMid = m.premiumTo(t.Side, strike, t.EntryPrice, ts, e.vixAt(ts), e.expiryFor(t, ts))
+	t.FNOEntryPrice = m.slip(true, t.modelMid)
+}
+
+// exitFNO is the option exit price: modeled (sold with slippage) when the
+// model is on, else the loaded option candle series.
+func (e *Engine) exitFNO(t *Trade, ts time.Time) int64 {
+	m := e.cfg.Option
+	if !m.Enabled || t.Strike == 0 {
+		return e.lookupFNOPrice(t.Side, ts.Unix())
+	}
+	return m.slip(false, m.premiumTo(t.Side, t.Strike, t.ExitPrice, ts, e.vixAt(ts), e.expiryFor(t, ts)))
+}
+
+// premiumStopHit reports the modeled premium fell PremiumSLPct below entry.
+func (e *Engine) premiumStopHit(t *Trade, c model.TFCandle) bool {
+	m := e.cfg.Option
+	if !m.Enabled || m.PremiumSLPct <= 0 || t.modelMid <= 0 {
+		return false
+	}
+	p := m.premiumTo(t.Side, t.Strike, c.Close, c.TS, e.vixAt(c.TS), e.expiryFor(t, c.TS))
+	return p*100 <= t.modelMid*(100-m.PremiumSLPct)
+}
+
+// vixAt returns India VIX (%) at ts from loaded history, 0 if none.
+func (e *Engine) vixAt(ts time.Time) float64 {
+	if len(e.vix) == 0 {
+		return 0
+	}
+	m := ts.Truncate(time.Minute).Unix()
+	for i := 0; i < 30; i++ { // nearest earlier minute within 30m
+		if v, ok := e.vix[m-int64(i)*60]; ok && v > 0 {
+			return float64(v) / 100
+		}
+	}
+	return 0
+}
+
+// loadVIX loads India VIX 1m closes (NSE token 99926017) from the
+// historical DB, if downloaded, as the modeled IV.
+func (e *Engine) loadVIX(db *sql.DB) {
+	rows, err := db.Query(`SELECT ts, close FROM historical_candles WHERE exchange='NSE' AND token='99926017' AND tf=60`)
+	if err != nil {
+		log.Printf("[backtest] option model: no VIX history (%v) — flat IV %.1f%%", err, e.cfg.Option.IVPct)
+		return
+	}
+	defer rows.Close()
+	e.vix = make(map[int64]int64)
+	for rows.Next() {
+		var ts int64
+		var c float64
+		if rows.Scan(&ts, &c) == nil {
+			e.vix[ts] = int64(c * 100)
+		}
+	}
+	if len(e.vix) == 0 {
+		log.Printf("[backtest] option model: no VIX history — flat IV %.1f%%", e.cfg.Option.IVPct)
+	} else {
+		log.Printf("[backtest] option model: IV from India VIX (%d minutes)", len(e.vix))
+	}
+}
+
+// expiryFor is the contract's expiry: today for same-day (gamma) trades,
+// else the nearest weekly after today, as the live picker trades.
+func (e *Engine) expiryFor(t *Trade, ts time.Time) time.Time {
+	if t.SameDay {
+		return sameDayExpiry(t.EntryTime)
+	}
+	return weeklyExpiry(ts)
+}
+
+// modelMidAt is the modeled premium (no slippage) of t's contract at c.
+func (e *Engine) modelMidAt(t *Trade, c model.TFCandle) int64 {
+	m := e.cfg.Option
+	return m.premiumTo(t.Side, t.Strike, c.Close, c.TS, e.vixAt(c.TS), e.expiryFor(t, c.TS))
+}
+
+// premiumTickStrategy exits on option-premium ticks (it knows its contract
+// token and entry premium), like NIFTY50_GAMMA.
+type premiumTickStrategy interface {
+	SetPositionToken(token string)
+	SetFNOEntryPrice(price int64)
+	PremiumExitsOnTicks() bool
+}
+
+func (e *Engine) modelTicks(strat backtestStrategy) bool {
+	p, ok := strat.(premiumTickStrategy)
+	return ok && e.cfg.Option.Enabled && p.PremiumExitsOnTicks()
+}
+
+// armModelTicks tells a premium-tick strategy its modeled contract.
+func (e *Engine) armModelTicks(strat backtestStrategy, t *Trade) {
+	if !e.modelTicks(strat) || t == nil || t.modelMid <= 0 {
+		return
+	}
+	p := strat.(premiumTickStrategy)
+	p.SetPositionToken("NFO:MODEL")
+	p.SetFNOEntryPrice(t.modelMid)
 }

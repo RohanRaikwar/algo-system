@@ -17,8 +17,8 @@ func istAt(h, m int) time.Time {
 
 func TestEODCutoff_DefaultAndConfigured(t *testing.T) {
 	svc := &Service{}
-	if got := svc.eodCutoff(istAt(10, 0)); !got.Equal(istAt(15, 20)) {
-		t.Fatalf("default cutoff %v, want 15:20 IST", got)
+	if got := svc.eodCutoff(istAt(10, 0)); !got.Equal(istAt(15, 5)) {
+		t.Fatalf("default cutoff %v, want 15:05 IST", got)
 	}
 	svc.cfg.EODExitTime = "15:10"
 	if got := svc.eodCutoff(istAt(10, 0)); !got.Equal(istAt(15, 10)) {

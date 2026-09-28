@@ -37,17 +37,13 @@ func getEnvInt(key string, defaultVal int) int {
 }
 
 // Service is the top-level orchestrator for the strategy engine.
-// Runs only NIFTY50_FNO in production.
+// Runs the range-market strategies (paper only).
 type Service struct {
 	cfg Config
 
 	tfEngine               *strategy.TFEngine
-	nifty50Strategy        *strategy.Nifty50FnO
-	nifty50SLStrategy      *strategy.Nifty50FnOSL
-	nifty50SL2Strategy     *strategy.Nifty50FnOSL2
-	nifty5010PtsStrategy   *strategy.Nifty5010Pts
 	nifty50RangeStrategy   *strategy.Nifty50Range
-	nifty50FnO5M3MStrategy *strategy.Nifty50FnO5M3M
+	nifty50RangeICStrategy *strategy.Nifty50RangeIC
 
 	redisReader   *redisstore.Reader
 	redisWriter   *redisstore.Writer
@@ -55,6 +51,20 @@ type Service struct {
 	notifier      notification.Notifier
 	orderExecutor *orderexec.OrderExecutor
 	strikePicker  *orderexec.StrikePicker
+
+	// Multi-leg contract resolution (legs.go). legResolver is a test hook;
+	// legPicker is built lazily when no ATM picker exists.
+	legResolver   legResolver
+	legPicker     *orderexec.StrikePicker
+	legPickerOnce sync.Once
+	testBasket    basketStrategy // test hook for basketFor
+
+	ladderState                // strike ladder + per-entry option selection (option_select.go)
+	deltaState                 // delta guard on range entries (delta_guard.go)
+	futures     futureResolver // test hook; nil = instrument master
+
+	rangePublishHook func(payload string) // test hook for publishRangeState
+	legPriceWait     time.Duration        // 0 = defaultLegPriceWait
 
 	// Portfolio & P&L tracking
 	pnlTracker *portfolio.PnLTracker
@@ -101,6 +111,9 @@ type liveOrderRuntime struct {
 	EntryPrice   int64
 	BestPrice    int64
 	CurrentPrice int64
+	Leg          string // multi-leg id; "" for single-leg positions
+	Strike       int64
+	Short        bool
 }
 
 type liveOrderPayload struct {
@@ -112,6 +125,9 @@ type liveOrderPayload struct {
 	BestFNOPrice    int64                 `json:"best_fno_price,omitempty"`
 	StoplossPrice   int64                 `json:"stoploss_price,omitempty"`
 	StoplossKind    string                `json:"stoploss_kind,omitempty"`
+	Leg             string                `json:"leg,omitempty"`
+	Strike          int64                 `json:"strike,omitempty"`
+	Short           bool                  `json:"short,omitempty"`
 }
 
 // New creates a new strategy engine Service.
@@ -180,64 +196,38 @@ func New(cfg Config) (*Service, error) {
 	svc.pnlTracker = portfolio.NewPnLTracker()
 
 	// ── Strategies ──
-	// Set IndexToken so live ticks are keyed correctly for dual-layer SL.
-	nifty50Cfg := strategy.DefaultNifty50FnOConfig()
-	nifty50Cfg.IndexToken = "NSE:99926000"
-	svc.nifty50Strategy = strategy.NewNifty50FnOWithConfig(cfg.Qty, nifty50Cfg)
-	svc.nifty50SLStrategy = strategy.NewNifty50FnOSL(cfg.Qty)
-	svc.nifty50SL2Strategy = strategy.NewNifty50FnOSL2(cfg.Qty)
-
-	nifty5010PtsCfg := strategy.DefaultNifty5010PtsConfig()
-	svc.nifty5010PtsStrategy = strategy.NewNifty5010PtsWithConfig(cfg.Qty, nifty5010PtsCfg)
-
-	// Initialize NIFTY50_RANGE strategy with 10-point threshold
+	// NIFTY50_RANGE: range-market S1 mean reversion + S2 breakout (paper).
 	nifty50RangeCfg := strategy.DefaultNifty50RangeConfig()
 	nifty50RangeCfg.IndexToken = "NSE:99926000"
 	svc.nifty50RangeStrategy = strategy.NewNifty50RangeWithConfig(cfg.Qty, nifty50RangeCfg)
+	svc.nifty50RangeStrategy.SetExpiry(orderexec.NewStrikePicker(nil).NextExpiry(time.Now()))
 
-	// Initialize NIFTY50_FNO_5M3M strategy (5m entry, 3m exit with SMA21/EMA6)
-	nifty50FnO5M3MCfg := strategy.DefaultNifty50FnO5M3MConfig()
-	nifty50FnO5M3MCfg.IndexToken = "NSE:99926000"
-	svc.nifty50FnO5M3MStrategy = strategy.NewNifty50FnO5M3MWithConfig(cfg.Qty, nifty50FnO5M3MCfg)
-
-	// Wire external market state: 10PTS and FNO_SL query FNO strategy's regime detection.
-	if svc.nifty50Strategy != nil {
-		fnoStrat := svc.nifty50Strategy
-		if svc.nifty5010PtsStrategy != nil {
-			svc.nifty5010PtsStrategy.SetMarketStateProvider(func() strategy.EntryMarketState {
-				ctx := fnoStrat.EntryAutomationContext("NSE", "99926000")
-				if ctx.Available {
-					return ctx.MarketState
-				}
-				return strategy.EntryMarketStateTrending
-			})
-		}
-		if svc.nifty50SLStrategy != nil {
-			svc.nifty50SLStrategy.SetMarketStateProvider(func() strategy.EntryMarketState {
-				ctx := fnoStrat.EntryAutomationContext("NSE", "99926000")
-				if ctx.Available {
-					return ctx.MarketState
-				}
-				return strategy.EntryMarketStateTrending
-			})
-		}
-	}
+	// NIFTY50_RANGE_IC: iron condor on the multi-leg paper path.
+	rangeICCfg := strategy.DefaultNifty50RangeICConfig()
+	rangeICCfg.IndexToken = "NSE:99926000"
+	svc.nifty50RangeICStrategy = strategy.NewNifty50RangeIC(cfg.Qty, rangeICCfg)
+	svc.nifty50RangeICStrategy.SetExpiry(orderexec.NewStrikePicker(nil).NextExpiry(time.Now()))
 
 	svc.syncStrategyFNOTokens(cfg.CallFNOToken, cfg.PutFNOToken)
 
 	svc.tfEngine = strategy.NewTFEngine(1000)
 
-	// All strategies detached from the engine. Instances are still constructed
-	// and wired above (market-state providers, FNO token sync, snapshots), but
-	// none are registered, so the engine emits no signals.
-	// Re-enable by uncommenting the desired line(s).
-	// svc.tfEngine.Register(svc.nifty50Strategy)
-	// svc.tfEngine.Register(svc.nifty50SLStrategy)
-	// svc.tfEngine.Register(svc.nifty50SL2Strategy)
-	// svc.tfEngine.Register(svc.nifty5010PtsStrategy)
-	// svc.tfEngine.Register(svc.nifty50RangeStrategy)
-	// svc.tfEngine.Register(svc.nifty50FnO5M3MStrategy)
-	log.Println("[stratengine] ⚪ No strategies registered — all detached from engine")
+	// Range-market strategies are paper-only (the executor's real-order gate
+	// is NIFTY50_FNO alone; legs never reach the broker).
+	registered := 0
+	if cfg.RangeEnabled {
+		svc.tfEngine.Register(svc.nifty50RangeStrategy)
+		registered++
+		log.Println("[stratengine] 🟢 registered NIFTY50_RANGE (S1 mean reversion + S2 breakout, paper)")
+	}
+	if cfg.RangeICEnabled {
+		svc.tfEngine.Register(svc.nifty50RangeICStrategy)
+		registered++
+		log.Println("[stratengine] 🟢 registered NIFTY50_RANGE_IC (iron condor, paper legs)")
+	}
+	if registered == 0 {
+		log.Println("[stratengine] ⚪ No strategies registered — all detached from engine")
+	}
 
 	// ── Session Manager for Order Execution ──
 	var sessionManager *smartconnect.SessionManager
@@ -266,13 +256,16 @@ func New(cfg Config) (*Service, error) {
 		FNOExchange:      cfg.FNOExchange,
 		FNOOrderType:     cfg.FNOOrderType,
 		FNOProductType:   cfg.FNOProductType,
-		FNOStopLossPaise: nifty50Cfg.FNOStopLossPaise, // mirror system SL in GTT
+		FNOStopLossPaise: 1000, // ₹10 below entry premium, GTT stop on real orders
 		AngelAPIKey:      cfg.AngelAPIKey,
 		AngelClientID:    cfg.AngelClientID,
 		AngelPassword:    cfg.AngelPassword,
 		AngelTOTP:        cfg.AngelTOTP,
 		LogPrefix:        "[order_executor]",
 		SessionManager:   sessionManager, // Pass session manager for auto-refresh
+
+		PaperSlippageBps:      cfg.PaperSlippageBps,
+		PaperSlippageMinPaise: cfg.PaperSlippageMinPaise,
 	})
 
 	// Attach P&L tracker for profit cap monitoring
@@ -300,6 +293,8 @@ func (svc *Service) Run(ctx context.Context) error {
 	log.Println("[stratengine] starting Strategy Engine...")
 
 	svc.restoreAndWire(ctx)
+	svc.warmupRangeStrategies()
+	svc.refreshVolumeToken(ctx, time.Now())
 	stopMetrics := svc.startMetrics()
 	defer stopMetrics()
 
@@ -357,6 +352,11 @@ func (svc *Service) Run(ctx context.Context) error {
 	// ── Start signal processor (signals → journal + notify + orders) ──
 	go svc.signalLoop(ctx)
 
+	// ── Range strategy dashboard state (pub:range) ──
+	if svc.cfg.RangeEnabled {
+		go svc.rangeStateLoop(ctx)
+	}
+
 	// ── Start snapshot loop ──
 	go svc.snapshotLoop(ctx)
 
@@ -413,6 +413,9 @@ func (svc *Service) tickRouterLoop(ctx context.Context, tfTickCh chan<- model.Ti
 			// Update FNO LTP tracker
 			svc.orderExecutor.UpdateLTP(tick)
 			svc.updateLiveOrdersFromTick(ctx, tick)
+			if tick.Token == niftyToken && (svc.cfg.RangeEnabled || svc.cfg.RangeICEnabled) {
+				svc.refreshStrikeLadder(ctx, tick.Price)
+			}
 
 			// Dynamic strike resolution: retry on every NIFTY tick until successful.
 			// Uses atomic flags to prevent concurrent goroutines and track success.
@@ -463,6 +466,12 @@ func (svc *Service) tickRouterLoop(ctx context.Context, tfTickCh chan<- model.Ti
 
 					svc.strikePicker = picker
 					svc.orderExecutor.SetStrikePicker(picker)
+					if svc.nifty50RangeICStrategy != nil {
+						svc.nifty50RangeICStrategy.SetExpiry(picker.NextExpiry(time.Now()))
+					}
+					if svc.nifty50RangeStrategy != nil {
+						svc.nifty50RangeStrategy.SetExpiry(picker.NextExpiry(time.Now()))
+					}
 
 					ce := picker.GetCallToken()
 					pe := picker.GetPutToken()
@@ -547,13 +556,16 @@ func (svc *Service) signalLoop(ctx context.Context) {
 				return
 			}
 
+			if len(sig.Legs) > 0 {
+				svc.handleBasketSignal(ctx, sig, time.Now())
+				continue
+			}
+
 			expandedSignals := expandReverseSignals(sig)
 
 			for _, expandedSig := range expandedSignals {
 				sig := expandedSig
 				now := time.Now()
-
-				svc.applySyntheticStrategyEntry(sig)
 
 				// Kill switch: block new entries but allow exits
 				if svc.killSwitchActive() && sig.Action == strategy.ActionBuy {
@@ -579,7 +591,16 @@ func (svc *Service) signalLoop(ctx context.Context) {
 					continue
 				}
 
-				if sig.Action == strategy.ActionBuy {
+				// A range entry names its own strike: resolve that exact
+				// contract. No contract or no premium → refuse the entry
+				// (and cancel it in the strategy) rather than buy a
+				// different strike.
+				if sig.Action == strategy.ActionBuy && sig.Strike > 0 && sig.Leg == "" && sig.FNOToken == "" {
+					if err := svc.resolveEntryStrike(ctx, &sig, now); err != nil {
+						svc.cancelStrategyEntry(sig, err.Error())
+						continue
+					}
+				} else if sig.Action == strategy.ActionBuy {
 					svc.applyOptionAutomation(ctx, &sig, now)
 				}
 
@@ -598,6 +619,10 @@ func (svc *Service) signalLoop(ctx context.Context) {
 					} else {
 						fnoToken = svc.cfg.PutFNOToken
 					}
+				}
+
+				if sig.Action == strategy.ActionBuy && sig.FNOToken != "" {
+					fnoToken = sig.FNOToken
 				}
 
 				// No strike picked yet and no static token: nothing to buy.
@@ -642,6 +667,9 @@ func (svc *Service) signalLoop(ctx context.Context) {
 					entryFNOTokens[posKey] = fnoToken
 					entryMarketStates[posKey] = marketState
 					entryInstruments[posKey] = trackedInstrument{token: sig.Token, exchange: sig.Exchange}
+					if ps := svc.positionTokenSetterFor(sig.StrategyName); ps != nil && sig.FNOToken != "" {
+						ps.SetPositionToken(svc.qualifyFNOToken(sig.FNOToken))
+					}
 					svc.setStrategyFNOEntryPrice(sig.StrategyName, currentFNOPrice)
 					svc.upsertLiveOrder(sig.StrategyName, sig.Side, fnoToken, currentFNOPrice)
 					if live, ok := svc.liveOrderPayload(sig.StrategyName, sig.Side); ok {
@@ -798,25 +826,6 @@ func expandReverseSignals(sig strategy.Signal) []strategy.Signal {
 	return []strategy.Signal{sig, buySig}
 }
 
-func (svc *Service) applySyntheticStrategyEntry(sig strategy.Signal) {
-	if sig.Action != strategy.ActionBuy {
-		return
-	}
-	if !strings.Contains(sig.Reason, "REVERSE_FROM_") {
-		return
-	}
-	if svc.nifty50Strategy == nil || sig.StrategyName != svc.nifty50Strategy.Name() {
-		return
-	}
-
-	indexPrice := parseSignalClose(sig.Reason)
-	if indexPrice <= 0 {
-		return
-	}
-
-	svc.nifty50Strategy.ApplySyntheticEntry(sig.Exchange, sig.Token, sig.Side, indexPrice)
-}
-
 func (svc *Service) applyOptionAutomation(ctx context.Context, sig *strategy.Signal, now time.Time) {
 	if !svc.cfg.OptionAutomation || !svc.cfg.DynamicStrikes || sig == nil || sig.Action != strategy.ActionBuy {
 		return
@@ -924,23 +933,8 @@ func (svc *Service) syncStrategyFNOTokens(callToken, putToken string) {
 	callToken = svc.qualifyFNOToken(callToken)
 	putToken = svc.qualifyFNOToken(putToken)
 
-	if svc.nifty50SLStrategy != nil {
-		svc.nifty50SLStrategy.SetFNOTokens(callToken, putToken)
-	}
-	if svc.nifty50Strategy != nil {
-		svc.nifty50Strategy.SetFNOTokens(callToken, putToken)
-	}
-	if svc.nifty5010PtsStrategy != nil {
-		svc.nifty5010PtsStrategy.SetFNOTokens(callToken, putToken)
-	}
-	if svc.nifty50SL2Strategy != nil {
-		svc.nifty50SL2Strategy.SetFNOTokens(callToken, putToken)
-	}
 	if svc.nifty50RangeStrategy != nil {
 		svc.nifty50RangeStrategy.SetFNOTokens(callToken, putToken)
-	}
-	if svc.nifty50FnO5M3MStrategy != nil {
-		svc.nifty50FnO5M3MStrategy.SetFNOTokens(callToken, putToken)
 	}
 }
 
@@ -948,24 +942,8 @@ func (svc *Service) setStrategyFNOEntryPrice(strategyName string, price int64) {
 	if price <= 0 {
 		return
 	}
-	if svc.nifty50SLStrategy != nil && strategyName == svc.nifty50SLStrategy.Name() {
-		svc.nifty50SLStrategy.SetFNOEntryPrice(price)
-		return
-	}
-	if svc.nifty50Strategy != nil && strategyName == svc.nifty50Strategy.Name() {
-		svc.nifty50Strategy.SetFNOEntryPrice(price)
-		return
-	}
-	if svc.nifty5010PtsStrategy != nil && strategyName == svc.nifty5010PtsStrategy.Name() {
-		svc.nifty5010PtsStrategy.SetFNOEntryPrice(price)
-		return
-	}
-	if svc.nifty50SL2Strategy != nil && strategyName == svc.nifty50SL2Strategy.Name() {
-		svc.nifty50SL2Strategy.SetFNOEntryPrice(price)
-		return
-	}
-	if svc.nifty50FnO5M3MStrategy != nil && strategyName == svc.nifty50FnO5M3MStrategy.Name() {
-		svc.nifty50FnO5M3MStrategy.SetFNOEntryPrice(price)
+	if svc.nifty50RangeStrategy != nil && strategyName == svc.nifty50RangeStrategy.Name() {
+		svc.nifty50RangeStrategy.SetFNOEntryPrice(price)
 	}
 }
 
@@ -997,30 +975,28 @@ func (svc *Service) unqualifyToken(token string) string {
 }
 
 func (svc *Service) seedLiveOrdersFromStrategies() {
-	if svc.nifty50SLStrategy != nil {
-		if pos := svc.nifty50SLStrategy.CurrentFNOPosition(); pos != nil {
-			svc.setLiveOrderFromPosition(svc.nifty50SLStrategy.Name(), pos)
+	if svc.nifty50RangeStrategy != nil {
+		if pos := svc.nifty50RangeStrategy.CurrentFNOPosition(); pos != nil {
+			svc.setLiveOrderFromPosition(svc.nifty50RangeStrategy.Name(), pos)
 		}
 	}
-	if svc.nifty50SL2Strategy != nil {
-		if pos := svc.nifty50SL2Strategy.CurrentFNOPosition(); pos != nil {
-			svc.setLiveOrderFromPosition(svc.nifty50SL2Strategy.Name(), pos)
-		}
+	svc.seedLiveLegsFromExecutor()
+}
+
+// seedLiveLegsFromExecutor rebuilds the dashboard rows of open paper legs
+// after a restart; the executor's restored entries are the record.
+func (svc *Service) seedLiveLegsFromExecutor() {
+	if svc.orderExecutor == nil {
+		return
 	}
-	if svc.nifty50Strategy != nil {
-		if pos := svc.nifty50Strategy.CurrentFNOPosition(); pos != nil {
-			svc.setLiveOrderFromPosition(svc.nifty50Strategy.Name(), pos)
+	for _, rec := range svc.orderExecutor.GetEntryOrders() {
+		if rec.Leg == "" {
+			continue
 		}
-	}
-	if svc.nifty5010PtsStrategy != nil {
-		if pos := svc.nifty5010PtsStrategy.CurrentFNOPosition(); pos != nil {
-			svc.setLiveOrderFromPosition(svc.nifty5010PtsStrategy.Name(), pos)
-		}
-	}
-	if svc.nifty50FnO5M3MStrategy != nil {
-		if pos := svc.nifty50FnO5M3MStrategy.CurrentFNOPosition(); pos != nil {
-			svc.setLiveOrderFromPosition(svc.nifty50FnO5M3MStrategy.Name(), pos)
-		}
+		svc.upsertLiveLeg(strategy.Signal{
+			StrategyName: rec.StrategyName, Side: strategy.PositionSide(rec.PositionSide),
+			Leg: rec.Leg, FNOToken: rec.Token, Short: rec.Short,
+		}, rec.Price)
 	}
 }
 
@@ -1091,8 +1067,14 @@ func (svc *Service) updateLiveOrdersFromTick(ctx context.Context, tick model.Tic
 			rt.CurrentPrice = tick.Price
 			changed = true
 		}
-		switch rt.Side {
-		case strategy.SideCall, strategy.SidePut:
+		switch {
+		case rt.Short:
+			// A sold leg profits as premium falls — track lowest as best.
+			if rt.BestPrice == 0 || tick.Price < rt.BestPrice {
+				rt.BestPrice = tick.Price
+				changed = true
+			}
+		case rt.Side == strategy.SideCall, rt.Side == strategy.SidePut:
 			// Both CALL and PUT are BUY orders — track highest as best
 			if tick.Price > rt.BestPrice {
 				rt.BestPrice = tick.Price
@@ -1109,18 +1091,9 @@ func (svc *Service) updateLiveOrdersFromTick(ctx context.Context, tick model.Tic
 
 func (svc *Service) stopConfig(strategyName string) (hardSL, trailSL, trailStart float64, ok bool) {
 	switch {
-	case svc.nifty50SLStrategy != nil && strategyName == svc.nifty50SLStrategy.Name():
-		cfg := svc.nifty50SLStrategy.Config()
-		return cfg.FNOHardSLPct, cfg.FNOTrailSLPct, cfg.FNOTrailStartPct, true
-	case svc.nifty50SL2Strategy != nil && strategyName == svc.nifty50SL2Strategy.Name():
-		cfg := svc.nifty50SL2Strategy.Config()
-		return cfg.FNOHardSLPct, cfg.FNOTrailSLPct, cfg.FNOTrailStartPct, true
-	case svc.nifty50Strategy != nil && strategyName == svc.nifty50Strategy.Name():
-		cfg := svc.nifty50Strategy.Config()
-		return cfg.FNOHardSLPct, cfg.FNOTrailSLPct, cfg.FNOTrailStartPct, true
-	case svc.nifty5010PtsStrategy != nil && strategyName == svc.nifty5010PtsStrategy.Name():
-		cfg := svc.nifty5010PtsStrategy.Config()
-		return cfg.FNOHardSLPct, cfg.FNOTrailSLPct, cfg.FNOTrailStartPct, true
+	case svc.nifty50RangeStrategy != nil && strategyName == svc.nifty50RangeStrategy.Name():
+		cfg := svc.nifty50RangeStrategy.Config()
+		return float64(cfg.FNOHardSLPct), float64(cfg.FNOTrailSLPct), float64(cfg.FNOTrailStartPct), true
 	default:
 		return 0, 0, 0, false
 	}
@@ -1178,17 +1151,23 @@ func (svc *Service) snapshotLiveOrdersLocked() []liveOrderPayload {
 			EntryFNOPrice:   rt.EntryPrice,
 			CurrentFNOPrice: rt.CurrentPrice,
 			BestFNOPrice:    rt.BestPrice,
+			Leg:             rt.Leg,
+			Strike:          rt.Strike,
+			Short:           rt.Short,
 		}
-		if hardSL, trailSL, trailStart, ok := svc.stopConfig(rt.StrategyName); ok {
+		if hardSL, trailSL, trailStart, ok := svc.stopConfig(rt.StrategyName); ok && rt.Leg == "" {
 			payload.StoplossPrice, payload.StoplossKind = computeLiveStoploss(rt.Side, rt.EntryPrice, rt.BestPrice, hardSL, trailSL, trailStart)
 		}
 		orders = append(orders, payload)
 	}
 	sort.Slice(orders, func(i, j int) bool {
-		if orders[i].StrategyName == orders[j].StrategyName {
+		if orders[i].StrategyName != orders[j].StrategyName {
+			return orders[i].StrategyName < orders[j].StrategyName
+		}
+		if orders[i].Side != orders[j].Side {
 			return orders[i].Side < orders[j].Side
 		}
-		return orders[i].StrategyName < orders[j].StrategyName
+		return orders[i].Leg < orders[j].Leg
 	})
 	return orders
 }
@@ -1318,24 +1297,8 @@ func automationSignalType(side strategy.PositionSide) orderexec.AutomationSignal
 }
 
 func (svc *Service) strategyAutomationContext(sig strategy.Signal) (strategy.EntryAutomationContext, bool) {
-	if svc.nifty50Strategy != nil && sig.StrategyName == svc.nifty50Strategy.Name() {
-		ctx := svc.nifty50Strategy.EntryAutomationContext(sig.Exchange, sig.Token)
-		if ctx.Available {
-			return ctx, true
-		}
-	}
-
-	// FNO_SL / FNO_SL2 / 10PTS strategies trade the same NIFTY50 index but
-	// don't compute their own market state.  Fall back to the primary
-	// NIFTY50_FNO strategy's regime detection so signals always carry a
-	// market_state label in the journal.
-	if svc.nifty50Strategy != nil && sig.StrategyName != svc.nifty50Strategy.Name() {
-		ctx := svc.nifty50Strategy.EntryAutomationContext(sig.Exchange, sig.Token)
-		if ctx.Available {
-			return ctx, true
-		}
-	}
-
+	// No registered strategy exposes its own automation context; callers
+	// fall back to reason parsing.
 	return strategy.EntryAutomationContext{}, false
 }
 

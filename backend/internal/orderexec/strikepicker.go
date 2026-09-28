@@ -51,6 +51,11 @@ type StrikePicker struct {
 	resolved  bool
 	spotPrice int64
 	resolveTS time.Time
+
+	// Multi-leg contracts (strikepicker_legs.go).
+	legCache map[string]StrikeInfo
+	expiry   time.Time
+	lookup   func(symbol string) (token string, lotSize int64, err error) // test hook
 }
 
 // NewStrikePicker creates a new picker that uses the given SmartConnect client.
@@ -160,6 +165,8 @@ func (sp *StrikePicker) Reset() {
 	sp.currentCE = StrikeInfo{}
 	sp.currentPE = StrikeInfo{}
 	sp.spotPrice = 0
+	sp.legCache = nil
+	sp.expiry = time.Time{}
 	sp.mu.Unlock()
 	log.Println("[strikepicker] reset for new trading day")
 }

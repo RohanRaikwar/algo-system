@@ -447,3 +447,20 @@
         display: none;
     }
 }
+
+/* Multi-chart panes: tighter toolbar, instrument shown as text. */
+.compact .toolbar {
+    min-height: 40px;
+    gap: 10px;
+    padding: 4px 10px;
+}
+
+.compact .lastPrice {
+    font-size: 14px;
+}
+
+.paneSymbol {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--sg-muted);
+}

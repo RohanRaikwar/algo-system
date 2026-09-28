@@ -15,6 +15,9 @@ type Trade struct {
 	Price        int64     `json:"price"` // in paise
 	Timestamp    time.Time `json:"timestamp"`
 	StrategyName string    `json:"strategy_name,omitempty"` // Strategy that placed the trade
+	// Short marks an option-selling leg: SELL opens (negative qty) and BUY
+	// closes. Unflagged trades keep the long-only behaviour.
+	Short bool `json:"short,omitempty"`
 }
 
 // DailyStats holds aggregated stats for the current trading day.
@@ -88,6 +91,12 @@ func (p *PnLTracker) RecordTrade(trade Trade) int64 {
 
 	var realizedPnL int64
 
+	if trade.Short {
+		realizedPnL = p.recordShortLocked(trade, &entry)
+		p.costBasis[key] = entry
+		return realizedPnL
+	}
+
 	if trade.Action == "BUY" {
 		// Increase position
 		if entry.Qty == 0 {
@@ -113,29 +122,67 @@ func (p *PnLTracker) RecordTrade(trade Trade) int64 {
 			entry.Qty = 0
 			entry.AvgPrice = 0
 		}
-		p.realizedPnL += realizedPnL
-
-		// Track per-strategy daily P&L
-		if trade.StrategyName != "" {
-			p.strategyDailyPnL[trade.StrategyName] += realizedPnL
-		}
-
-		// Track wins/losses
-		if realizedPnL > 0 {
-			p.dailyWins++
-			if realizedPnL > p.dailyLargestWin {
-				p.dailyLargestWin = realizedPnL
-			}
-		} else if realizedPnL < 0 {
-			p.dailyLosses++
-			if realizedPnL < p.dailyLargestLoss {
-				p.dailyLargestLoss = realizedPnL
-			}
-		}
+		p.bookRealizedLocked(trade.StrategyName, realizedPnL)
 	}
 
 	p.costBasis[key] = entry
 	return realizedPnL
+}
+
+// bookRealizedLocked adds a closing trade's realized P&L to the totals,
+// the strategy's daily P&L and the win/loss tallies. Caller holds p.mu.
+func (p *PnLTracker) bookRealizedLocked(strategyName string, realizedPnL int64) {
+	p.realizedPnL += realizedPnL
+
+	// Track per-strategy daily P&L
+	if strategyName != "" {
+		p.strategyDailyPnL[strategyName] += realizedPnL
+	}
+
+	// Track wins/losses
+	if realizedPnL > 0 {
+		p.dailyWins++
+		if realizedPnL > p.dailyLargestWin {
+			p.dailyLargestWin = realizedPnL
+		}
+	} else if realizedPnL < 0 {
+		p.dailyLosses++
+		if realizedPnL < p.dailyLargestLoss {
+			p.dailyLargestLoss = realizedPnL
+		}
+	}
+}
+
+// recordShortLocked applies a short-leg trade. The short is held as a
+// negative Qty: SELL grows it at a weighted average price, BUY covers it
+// and realizes (avg − price) × covered qty. A BUY with no short open
+// covers nothing. Caller holds p.mu.
+func (p *PnLTracker) recordShortLocked(trade Trade, entry *costEntry) int64 {
+	if trade.Action == "SELL" {
+		held := -entry.Qty
+		if held <= 0 {
+			entry.Qty, entry.AvgPrice = -trade.Qty, trade.Price
+			return 0
+		}
+		total := entry.AvgPrice*held + trade.Price*trade.Qty
+		entry.Qty -= trade.Qty
+		entry.AvgPrice = total / -entry.Qty
+		return 0
+	}
+	cover := trade.Qty
+	if held := -entry.Qty; cover > held {
+		cover = held
+	}
+	if cover <= 0 {
+		return 0
+	}
+	realized := (entry.AvgPrice - trade.Price) * cover
+	entry.Qty += cover
+	if entry.Qty >= 0 {
+		entry.Qty, entry.AvgPrice = 0, 0
+	}
+	p.bookRealizedLocked(trade.StrategyName, realized)
+	return realized
 }
 
 // CorrectLastFill replaces the price of the most recent matching trade with
@@ -207,7 +254,7 @@ func (p *PnLTracker) GetUnrealizedPnL(currentPrices map[string]int64) int64 {
 
 	var unrealized int64
 	for key, entry := range p.costBasis {
-		if entry.Qty <= 0 {
+		if entry.Qty == 0 {
 			continue
 		}
 		if price, ok := currentPrices[key]; ok {
@@ -276,7 +323,7 @@ func (p *PnLTracker) GetSummary(currentPrices map[string]int64) PnLSummary {
 	unrealized := int64(0)
 	openPositions := 0
 	for key, entry := range p.costBasis {
-		if entry.Qty <= 0 {
+		if entry.Qty == 0 {
 			continue
 		}
 		openPositions++
