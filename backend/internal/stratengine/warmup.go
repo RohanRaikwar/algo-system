@@ -26,6 +26,9 @@ func (svc *Service) warmupRangeStrategies() {
 	if svc.cfg.RangeICEnabled && svc.nifty50RangeICStrategy != nil {
 		warmers = append(warmers, svc.nifty50RangeICStrategy)
 	}
+	if svc.cfg.SREnabled && svc.srStrategy != nil {
+		warmers = append(warmers, svc.srStrategy)
+	}
 	if len(warmers) == 0 {
 		return
 	}

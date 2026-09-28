@@ -458,15 +458,14 @@ func clusterLevels(points []int64, tol int64) []levelCluster {
 	return out
 }
 
-// levels returns the nearest confirmed support at/below price and the
-// nearest confirmed resistance at/above price (each within tolerance).
-func (rc *rangeContext) levels(price int64) (sup int64, supT int, res int64, resT int) {
+// swingPoints returns the swing highs and lows (15m, optional 1h) plus the
+// previous-day high/low that support/resistance are clustered from.
+func (rc *rangeContext) swingPoints() (highs, lows []int64) {
 	bars := rc.bars15
 	if n := rc.cfg.LevelLookbackBars; len(bars) > n {
 		bars = bars[len(bars)-n:]
 	}
 	w := rc.cfg.SwingWindow
-	var highs, lows []int64
 	for i := w; i < len(bars)-w; i++ {
 		isHigh, isLow := true, true
 		for j := i - w; j <= i+w; j++ {
@@ -514,7 +513,13 @@ func (rc *rangeContext) levels(price int64) (sup int64, supT int, res int64, res
 		highs = append(highs, rc.prevDayHigh)
 		lows = append(lows, rc.prevDayLow)
 	}
+	return highs, lows
+}
 
+// levels returns the nearest confirmed support at/below price and the
+// nearest confirmed resistance at/above price (each within tolerance).
+func (rc *rangeContext) levels(price int64) (sup int64, supT int, res int64, resT int) {
+	highs, lows := rc.swingPoints()
 	tol := rc.cfg.LevelTolerancePts
 	for _, c := range clusterLevels(lows, tol) {
 		if c.touches >= rc.cfg.MinTouches && c.level <= price+tol && c.level > sup {

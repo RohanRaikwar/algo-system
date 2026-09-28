@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"trading-systemv1/internal/backtest"
 	"trading-systemv1/internal/strategy"
@@ -29,7 +30,7 @@ func main() {
 	to := flag.String("to", "", "End date YYYY-MM-DD (optional)")
 	output := flag.String("output", "console", "Output format: console, json, csv")
 	outDir := flag.String("outdir", ".", "Output directory for json/csv exports")
-	stratFlag := flag.String("strategy", "nifty50_range", "Strategy type: nifty50_range, nifty50_gamma")
+	stratFlag := flag.String("strategy", "nifty50_range", "Strategy type: nifty50_range, nifty50_gamma, nifty50_sr")
 	candleTF := flag.Int("tf", 1, "Candle timeframe in minutes (1=1m, 2=2m, 5=5m)")
 
 	// FNO option price tracking
@@ -51,6 +52,16 @@ func main() {
 	gSL := flag.Int64("gamma-sl", 0, "nifty50_gamma: premium stop %% (0 = default 30)")
 	gTarget := flag.Int64("gamma-target", 0, "nifty50_gamma: premium target %% (0 = default 150)")
 	gOTM := flag.Int("gamma-otm", -1, "nifty50_gamma: strikes OTM (-1 = default ATM)")
+	srRangeADX := flag.Float64("sr-range-adx", 0, "nifty50_sr: RANGE regime while 15m ADX below this (0 = default 22)")
+	srTrendADX := flag.Float64("sr-trend-adx", 0, "nifty50_sr: TREND regime while 15m ADX above this (0 = default 25)")
+	srConfirm := flag.Int("sr-confirm", 0, "nifty50_sr: confirmations needed of 4 (VWAP, EMA, RSI, candle) (0 = default 3)")
+	srMaxTrades := flag.Int("sr-max-trades", 0, "nifty50_sr: max entries per day (0 = default 3)")
+	srMaxLosses := flag.Int("sr-max-losses", 0, "nifty50_sr: stop for the day after this many losses in a row (0 = default 2)")
+	srDayLoss := flag.Int64("sr-day-loss-pts", 0, "nifty50_sr: stop for the day after this many index points lost (0 = default 60)")
+	srStopATR := flag.Int64("sr-stop-atr", 0, "nifty50_sr: stop beyond the level by this %% of 15m ATR (0 = default 50)")
+	srStopMin := flag.Int64("sr-stop-min", 0, "nifty50_sr: minimum stop distance beyond the level, index points (0 = default 10)")
+	srEntryTF := flag.Int("sr-entry-tf", 0, "nifty50_sr: entry bar minutes, 1 or 5 (0 = default 1)")
+	srSetups := flag.String("sr-setups", "", "nifty50_sr: comma list of fade,retest,pullback to enable (empty = all). Strike greeks filter is live-only")
 	optModel := flag.Bool("option-model", false, "Price each trade's own option (strike, weekly expiry) with Black-Scholes; P&L in option premium")
 	optIV := flag.Float64("option-iv", 13, "Flat IV %% for -option-model when no India VIX history is loaded")
 	premSL := flag.Int64("premium-sl", 20, "Modeled premium hard SL %% (0 = off), as the live strategy")
@@ -67,6 +78,7 @@ func main() {
 		OutDir:           *outDir,
 		StrategyType:     *stratFlag,
 		StrategyCfgGamma: gammaOverrides(*gRange, *gADX, *gSL, *gTarget, *gOTM),
+		StrategyCfgSR:    srOverrides(*srRangeADX, *srTrendADX, *srConfirm, *srMaxTrades, *srMaxLosses, *srDayLoss, *srStopATR, *srStopMin, *srEntryTF, *srSetups),
 		StrategyCfgRange: rangeOverrides(*rangeMaxADX, *rangeBOTarget, *rangeBOEnd, *rangeEntryTF, *rangeFlag, *flagBars, *flagWidth, *htfTrend, *htfLevels),
 		Option: backtest.OptionModel{
 			Enabled: *optModel, IVPct: *optIV, RatePct: 6.5, PremiumSLPct: *premSL,
@@ -103,6 +115,50 @@ func main() {
 	default:
 		backtest.PrintConsole(result)
 	}
+}
+
+// srOverrides builds a nifty50_sr config from CLI flags (nil = defaults).
+func srOverrides(rangeADX, trendADX float64, confirm, maxTrades, maxLosses int, dayLossPts, stopATR, stopMinPts int64, entryTF int, setups string) *strategy.Nifty50SRConfig {
+	if rangeADX == 0 && trendADX == 0 && confirm == 0 && maxTrades == 0 && maxLosses == 0 && dayLossPts == 0 &&
+		stopATR == 0 && stopMinPts == 0 && entryTF == 0 && setups == "" {
+		return nil
+	}
+	cfg := strategy.DefaultNifty50SRConfig()
+	if entryTF > 0 {
+		cfg.EntryTFMinutes = entryTF
+	}
+	if stopATR > 0 {
+		cfg.StopATRPct = stopATR
+	}
+	if stopMinPts > 0 {
+		cfg.StopMinPts = stopMinPts * 100
+	}
+	if rangeADX > 0 {
+		cfg.Context.RangeMaxADX = rangeADX
+	}
+	if trendADX > 0 {
+		cfg.Context.TrendMinADX = trendADX
+	}
+	if confirm > 0 {
+		cfg.MinConfirmations = confirm
+	}
+	if maxTrades > 0 {
+		cfg.MaxTradesPerDay = maxTrades
+	}
+	if maxLosses > 0 {
+		cfg.MaxConsecLosses = maxLosses
+	}
+	if dayLossPts > 0 {
+		cfg.MaxDayLossPts = dayLossPts * 100
+	}
+	if setups != "" {
+		on := map[string]bool{}
+		for _, s := range strings.Split(setups, ",") {
+			on[strings.TrimSpace(strings.ToLower(s))] = true
+		}
+		cfg.FadeEnabled, cfg.RetestEnabled, cfg.PullbackEnabled = on["fade"], on["retest"], on["pullback"]
+	}
+	return &cfg
 }
 
 // rangeOverrides builds a nifty50_range config from CLI flags (nil = defaults).

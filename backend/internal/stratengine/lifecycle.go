@@ -69,6 +69,14 @@ func (svc *Service) persistSnapshot(ctx context.Context) error {
 		}
 	}
 
+	if svc.srStrategy != nil {
+		if srSnap, err := svc.srStrategy.Snapshot(); err != nil {
+			log.Printf("[stratengine] NIFTY50_SR snapshot error: %v", err)
+		} else {
+			snapshots["nifty50_sr"] = srSnap
+		}
+	}
+
 	// Snapshot P&L tracker state
 	pnlSnap, err := svc.pnlTracker.Snapshot()
 	if err != nil {
@@ -158,6 +166,14 @@ func (svc *Service) restoreState(ctx context.Context) {
 			log.Printf("[stratengine] NIFTY50_RANGE_IC restore error: %v", err)
 		} else {
 			log.Println("[stratengine] ✅ NIFTY50_RANGE_IC strategy state restored")
+		}
+	}
+
+	if srData, ok := snapshots["nifty50_sr"]; ok && svc.srStrategy != nil {
+		if err := svc.srStrategy.Restore(srData); err != nil {
+			log.Printf("[stratengine] NIFTY50_SR restore error: %v", err)
+		} else {
+			log.Println("[stratengine] ✅ NIFTY50_SR strategy state restored")
 		}
 	}
 
@@ -471,6 +487,9 @@ func (svc *Service) forceExitAllStrategies(reason string) []strategy.Signal {
 	}
 	if svc.nifty50RangeICStrategy != nil {
 		sigs = append(sigs, svc.nifty50RangeICStrategy.ForceExitAll(reason)...)
+	}
+	if svc.srStrategy != nil {
+		sigs = append(sigs, svc.srStrategy.ForceExitAll(reason)...)
 	}
 	return sigs
 }

@@ -75,6 +75,15 @@ type Config struct {
 	RangeMinSellIV    float64 // min average IV % of the condor's short legs
 	RangeCostMultiple int64   // expected option gain at target ≥ this × round-trip slippage
 
+	// ── NIFTY50_SR: regime-aware support/resistance, paper only ──
+	SREnabled       bool
+	SRMaxDayLossPts int64   // stop entries after this many index paise lost today, 0 = off
+	SRDeltaMin      float64 // bought strike |delta| band, from the live chain
+	SRDeltaMax      float64
+	SRMaxThetaPct   float64 // |theta| per day ≤ this % of premium, 0 = off
+	SRMaxGamma      float64 // gamma cap within SRGammaDTE days of expiry, 0 = off
+	SRGammaDTE      int
+
 	PaperSlippageBps      int64 // paper fills cross the spread: LTP ± max(LTP×bps/10000, min)
 	PaperSlippageMinPaise int64
 	WarmupDays            int    // calendar days of 1m history replayed at startup
@@ -129,6 +138,13 @@ func LoadConfig() Config {
 		RangeMaxBuyIV:         getEnvFloat("STRAT_RANGE_MAX_BUY_IV", 25),
 		RangeMinSellIV:        getEnvFloat("STRAT_RANGE_MIN_SELL_IV", 11),
 		RangeCostMultiple:     config.GetEnvInt64("STRAT_RANGE_COST_MULTIPLE", 3),
+		SREnabled:             config.GetEnvBool("STRAT_SR_ENABLED", true),
+		SRMaxDayLossPts:       config.GetEnvInt64("STRAT_SR_MAX_DAY_LOSS_PAISE", 6000),
+		SRDeltaMin:            getEnvFloat("STRAT_SR_DELTA_MIN", 0.45),
+		SRDeltaMax:            getEnvFloat("STRAT_SR_DELTA_MAX", 0.60),
+		SRMaxThetaPct:         getEnvFloat("STRAT_SR_MAX_THETA_PCT", 8),
+		SRMaxGamma:            getEnvFloat("STRAT_SR_MAX_GAMMA", 0.005),
+		SRGammaDTE:            config.GetEnvInt("STRAT_SR_GAMMA_DTE", 1),
 		PaperSlippageBps:      config.GetEnvInt64("STRAT_PAPER_SLIPPAGE_BPS", 50),
 		PaperSlippageMinPaise: config.GetEnvInt64("STRAT_PAPER_SLIPPAGE_MIN_PAISE", 50),
 		WarmupDays:            config.GetEnvInt("STRAT_RANGE_WARMUP_DAYS", 5),

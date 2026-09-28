@@ -62,6 +62,9 @@ func (svc *Service) entryCancellerFor(name string) entryCanceller {
 	if svc.nifty50RangeStrategy != nil && name == svc.nifty50RangeStrategy.Name() {
 		return svc.nifty50RangeStrategy
 	}
+	if svc.srStrategy != nil && name == svc.srStrategy.Name() {
+		return svc.srStrategy
+	}
 	return nil
 }
 
@@ -69,18 +72,29 @@ func (svc *Service) positionTokenSetterFor(name string) positionTokenSetter {
 	if svc.nifty50RangeStrategy != nil && name == svc.nifty50RangeStrategy.Name() {
 		return svc.nifty50RangeStrategy
 	}
+	if svc.srStrategy != nil && name == svc.srStrategy.Name() {
+		return svc.srStrategy
+	}
 	return nil
 }
 
 // resolveEntryStrike turns sig.Strike into the exact contract to buy.
 // It refuses a contract with no premium yet (and subscribes it, so a
 // later signal can use it).
+// NIFTY50_SR entries pick their strike from the chain by greeks first
+// (see sr_strike.go), which replaces the range delta guard.
 func (svc *Service) resolveEntryStrike(ctx context.Context, sig *strategy.Signal, now time.Time) error {
+	sr := svc.isSRSignal(sig)
+	if sr {
+		if err := svc.pickSRStrike(sig, now); err != nil {
+			return err
+		}
+	}
 	info, err := svc.resolverForLegs().ResolveStrike(now, sig.Strike, optionTypeFor(sig.Side))
 	if err != nil {
 		return fmt.Errorf("strike %d%s not resolvable: %w", sig.Strike, optionTypeFor(sig.Side), err)
 	}
-	if svc.cfg.RangeDeltaGuard {
+	if svc.cfg.RangeDeltaGuard && !sr {
 		if info, err = svc.deltaChecked(sig, info, now); err != nil {
 			return err
 		}

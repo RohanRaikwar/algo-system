@@ -14,11 +14,23 @@ type futureResolver interface {
 	NearestFuture(name string, now time.Time) (*orderexec.Instrument, error)
 }
 
-// refreshVolumeToken points NIFTY50_RANGE's volume checks at the nearest
+// volumeTokenSetter is a strategy that takes volume from another instrument.
+type volumeTokenSetter interface {
+	SetVolumeToken(token string)
+}
+
+// refreshVolumeToken points NIFTY50_RANGE's and NIFTY50_SR's volume (and SR's VWAP) at the nearest
 // NIFTY future (the index has no volume) and subscribes its ticks. Without
 // a future the volume checks stay inactive (RequireVolume=false).
 func (svc *Service) refreshVolumeToken(ctx context.Context, now time.Time) {
-	if !svc.cfg.RangeEnabled || svc.nifty50RangeStrategy == nil {
+	var setters []volumeTokenSetter
+	if svc.cfg.RangeEnabled && svc.nifty50RangeStrategy != nil {
+		setters = append(setters, svc.nifty50RangeStrategy)
+	}
+	if svc.cfg.SREnabled && svc.srStrategy != nil {
+		setters = append(setters, svc.srStrategy)
+	}
+	if len(setters) == 0 {
 		return
 	}
 	res := svc.futures
@@ -30,7 +42,9 @@ func (svc *Service) refreshVolumeToken(ctx context.Context, now time.Time) {
 		log.Printf("[stratengine] range volume: no NIFTY future (%v) — volume checks inactive", err)
 		return
 	}
-	svc.nifty50RangeStrategy.SetVolumeToken(svc.qualifyFNOToken(fut.Token))
+	for _, s := range setters {
+		s.SetVolumeToken(svc.qualifyFNOToken(fut.Token))
+	}
 	svc.subscribeTokens(ctx, fut.Token)
 	log.Printf("[stratengine] range volume from %s (token=%s)", fut.Symbol, fut.Token)
 }
