@@ -231,6 +231,13 @@ func parseTick(msg map[string]interface{}, recvTS time.Time) (model.Tick, error)
 		eventTS = time.Unix(0, exTS*int64(time.Millisecond)).UTC()
 	}
 
+	bid := bestPrice(msg["best_5_buy_data"])
+	ask := bestPrice(msg["best_5_sell_data"])
+	var quoteTS time.Time
+	if bid > 0 || ask > 0 {
+		quoteTS = recvTS
+	}
+
 	return model.Tick{
 		Token:     token,
 		Exchange:  exchange,
@@ -239,7 +246,24 @@ func parseTick(msg map[string]interface{}, recvTS time.Time) (model.Tick, error)
 		DayVolume: dayVol,
 		TickTS:    recvTS,
 		EventTS:   eventTS,
+		BestBid:   bid,
+		BestAsk:   ask,
+		OI:        toInt64(msg["open_interest"]),
+		QuoteTS:   quoteTS,
 	}, nil
+}
+
+// bestPrice returns the first depth level's price (paise), 0 when the level
+// is missing or empty. Angel sends best-first.
+func bestPrice(v interface{}) int64 {
+	levels, ok := v.([]map[string]interface{})
+	if !ok || len(levels) == 0 {
+		return 0
+	}
+	if toInt64(levels[0]["quantity"]) <= 0 {
+		return 0
+	}
+	return toInt64(levels[0]["price"])
 }
 
 // seqGapLogInterval rate-limits feed gap log lines (the metric counts every gap).

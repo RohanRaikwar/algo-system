@@ -219,3 +219,43 @@ func TestForceReconnect_EndsSessionWithFeedLost(t *testing.T) {
 	}
 	ing.ForceReconnect("again") // must not block when already pending
 }
+
+func TestParseTickSnapQuoteBestBidAskOI(t *testing.T) {
+	recv := time.Date(2026, 9, 29, 5, 0, 0, 0, time.UTC)
+	msg := map[string]interface{}{
+		"token": "40712", "exchange_type": 2,
+		"last_traded_price":        int64(20300),
+		"exchange_timestamp":       recv.UnixMilli(),
+		"open_interest":            int64(254000),
+		"best_5_buy_data":          []map[string]interface{}{{"price": int64(20280), "quantity": int64(650)}, {"price": int64(20275), "quantity": int64(1300)}},
+		"best_5_sell_data":         []map[string]interface{}{{"price": int64(20320), "quantity": int64(325)}},
+		"volume_trade_for_the_day": int64(1000),
+	}
+	tk, err := parseTick(msg, recv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tk.BestBid != 20280 || tk.BestAsk != 20320 || tk.OI != 254000 || !tk.QuoteTS.Equal(recv) {
+		t.Fatalf("tick = %+v", tk)
+	}
+}
+
+func TestParseTickQuoteModeHasNoDepth(t *testing.T) {
+	recv := time.Now().UTC()
+	tk, err := parseTick(map[string]interface{}{"token": "99926000", "exchange_type": 1, "last_traded_price": int64(2269000)}, recv)
+	if err != nil || tk.BestBid != 0 || tk.BestAsk != 0 || !tk.QuoteTS.IsZero() {
+		t.Fatalf("tick = %+v err=%v", tk, err)
+	}
+}
+
+func TestParseTickSkipsEmptyDepthLevels(t *testing.T) {
+	recv := time.Now().UTC()
+	tk, _ := parseTick(map[string]interface{}{
+		"token": "1", "exchange_type": 2, "last_traded_price": int64(500),
+		"best_5_buy_data":  []map[string]interface{}{{"price": int64(0), "quantity": int64(0)}},
+		"best_5_sell_data": []map[string]interface{}{},
+	}, recv)
+	if tk.BestBid != 0 || tk.BestAsk != 0 || !tk.QuoteTS.IsZero() {
+		t.Fatalf("empty depth produced a quote: %+v", tk)
+	}
+}
