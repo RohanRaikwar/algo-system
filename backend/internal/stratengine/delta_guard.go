@@ -59,9 +59,19 @@ func (svc *Service) greeksFor() (greeksSource, error) {
 // optionChain returns the chain, cached for deltaChainTTL (OptionGreek is
 // one broker call per expiry).
 func (svc *Service) optionChain(now time.Time) ([]orderexec.OptionContract, error) {
+	return svc.optionChainFresh(now, deltaChainTTL)
+}
+
+// optionChainFresh is optionChain with an explicit TTL. It is the single
+// loader shared by the old delta-guard path (via optionChain) and the
+// picker's chainAdapter (with its own 15s TTL) so the two paths do not each
+// call LoadOptionChain and double the broker calls: whichever path loads
+// first refreshes chain/chainAt, and the other reuses it as long as its own
+// TTL still calls the cached load fresh.
+func (svc *Service) optionChainFresh(now time.Time, ttl time.Duration) ([]orderexec.OptionContract, error) {
 	svc.chainMu.Lock()
 	defer svc.chainMu.Unlock()
-	if svc.chain != nil && now.Sub(svc.chainAt) < deltaChainTTL && !now.Before(svc.chainAt) {
+	if svc.chain != nil && now.Sub(svc.chainAt) < ttl && !now.Before(svc.chainAt) {
 		return svc.chain, nil
 	}
 	src, err := svc.greeksFor()

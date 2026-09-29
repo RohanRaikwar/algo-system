@@ -10,6 +10,7 @@ import (
 
 	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/optionpicker"
+	"trading-systemv1/internal/orderexec"
 	"trading-systemv1/internal/strategy"
 )
 
@@ -35,6 +36,43 @@ func TestIntentForSRAndRange(t *testing.T) {
 	}
 	if _, ok := svc.intentFor(strategy.Signal{StrategyName: svc.srStrategy.Name(), Action: strategy.ActionExit}); ok {
 		t.Fatal("exit got an intent")
+	}
+}
+
+// The picker's chainAdapter and the old delta-guard path must share one
+// cache: back-to-back calls (picker load, then the old path within the
+// cache window) make exactly one broker call.
+func TestChainAdapterSharesCacheWithOldOptionChainPath(t *testing.T) {
+	g := &fakeGreeks{chain: []orderexec.OptionContract{contract(24000, "CE", 0.5)}}
+	svc := deltaSvc(g, 2400000, "CE24000")
+	now := time.Now()
+
+	if _, err := (chainAdapter{svc}).Load(now); err != nil {
+		t.Fatalf("chainAdapter.Load: %v", err)
+	}
+	if _, err := svc.optionChain(now); err != nil {
+		t.Fatalf("optionChain: %v", err)
+	}
+	if g.calls != 1 {
+		t.Fatalf("OptionGreek called %d times, want 1 (shared cache)", g.calls)
+	}
+}
+
+func TestNewPickerNilWhenAllThreeStrategiesDisabled(t *testing.T) {
+	svc := deltaSvc(&fakeGreeks{}, 2270000)
+	svc.cfg.PickerMode = "on"
+	svc.cfg.SREnabled, svc.cfg.RangeEnabled, svc.cfg.RangeICEnabled = false, false, false
+	if p := svc.newPicker(); p != nil {
+		t.Fatal("newPicker built a picker with no consumers (SR, RANGE, RANGE_IC all disabled)")
+	}
+}
+
+func TestNewPickerBuiltWhenAnyStrategyEnabled(t *testing.T) {
+	svc := deltaSvc(&fakeGreeks{}, 2270000)
+	svc.cfg.PickerMode = "on"
+	svc.cfg.SREnabled, svc.cfg.RangeEnabled, svc.cfg.RangeICEnabled = true, false, false
+	if p := svc.newPicker(); p == nil {
+		t.Fatal("newPicker returned nil with SR enabled")
 	}
 }
 

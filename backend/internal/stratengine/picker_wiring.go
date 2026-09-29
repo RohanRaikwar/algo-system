@@ -48,11 +48,10 @@ func (svc *Service) pickerConfig() optionpicker.Config {
 type chainAdapter struct{ svc *Service }
 
 func (a chainAdapter) Load(now time.Time) ([]optionpicker.Contract, error) {
-	src, err := a.svc.greeksFor()
-	if err != nil {
-		return nil, err
-	}
-	chain, err := src.LoadOptionChain(now)
+	// Shares svc's chain cache with the old delta-guard path (optionChain)
+	// so the picker's 15s refresh and the old path's checks do not each hit
+	// the broker: one LoadOptionChain call serves both.
+	chain, err := a.svc.optionChainFresh(now, 15*time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -95,9 +94,14 @@ func (svc *Service) pickerEnabled() bool {
 	return svc.cfg.PickerMode == "shadow" || svc.cfg.PickerMode == "on"
 }
 
-// newPicker builds the picker; nil when the mode is off.
+// newPicker builds the picker; nil when the mode is off, or when SR, RANGE
+// and RANGE_IC are all disabled (no strategy would ever consume a decision,
+// so running the picker's background refresh would only add broker load).
 func (svc *Service) newPicker() *optionpicker.Picker {
 	if !svc.pickerEnabled() || svc.orderExecutor == nil {
+		return nil
+	}
+	if !svc.cfg.SREnabled && !svc.cfg.RangeEnabled && !svc.cfg.RangeICEnabled {
 		return nil
 	}
 	sp := orderexec.NewStrikePicker(svc.orderExecutor.GetSmartConnect())
