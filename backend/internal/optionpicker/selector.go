@@ -152,3 +152,73 @@ func SelectSingle(chain []Contract, in SingleIntent, r Rules, env Env) (Pick, Re
 	}
 	return best, rej, nil
 }
+
+// SelectCondor builds a short iron condor past the range edges. All legs
+// or nothing.
+func SelectCondor(chain []Contract, in CondorIntent, r Rules, env Env) (CondorPick, Rejects, error) {
+	rej := Rejects{}
+	if err := checkEnv(r, env); err != nil {
+		return CondorPick{}, rej, err
+	}
+	expiry, dte, ok := pickExpiry(chain, "CE", env.Now, in.MinDTE)
+	if !ok {
+		return CondorPick{}, rej, &Refusal{Reason: "no condor expiry"}
+	}
+	byKey := make(map[string]Contract, len(chain))
+	for _, c := range chain {
+		if c.Expiry.Equal(expiry) {
+			byKey[fmt.Sprintf("%d%s", c.Strike, c.Option)] = c
+		}
+	}
+	leg := func(strike int64, opt string, short bool) (Pick, bool) {
+		c, ok := byKey[fmt.Sprintf("%d%s", strike, opt)]
+		if !ok {
+			rej["not streamed"]++
+			return Pick{}, false
+		}
+		ev := baseCheck(c, dte, r, env)
+		if ev.failed == "" && !liquidityOK(ev.pick, r) {
+			ev.failed = "liquidity"
+		}
+		if ev.failed == "" && short && math.Abs(ev.pick.Delta) > in.MaxShortDelta {
+			ev.failed = "delta"
+		}
+		if ev.failed != "" {
+			rej[ev.failed]++
+			return Pick{}, false
+		}
+		return ev.pick, true
+	}
+	side := func(opt string, from, dir int64) (Pick, Pick, bool) {
+		const maxSteps = 12
+		step := int64(50)
+		for i := int64(0); i < maxSteps; i++ {
+			k := from + dir*i*step
+			s, ok := leg(k, opt, true)
+			if !ok {
+				continue
+			}
+			l, ok := leg(k+dir*in.WingWidth, opt, false)
+			if !ok {
+				continue
+			}
+			return s, l, true
+		}
+		return Pick{}, Pick{}, false
+	}
+	sCE, lCE, okCE := side("CE", in.ShortCEAtLeast, +1)
+	sPE, lPE, okPE := side("PE", in.ShortPEAtMost, -1)
+	if !okCE || !okPE {
+		return CondorPick{}, rej, &Refusal{Reason: fmt.Sprintf("no condor legs pass (rejected %s)", rej), Rejects: rej}
+	}
+	if r.MinSellIV > 0 && (sCE.IV+sPE.IV)/2 < r.MinSellIV {
+		rej["sell iv"]++
+		return CondorPick{}, rej, &Refusal{Reason: fmt.Sprintf("short legs IV %.1f%% < %.1f%%", (sCE.IV+sPE.IV)/2, r.MinSellIV), Rejects: rej}
+	}
+	credit := sCE.Quote.Bid + sPE.Quote.Bid - lCE.Quote.Ask - lPE.Quote.Ask
+	if need := in.WingWidth * 100 * in.MinCreditPct / 100; in.MinCreditPct > 0 && credit < need {
+		rej["credit"]++
+		return CondorPick{}, rej, &Refusal{Reason: fmt.Sprintf("credit %d < %d paise", credit, need), Rejects: rej}
+	}
+	return CondorPick{ShortCE: sCE, LongCE: lCE, ShortPE: sPE, LongPE: lPE, Credit: credit}, rej, nil
+}
