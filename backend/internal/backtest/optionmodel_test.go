@@ -5,12 +5,13 @@ import (
 	"testing"
 	"time"
 
+	"trading-systemv1/internal/optionmath"
 	"trading-systemv1/internal/strategy"
 )
 
 func TestBSPutCallParity(t *testing.T) {
 	s, k, y, iv, r := 24000.0, 24000.0, 4.0/365, 0.13, 0.065
-	c, p := bsPrice(s, k, y, iv, r, true), bsPrice(s, k, y, iv, r, false)
+	c, p := optionmath.Price(s, k, y, iv, r, true), optionmath.Price(s, k, y, iv, r, false)
 	if diff := c - p - (s - k*math.Exp(-r*y)); math.Abs(diff) > 1e-6 {
 		t.Fatalf("parity off by %f", diff)
 	}
