@@ -32,19 +32,20 @@ func NewChainCache(src ChainSource, every, backoff time.Duration) *ChainCache {
 func (c *ChainCache) Refresh(now time.Time) time.Duration {
 	start := time.Now()
 	out, err := c.src.Load(now)
+	elapsed := time.Since(start).Truncate(time.Millisecond)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err != nil {
 		c.lastErr = err
 		if strings.Contains(err.Error(), "exceeding access rate") {
-			log.Printf("[optionpicker] option chain rate-limited, backing off %s: %v", c.backoff, err)
+			log.Printf("[optionpicker] option chain rate-limited after %s, backing off %s: %v", elapsed, c.backoff, err)
 			return c.backoff
 		}
-		log.Printf("[optionpicker] option chain load failed: %v", err)
+		log.Printf("[optionpicker] option chain load failed after %s: %v", elapsed, err)
 		return c.every
 	}
 	c.contracts, c.at, c.lastErr = out, now, nil
-	log.Printf("[optionpicker] option chain: %d contracts in %s", len(out), time.Since(start).Truncate(time.Millisecond))
+	log.Printf("[optionpicker] option chain: %d contracts in %s", len(out), elapsed)
 	return c.every
 }
 

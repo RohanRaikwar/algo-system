@@ -33,4 +33,7 @@ func TestChainCacheKeepsLastGoodAndBacksOff(t *testing.T) {
 	if wait := c.Refresh(t0.Add(75 * time.Second)); wait != 15*time.Second {
 		t.Fatalf("plain error wait %v", wait)
 	}
+	if src.hits != 3 {
+		t.Fatalf("Load called %d times, want 3", src.hits)
+	}
 }
