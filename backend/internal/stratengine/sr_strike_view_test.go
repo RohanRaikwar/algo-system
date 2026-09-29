@@ -15,6 +15,7 @@ import (
 
 func strikeSelSvc(g *fakeGreeks, sent *[]string) *Service {
 	svc := deltaSvc(g, 2269000, "CE22700", "PE22700")
+	svc.cfg.SREnabled = true
 	svc.cfg.SRDeltaMin, svc.cfg.SRDeltaMax = 0.45, 0.60
 	svc.strikeSelPublishHook = func(p string) { *sent = append(*sent, p) }
 	return svc
@@ -127,6 +128,28 @@ func TestStrikeSelIncludesPickerStatusAndDecisions(t *testing.T) {
 	if v.Picker == nil || v.Picker.Mode != "shadow" || v.Picker.Streamed == 0 || v.Picker.Rules.MaxSpreadPct != 2 ||
 		len(v.Picker.Decisions) != 1 || v.Picker.Decisions[0].Symbol != "NIFTY06OCT2622700CE" {
 		t.Fatalf("picker view = %+v", v.Picker)
+	}
+}
+
+func TestStrikeSelSkipsSRWorkWhenSRDisabled(t *testing.T) {
+	var sent []string
+	g := &fakeGreeks{chain: []orderexec.OptionContract{contract(22700, "CE", 0.52)}}
+	svc := strikeSelSvc(g, &sent)
+	svc.cfg.SREnabled = false
+	svc.cfg.PickerMode = "shadow"
+	svc.picker = testPicker(t, svc)
+
+	svc.refreshStrikeSel(context.Background(), pickerNow)
+
+	if g.calls != 0 {
+		t.Fatalf("chain fetched %d times with SR disabled, want 0", g.calls)
+	}
+	v := lastStrikeSel(t, sent)
+	if v.Call != nil || v.Put != nil {
+		t.Fatalf("call/put = %+v / %+v, want nil with SR disabled", v.Call, v.Put)
+	}
+	if v.Picker == nil {
+		t.Fatal("picker view missing with SR disabled")
 	}
 }
 

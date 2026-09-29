@@ -157,7 +157,7 @@ export function FnoInstrumentsTab() {
                 <div className="fno-pending">
                     <Target size={48} strokeWidth={1.5} />
                     <p>Waiting for the greeks strike selection…</p>
-                    <span className="fno-pending-sub">Updates every 30s during market hours when NIFTY50_SR is enabled</span>
+                    <span className="fno-pending-sub">Updates every 30s during market hours (NIFTY50_SR strike selection and the global option picker)</span>
                 </div>
             </div>
         );

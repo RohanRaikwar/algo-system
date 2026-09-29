@@ -224,15 +224,20 @@ func (svc *Service) subscribeSRExpiryLadder(ctx context.Context, chain []orderex
 }
 
 // refreshStrikeSel recomputes the live CE/PE pick and publishes the view.
+// The chain fetch, SR expiry ladder and CE/PE picks are SR-only work: they
+// run only when SR is enabled, so a picker-only deployment (SR disabled)
+// never makes the broker chain call or the ladder subscriptions.
 func (svc *Service) refreshStrikeSel(ctx context.Context, now time.Time) {
 	var call, put *srSideView
 	errText := ""
-	if chain, err := svc.optionChain(now); err != nil {
-		errText = "no greeks: " + err.Error()
-	} else {
-		svc.subscribeSRExpiryLadder(ctx, chain, now)
-		call = svc.liveSRSide(chain, "CE", now)
-		put = svc.liveSRSide(chain, "PE", now)
+	if svc.cfg.SREnabled {
+		if chain, err := svc.optionChain(now); err != nil {
+			errText = "no greeks: " + err.Error()
+		} else {
+			svc.subscribeSRExpiryLadder(ctx, chain, now)
+			call = svc.liveSRSide(chain, "CE", now)
+			put = svc.liveSRSide(chain, "PE", now)
+		}
 	}
 	svc.strikeSel.mu.Lock()
 	v := &svc.strikeSel.view
