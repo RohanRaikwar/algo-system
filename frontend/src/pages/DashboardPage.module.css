@@ -58,15 +58,26 @@
 .grid2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .grid4 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
 
-/* Phones: keep the chart usable even when the viewport is short; stack panes. */
+/* Phones: the strategy panel would squeeze the chart to a strip, so the page
+   scrolls instead and each chart pane keeps a usable height. */
 @media (max-width: 640px) {
     .page {
-        min-height: 420px;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+    }
+
+    .grid {
+        flex: none;
+    }
+
+    .grid1 {
+        grid-template-rows: max(340px, 58dvh);
     }
 
     .grid2,
     .grid4 {
         grid-template-columns: minmax(0, 1fr);
-        grid-auto-rows: minmax(320px, auto);
+        grid-template-rows: none;
+        grid-auto-rows: 320px;
     }
 }

@@ -1378,9 +1378,27 @@
         padding: 4px;
     }
 
+    /* Five stats do not fit one row: wrap to a 3-column grid instead of a
+       hidden-scrollbar strip that clips "Open positions" off screen. */
+    .signals-stats {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        row-gap: 4px;
+        overflow: visible;
+    }
+
     .signals-stats .stat {
-        min-width: 88px;
+        min-width: 0;
         padding: 8px 12px;
+    }
+
+    .signals-stats .stat:nth-child(3n) {
+        border-right: none;
+    }
+
+    .signals-stats .stat-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
     .signals-stats .stat-value {
