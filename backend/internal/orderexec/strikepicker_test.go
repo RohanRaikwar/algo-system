@@ -95,3 +95,20 @@ func TestCandidateExpiries_WednesdayIncludesCurrentAndNextWeek(t *testing.T) {
 		t.Errorf("expected 07APR26 in candidates: %v", expiries)
 	}
 }
+
+// On expiry Tuesday the first candidate must be next Tuesday: this week's
+// Wednesday/Thursday never exist, and every miss costs a SearchScrip call
+// (the strike ladder hit Angel's rate limit on NIFTY30SEP26 lookups).
+func TestCandidateExpiries_ExpiryTuesdayStartsNextTuesday(t *testing.T) {
+	sp := NewStrikePicker(nil)
+	now := time.Date(2026, 9, 29, 10, 0, 0, 0, istZone) // Tuesday
+	expiries := sp.candidateExpiries(now)
+	if len(expiries) == 0 || expiries[0] != "06OCT26" {
+		t.Fatalf("first candidate = %v, want 06OCT26", expiries)
+	}
+	for _, e := range expiries {
+		if e == "30SEP26" || e == "01OCT26" {
+			t.Fatalf("this week's non-expiry days in candidates: %v", expiries)
+		}
+	}
+}
