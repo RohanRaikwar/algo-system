@@ -259,3 +259,34 @@ func TestParseTickSkipsEmptyDepthLevels(t *testing.T) {
 		t.Fatalf("empty depth produced a quote: %+v", tk)
 	}
 }
+
+// Angel sends best-5 depth "best-first" in practice, but nothing guarantees
+// ordering. bestBid/bestAsk must scan every level rather than trust index 0:
+// bid is the max price among buy levels with quantity > 0, ask is the min
+// price among sell levels with quantity > 0, and a zero-quantity level (a
+// hole in the book) is ignored even when it sorts first or last.
+func TestBestBidAsk_OrderIndependentAndSkipsZeroQty(t *testing.T) {
+	buy := []map[string]interface{}{
+		{"price": int64(20275), "quantity": int64(1300)},
+		{"price": int64(0), "quantity": int64(0)},       // hole: must be ignored
+		{"price": int64(20280), "quantity": int64(650)}, // best bid despite not being first
+	}
+	sell := []map[string]interface{}{
+		{"price": int64(20330), "quantity": int64(200)},
+		{"price": int64(20320), "quantity": int64(325)}, // best ask despite not being first
+		{"price": int64(0), "quantity": int64(0)},       // hole: must be ignored
+	}
+
+	if got := bestBid(buy); got != 20280 {
+		t.Fatalf("bestBid = %d, want 20280 (max over qty>0 levels)", got)
+	}
+	if got := bestAsk(sell); got != 20320 {
+		t.Fatalf("bestAsk = %d, want 20320 (min over qty>0 levels)", got)
+	}
+	if got := bestBid([]map[string]interface{}{{"price": int64(999), "quantity": int64(0)}}); got != 0 {
+		t.Fatalf("bestBid with only zero-qty levels = %d, want 0", got)
+	}
+	if got := bestAsk([]map[string]interface{}{{"price": int64(999), "quantity": int64(0)}}); got != 0 {
+		t.Fatalf("bestAsk with only zero-qty levels = %d, want 0", got)
+	}
+}

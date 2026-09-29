@@ -241,8 +241,8 @@ func parseTick(msg map[string]interface{}, recvTS time.Time) (model.Tick, error)
 		eventTS = time.Unix(0, exTS*int64(time.Millisecond)).UTC()
 	}
 
-	bid := bestPrice(msg["best_5_buy_data"])
-	ask := bestPrice(msg["best_5_sell_data"])
+	bid := bestBid(msg["best_5_buy_data"])
+	ask := bestAsk(msg["best_5_sell_data"])
 	var quoteTS time.Time
 	if bid > 0 || ask > 0 {
 		quoteTS = recvTS
@@ -263,17 +263,50 @@ func parseTick(msg map[string]interface{}, recvTS time.Time) (model.Tick, error)
 	}, nil
 }
 
-// bestPrice returns the first depth level's price (paise), 0 when the level
-// is missing or empty. Angel sends best-first.
-func bestPrice(v interface{}) int64 {
+// bestBid returns the highest price (paise) among buy-side depth levels with
+// quantity > 0, 0 when none qualify. Angel documents best-5 depth as
+// best-first, but nothing guarantees that ordering (or that every level is
+// populated), so every level is scanned rather than trusting index 0.
+func bestBid(v interface{}) int64 {
+	return bestPrice(v, true)
+}
+
+// bestAsk returns the lowest price (paise) among sell-side depth levels with
+// quantity > 0, 0 when none qualify. See bestBid.
+func bestAsk(v interface{}) int64 {
+	return bestPrice(v, false)
+}
+
+// bestPrice scans depth levels and returns the best price with quantity > 0:
+// the max when max is true (bid side), the min otherwise (ask side). Returns
+// 0 when v isn't a level slice or no level has quantity > 0.
+func bestPrice(v interface{}, max bool) int64 {
 	levels, ok := v.([]map[string]interface{})
 	if !ok || len(levels) == 0 {
 		return 0
 	}
-	if toInt64(levels[0]["quantity"]) <= 0 {
+	var best int64
+	found := false
+	for _, lvl := range levels {
+		if toInt64(lvl["quantity"]) <= 0 {
+			continue
+		}
+		price := toInt64(lvl["price"])
+		if !found {
+			best = price
+			found = true
+			continue
+		}
+		if max && price > best {
+			best = price
+		} else if !max && price < best {
+			best = price
+		}
+	}
+	if !found {
 		return 0
 	}
-	return toInt64(levels[0]["price"])
+	return best
 }
 
 // seqGapLogInterval rate-limits feed gap log lines (the metric counts every gap).

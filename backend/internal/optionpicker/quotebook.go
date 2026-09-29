@@ -44,10 +44,12 @@ func (b *QuoteBook) Get(token string) (Quote, bool) {
 	return q, ok
 }
 
-// BidAsk returns a fresh two-sided quote (for paper fills).
+// BidAsk returns a fresh two-sided quote (for paper fills). A crossed quote
+// (ask < bid) is a bad depth snapshot, not a tradable spread, so it is
+// rejected too.
 func (b *QuoteBook) BidAsk(token string, now time.Time) (bid, ask int64, ok bool) {
 	q, found := b.Get(token)
-	if !found || q.Bid <= 0 || q.Ask <= 0 || now.Sub(q.At) > b.maxAge {
+	if !found || q.Bid <= 0 || q.Ask <= 0 || q.Ask < q.Bid || now.Sub(q.At) > b.maxAge {
 		return 0, 0, false
 	}
 	return q.Bid, q.Ask, true
