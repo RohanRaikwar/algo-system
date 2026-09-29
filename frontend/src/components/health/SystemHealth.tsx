@@ -97,7 +97,6 @@ const PROBLEM_COUNTERS: { key: keyof NonNullable<SystemMetrics['pipeline']>; lab
     { key: 'dropped_ticks', label: 'Dropped ticks', hint: 'Ticks lost because a pipeline buffer was full' },
     { key: 'late_ticks', label: 'Late ticks', hint: 'Ticks that arrived after their candle was already closed' },
     { key: 'stale_candles_rejected', label: 'Stale candles rejected', hint: 'Candles refused because a newer one was already stored' },
-    { key: 'feed_seq_gaps', label: 'Feed sequence gaps', hint: 'Times the feed skipped sequence numbers (possible missed ticks)' },
     { key: 'ws_reconnects', label: 'Feed reconnects', hint: 'Times the market data connection had to reconnect' },
 ];
 
