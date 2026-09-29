@@ -18,6 +18,14 @@ type Tick struct {
 	DayVolume int64     `json:"day_volume,omitempty"`
 	TickTS    time.Time `json:"tick_ts"`            // UTC arrival timestamp
 	EventTS   time.Time `json:"event_ts,omitempty"` // exchange-provided canonical time
+
+	// SnapQuote only (options): best bid/ask (paise) and open interest.
+	// QuoteTS is the local receive time of this bid/ask; zero when the
+	// packet carried no depth (Quote/LTP mode, index ticks).
+	BestBid int64     `json:"best_bid,omitempty"`
+	BestAsk int64     `json:"best_ask,omitempty"`
+	OI      int64     `json:"oi,omitempty"`
+	QuoteTS time.Time `json:"quote_ts,omitempty"`
 }
 
 // CanonicalTS returns the best available timestamp for this tick.

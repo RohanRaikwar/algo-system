@@ -73,6 +73,9 @@ func (svc *Service) expandLegSignals(sig strategy.Signal, now time.Time) ([]stra
 	if entry {
 		res := svc.resolverForLegs()
 		for i := range legs {
+			if legs[i].Token != "" {
+				continue // chosen by the option picker
+			}
 			info, err := res.ResolveStrike(now, legs[i].Strike, legs[i].OptionType)
 			if err != nil {
 				return nil, fmt.Errorf("leg %s %d%s: %w", legs[i].Leg, legs[i].Strike, legs[i].OptionType, err)
@@ -122,12 +125,37 @@ func (svc *Service) handleBasketSignal(ctx context.Context, sig strategy.Signal,
 		}
 	}
 
+	// STRAT_PICKER_MODE=on: the picker chooses all four legs or refuses.
+	pickerDecided := false
+	if sig.Action == strategy.ActionBuy {
+		decided, err := svc.pickBasket(&sig, now)
+		if decided && err != nil {
+			cancel(err.Error())
+			return
+		}
+		pickerDecided = decided
+	}
+
 	legs, err := svc.expandLegSignals(sig, now)
 	if err != nil {
 		cancel(err.Error())
 		return
 	}
-	if sig.Action == strategy.ActionBuy && svc.cfg.RangeDeltaGuard {
+	if sig.Action == strategy.ActionBuy && !pickerDecided {
+		// Shadow (or off) mode only: in "on" mode these legs already are
+		// the picker's own choice (expandLegSignals skips resolving a leg
+		// the picker set), so recording them as the "old path" would be
+		// meaningless. Record what this old path chose against the
+		// picker's condor decision (recorded earlier in pickBasket), for
+		// the go/no-go review. No-op when there's no decision to attach
+		// it to (mode "off").
+		symbols := make([]string, len(legs))
+		for i, l := range legs {
+			symbols[i] = l.FNOSymbol
+		}
+		svc.recordOldChoice(sig.StrategyName, "", symbols)
+	}
+	if sig.Action == strategy.ActionBuy && svc.cfg.RangeDeltaGuard && !pickerDecided {
 		if err := svc.basketQualityCheck(legs, now); err != nil {
 			cancel(err.Error())
 			return

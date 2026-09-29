@@ -6,6 +6,7 @@ export interface MetricsSample {
     at: number;                 // local receive time (ms)
     tickRate: number | null;    // ticks/s since the previous sample
     p95: number | null;         // tick pipeline p95 latency (ms)
+    candleLag: number | null;   // candle_lag_sec (s)
 }
 
 /** 5 minutes at the gateway's 2s cadence. */
@@ -27,7 +28,8 @@ export function appendMetricsSample(
     }
     const p95 = next.e2e_latency_p95_ms && next.e2e_latency_p95_ms > 0 ? next.e2e_latency_p95_ms : null;
     const out = history.length >= METRICS_HISTORY_LEN ? history.slice(history.length - METRICS_HISTORY_LEN + 1) : history.slice();
-    out.push({ at, tickRate, p95 });
+    const candleLag = next.pipeline?.candle_lag_sec ?? null;
+    out.push({ at, tickRate, p95, candleLag });
     return out;
 }
 

@@ -136,3 +136,18 @@ func TestHandleMessage_FutureWithinSkewClampedToReorderTolerance(t *testing.T) {
 		t.Fatalf("clock skew count = %d, want 1", skews)
 	}
 }
+
+func TestHandleMessageAddsSyntheticQuoteForOptions(t *testing.T) {
+	ing := &Ingest{}
+	ch := make(chan model.Tick, 2)
+	now := time.Now().UTC()
+	ing.handleMessage([]byte(`{"token":"40712","exchange":"NFO","price":20000}`), now, ch)
+	ing.handleMessage([]byte(`{"token":"99926000","exchange":"NSE","price":2269000}`), now, ch)
+	opt, idx := <-ch, <-ch
+	if opt.BestBid != 19980 || opt.BestAsk != 20020 || !opt.QuoteTS.Equal(now) {
+		t.Fatalf("option quote = %+v", opt)
+	}
+	if idx.BestBid != 0 || idx.BestAsk != 0 {
+		t.Fatalf("index got a quote: %+v", idx)
+	}
+}

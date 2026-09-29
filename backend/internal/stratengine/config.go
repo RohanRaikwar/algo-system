@@ -83,6 +83,20 @@ type Config struct {
 	SRMaxThetaPct   float64 // |theta| per day ≤ this % of premium, 0 = off
 	SRMaxGamma      float64 // gamma cap within SRGammaDTE days of expiry, 0 = off
 	SRGammaDTE      int
+	SRMinDTE        int // buy the nearest expiry at least this many days out (2 = Monday skips Tuesday)
+
+	// ── Global option picker (internal/optionpicker) ──
+	PickerMode       string        // off | shadow (log decisions only) | on (picker chooses the contract)
+	PickMaxSpreadPct float64       // (ask−bid)/mid × 100 ceiling
+	PickMaxQuoteAge  time.Duration // bid/ask older than this is not tradable
+	PickMaxChainAge  time.Duration // greeks snapshot older than this refuses selection
+	PickRank         string        // delta (closest to band middle) | return (highest expected return on premium)
+	PickHoldMinutes  float64       // expected holding time for the return rank's decay term
+	// RANGE's picker intent has no theta/gamma cap by default (0 = off);
+	// unlike SR, RANGE's strike rule already targets a delta band, so a
+	// cap is opt-in via these envs.
+	RangePickMaxThetaPct float64
+	RangePickMaxGamma    float64
 
 	PaperSlippageBps      int64 // paper fills cross the spread: LTP ± max(LTP×bps/10000, min)
 	PaperSlippageMinPaise int64
@@ -145,6 +159,15 @@ func LoadConfig() Config {
 		SRMaxThetaPct:         getEnvFloat("STRAT_SR_MAX_THETA_PCT", 8),
 		SRMaxGamma:            getEnvFloat("STRAT_SR_MAX_GAMMA", 0.005),
 		SRGammaDTE:            config.GetEnvInt("STRAT_SR_GAMMA_DTE", 1),
+		SRMinDTE:              config.GetEnvInt("STRAT_SR_MIN_DTE", 2),
+		PickerMode:            config.GetEnv("STRAT_PICKER_MODE", "shadow"),
+		PickMaxSpreadPct:      getEnvFloat("STRAT_PICK_MAX_SPREAD_PCT", 2),
+		PickMaxQuoteAge:       getEnvDuration("STRAT_PICK_MAX_QUOTE_AGE", 3*time.Second),
+		PickMaxChainAge:       getEnvDuration("STRAT_PICK_MAX_CHAIN_AGE", 2*time.Minute),
+		PickRank:              config.GetEnv("STRAT_PICK_RANK", "delta"),
+		PickHoldMinutes:       getEnvFloat("STRAT_PICK_HOLD_MIN", 60),
+		RangePickMaxThetaPct:  getEnvFloat("STRAT_RANGE_PICK_MAX_THETA_PCT", 0),
+		RangePickMaxGamma:     getEnvFloat("STRAT_RANGE_PICK_MAX_GAMMA", 0),
 		PaperSlippageBps:      config.GetEnvInt64("STRAT_PAPER_SLIPPAGE_BPS", 50),
 		PaperSlippageMinPaise: config.GetEnvInt64("STRAT_PAPER_SLIPPAGE_MIN_PAISE", 50),
 		WarmupDays:            config.GetEnvInt("STRAT_RANGE_WARMUP_DAYS", 5),
@@ -198,6 +221,16 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("STRAT_EOD_EXIT_TIME=%s must be before the 15:30 market close", c.EODExitTime)
 		}
 	}
+	switch c.PickerMode {
+	case "", "off", "shadow", "on":
+	default:
+		return fmt.Errorf("STRAT_PICKER_MODE=%q: want off, shadow or on", c.PickerMode)
+	}
+	switch c.PickRank {
+	case "", "delta", "return":
+	default:
+		return fmt.Errorf("STRAT_PICK_RANK=%q: want delta or return", c.PickRank)
+	}
 	if len(c.SubscribeTokenKeys) == 0 {
 		return fmt.Errorf("STRAT_SUBSCRIBE_TOKENS is required")
 	}
@@ -221,6 +254,15 @@ func getEnvFloat(key string, def float64) float64 {
 	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			return f
+		}
+	}
+	return def
+}
+
+func getEnvDuration(key string, def time.Duration) time.Duration {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
 		}
 	}
 	return def

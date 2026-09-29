@@ -21,6 +21,7 @@ import type {
 import type { LiveOrdersPayload, SignalPayload } from '../types/signal';
 import { useRangeStore, parseRangeView } from '../store/useRangeStore';
 import { useRefusedStore, parseRefusedView } from '../store/useRefusedStore';
+import { useStrikeSelStore, parseStrikeSelView } from '../store/useStrikeSelStore';
 import { listPaneSubs } from '../services/paneSubscriptions';
 
 /**
@@ -375,6 +376,13 @@ export function useWebSocket() {
                 return;
             }
 
+            // ── SR strike selection (pub:strikesel channel, full state) ──
+            if (envelope.channel === 'pub:strikesel' && envelope.data) {
+                const view = parseStrikeSelView(envelope.data);
+                if (view) useStrikeSelStore.getState().setView(view);
+                return;
+            }
+
             // ── Live Order State (pub:orders channel) ──
             if (envelope.channel === 'pub:orders' && envelope.data) {
                 let orderData = envelope.data;
@@ -622,6 +630,9 @@ export function useWebSocket() {
                     } else if (u.channel === 'pub:refused') {
                         const view = parseRefusedView(u.data);
                         if (view) useRefusedStore.getState().setView(view);
+                    } else if (u.channel === 'pub:strikesel') {
+                        const view = parseStrikeSelView(u.data);
+                        if (view) useStrikeSelStore.getState().setView(view);
                     } else if (u.channel === 'pub:pnl') {
                         // PnL is consumed by ws:message listeners.
                         window.dispatchEvent(new CustomEvent('ws:message', {

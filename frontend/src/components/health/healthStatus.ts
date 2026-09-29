@@ -22,7 +22,18 @@ export interface Issue {
     tone: 'warn' | 'bad';
 }
 
-export function collectIssues(m: SystemMetrics, ticking: boolean): Issue[] {
+/**
+ * Samples the candle lag must stay >= 2s for before it is an issue. The metric
+ * is the lag of the last candle emitted across all tokens, so one option whose
+ * quote packet arrived late shows a single ~1s spike (2s cadence, ~6s here).
+ */
+export const LAG_SUSTAIN_SAMPLES = 3;
+
+/**
+ * lagHistory: recent candle_lag_sec samples, newest last (current included).
+ * Without it the current value alone decides.
+ */
+export function collectIssues(m: SystemMetrics, ticking: boolean, lagHistory?: number[]): Issue[] {
     const issues: Issue[] = [];
     if (m.services === undefined) {
         issues.push({ key: 'old-gw', text: 'The running API gateway is an older build that cannot report service stats. Restart the stack to load it.', tone: 'warn' });
@@ -43,7 +54,8 @@ export function collectIssues(m: SystemMetrics, ticking: boolean): Issue[] {
         issues.push({ key: 'cb', text: 'Order circuit breaker is testing the broker connection (half-open).', tone: 'warn' });
     }
     const p = m.pipeline;
-    if (p && ticking && p.candle_lag_sec >= 2) {
+    const recentLags = lagHistory && lagHistory.length > 0 ? lagHistory.slice(-LAG_SUSTAIN_SAMPLES) : p ? [p.candle_lag_sec] : [];
+    if (p && ticking && recentLags.length > 0 && Math.min(...recentLags) >= 2) {
         issues.push({ key: 'lag', text: `Candles are running ${p.candle_lag_sec.toFixed(1)}s behind real time (normal is about 1s).`, tone: p.candle_lag_sec >= 5 ? 'bad' : 'warn' });
     }
     if (p && p.market_open && !ticking) {

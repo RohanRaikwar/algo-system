@@ -4,6 +4,7 @@ import (
 	"math"
 	"time"
 
+	"trading-systemv1/internal/optionmath"
 	"trading-systemv1/internal/strategy"
 )
 
@@ -29,25 +30,6 @@ type OptionModel struct {
 	SlippageBps    int64   // paper slippage, as the live executor
 	SlippageMinPsa int64
 	StrikeStep     int64 // 50
-}
-
-func normCDF(x float64) float64 { return 0.5 * math.Erfc(-x/math.Sqrt2) }
-
-// bsPrice is the Black-Scholes price of a European option.
-func bsPrice(spot, strike, years, iv, rate float64, call bool) float64 {
-	if years <= 0 || iv <= 0 {
-		if call {
-			return math.Max(spot-strike, 0)
-		}
-		return math.Max(strike-spot, 0)
-	}
-	sq := iv * math.Sqrt(years)
-	d1 := (math.Log(spot/strike) + (rate+iv*iv/2)*years) / sq
-	d2 := d1 - sq
-	if call {
-		return spot*normCDF(d1) - strike*math.Exp(-rate*years)*normCDF(d2)
-	}
-	return strike*math.Exp(-rate*years)*normCDF(-d2) - spot*normCDF(-d1)
 }
 
 // weeklyExpiry returns the NIFTY weekly expiry (Tuesday 15:30 IST) the live
@@ -83,7 +65,7 @@ func (m OptionModel) premiumTo(side strategy.PositionSide, strikePts, spotPaise 
 		ivPct = m.IVPct
 	}
 	years := expiry.Sub(ts).Hours() / (24 * 365)
-	p := bsPrice(float64(spotPaise)/100, float64(strikePts), years, ivPct/100, m.RatePct/100, side == strategy.SideCall)
+	p := optionmath.Price(float64(spotPaise)/100, float64(strikePts), years, ivPct/100, m.RatePct/100, side == strategy.SideCall)
 	paise := int64(math.Round(p * 100))
 	if paise < 5 {
 		paise = 5 // one tick

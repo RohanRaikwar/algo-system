@@ -122,7 +122,8 @@ export function SystemHealth() {
     const tickRate = history.length ? history[history.length - 1].tickRate : null;
     const ticking = (tickRate ?? 0) > 0;
 
-    const issues = stale ? [] : collectIssues(m, ticking);
+    const lagHistory = history.map(h => h.candleLag).filter((v): v is number => v !== null);
+    const issues = stale ? [] : collectIssues(m, ticking, lagHistory);
     const worst: Tone = stale || issues.some(i => i.tone === 'bad') ? 'bad' : issues.length ? 'warn' : 'ok';
     const p = m.pipeline;
     const orders = m.orders;

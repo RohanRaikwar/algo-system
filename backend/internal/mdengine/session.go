@@ -85,21 +85,62 @@ func feedLostMidSession(startErr, wsCtxErr error, now time.Time) bool {
 		markethours.IsTradingDay(now) && now.Before(markethours.TodayClose(now))
 }
 
-// rememberDynamicTokens records dynamically subscribed tokens so a re-login
-// (new socket) subscribes them again.
-func (s *Service) rememberDynamicTokens(tokens []smartconnect.TokenListEntry) {
+// rememberDynamicTokens records dynamically subscribed tokens, per feed mode,
+// so a re-login (new socket) subscribes them again in the same mode. Merges
+// into the existing entry for (mode, exchangeType) and dedupes tokens,
+// rather than appending a fresh TokenListEntry every call: a subscribe
+// command can repeat the same token many times over a session (e.g. the
+// strike ladder re-touching a contract), and this list is replayed on every
+// reconnect, so an unmerged append would grow it without bound.
+func (s *Service) rememberDynamicTokens(sub dynSub) {
 	s.dynMu.Lock()
-	s.dynTokens = append(s.dynTokens, tokens...)
+	if s.dynTokens == nil {
+		s.dynTokens = make(map[int][]smartconnect.TokenListEntry)
+	}
+	for _, in := range sub.Tokens {
+		s.dynTokens[sub.Mode] = mergeTokenEntry(s.dynTokens[sub.Mode], in)
+	}
 	s.dynMu.Unlock()
 }
 
-// sessionTokenList is the configured token list plus remembered dynamic tokens.
+// mergeTokenEntry merges in's tokens into the entry already present for
+// in.ExchangeType (deduping), or appends in as a new entry when that
+// exchange type hasn't been seen for this mode yet.
+func mergeTokenEntry(entries []smartconnect.TokenListEntry, in smartconnect.TokenListEntry) []smartconnect.TokenListEntry {
+	for i, e := range entries {
+		if e.ExchangeType != in.ExchangeType {
+			continue
+		}
+		seen := make(map[string]bool, len(e.Tokens))
+		for _, tok := range e.Tokens {
+			seen[tok] = true
+		}
+		for _, tok := range in.Tokens {
+			if !seen[tok] {
+				e.Tokens = append(e.Tokens, tok)
+				seen[tok] = true
+			}
+		}
+		entries[i] = e
+		return entries
+	}
+	return append(entries, in)
+}
+
+// sessionTokenList is the configured token list (subscribed in the session mode).
 func (s *Service) sessionTokenList() []smartconnect.TokenListEntry {
+	return append([]smartconnect.TokenListEntry(nil), s.cfg.TokenList...)
+}
+
+// sessionExtraSubs returns the remembered dynamic tokens grouped by mode.
+func (s *Service) sessionExtraSubs() map[int][]smartconnect.TokenListEntry {
 	s.dynMu.Lock()
 	defer s.dynMu.Unlock()
-	out := make([]smartconnect.TokenListEntry, 0, len(s.cfg.TokenList)+len(s.dynTokens))
-	out = append(out, s.cfg.TokenList...)
-	return append(out, s.dynTokens...)
+	out := make(map[int][]smartconnect.TokenListEntry, len(s.dynTokens))
+	for m, l := range s.dynTokens {
+		out[m] = append([]smartconnect.TokenListEntry(nil), l...)
+	}
+	return out
 }
 
 // runProductionSession manages the Angel One WS lifecycle with market hours gating.
@@ -210,6 +251,7 @@ func (s *Service) runProductionSession(ctx context.Context) {
 				FeedToken:     feedToken,
 				SubscribeMode: feedSubscribeMode,
 				TokenList:     s.sessionTokenList(),
+				Extra:         s.sessionExtraSubs(),
 			})
 			if err != nil {
 				log.Printf("[mdengine] ws init failed: %v, retrying in 30s", err)
@@ -257,15 +299,15 @@ func (s *Service) runProductionSession(ctx context.Context) {
 					select {
 					case <-wsCtx.Done():
 						return
-					case tokens, ok := <-s.dynamicSubCh:
+					case sub, ok := <-s.dynamicSubCh:
 						if !ok {
 							return
 						}
-						s.rememberDynamicTokens(tokens) // wanted for this session even if the send failed
-						if err := ingest.SubscribeTokens(feedSubscribeMode, tokens); err != nil {
+						s.rememberDynamicTokens(sub) // wanted for this session even if the send failed
+						if err := ingest.SubscribeTokens(sub.Mode, sub.Tokens); err != nil {
 							log.Printf("[mdengine] ⚠️  dynamic subscribe failed: %v", err)
 						} else {
-							log.Printf("[mdengine] ✅ dynamically subscribed FNO tokens: %+v", tokens)
+							log.Printf("[mdengine] ✅ dynamically subscribed mode=%d tokens: %+v", sub.Mode, sub.Tokens)
 						}
 					}
 				}

@@ -235,11 +235,11 @@ func TestFeedLostMidSession_PreOpenFailureIsFeedLoss(t *testing.T) {
 func TestSessionTokenList_IncludesDynamicTokens(t *testing.T) {
 	base := []smartconnect.TokenListEntry{{ExchangeType: 1, Tokens: []string{"26000"}}}
 	s, _ := newTestService(Config{TokenList: base})
-	s.rememberDynamicTokens([]smartconnect.TokenListEntry{{ExchangeType: 2, Tokens: []string{"57710"}}})
+	s.rememberDynamicTokens(dynSub{Mode: 2, Tokens: []smartconnect.TokenListEntry{{ExchangeType: 2, Tokens: []string{"57710"}}}})
 
-	got := s.sessionTokenList()
-	if len(got) != 2 || got[1].ExchangeType != 2 || got[1].Tokens[0] != "57710" {
-		t.Fatalf("session tokens = %+v, want base + dynamic FNO", got)
+	got := s.sessionExtraSubs()[2]
+	if len(got) != 1 || got[0].ExchangeType != 2 || got[0].Tokens[0] != "57710" {
+		t.Fatalf("session tokens = %+v, want dynamic FNO", got)
 	}
 	if len(s.cfg.TokenList) != 1 {
 		t.Fatal("config token list mutated")

@@ -17,6 +17,7 @@ import (
 	"trading-systemv1/internal/markethours"
 	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/notification"
+	"trading-systemv1/internal/optionpicker"
 	"trading-systemv1/internal/orderexec"
 	"trading-systemv1/internal/portfolio"
 	redisstore "trading-systemv1/internal/store/redis"
@@ -53,6 +54,10 @@ type Service struct {
 	orderExecutor *orderexec.OrderExecutor
 	strikePicker  *orderexec.StrikePicker
 
+	// Global option picker (picker_wiring.go); nil when STRAT_PICKER_MODE=off.
+	picker    *optionpicker.Picker
+	pickerDec pickerDecisions
+
 	// Multi-leg contract resolution (legs.go). legResolver is a test hook;
 	// legPicker is built lazily when no ATM picker exists.
 	legResolver   legResolver
@@ -66,9 +71,12 @@ type Service struct {
 
 	rangePublishHook func(payload string) // test hook for publishRangeState
 
-	refused            refusedLog          // today's blocked entries (refused.go)
+	refused            refusedLog           // today's blocked entries (refused.go)
 	refusedPublishHook func(payload string) // test hook for recordRefusedEntry
-	legPriceWait     time.Duration        // 0 = defaultLegPriceWait
+
+	strikeSel            strikeSelState       // NIFTY50_SR strike selection view (sr_strike_view.go)
+	strikeSelPublishHook func(payload string) // test hook for publishStrikeSel
+	legPriceWait         time.Duration        // 0 = defaultLegPriceWait
 
 	// Portfolio & P&L tracking
 	pnlTracker *portfolio.PnLTracker
@@ -288,6 +296,9 @@ func New(cfg Config) (*Service, error) {
 	// Attach P&L tracker for profit cap monitoring
 	svc.orderExecutor.SetPnLTracker(svc.pnlTracker)
 
+	// ── Global option picker (off | shadow | on) ──
+	svc.picker = svc.newPicker()
+
 	// ── Dynamic Strike Picker ──
 	if cfg.DynamicStrikes {
 		log.Println("[stratengine] 🎯 dynamic strike selection ENABLED")
@@ -318,6 +329,10 @@ func (svc *Service) Run(ctx context.Context) error {
 	// ── Dashboard kill switch + broker position reconciliation ──
 	go svc.configUpdateLoop(ctx)
 	go svc.positionReconcileLoop(ctx)
+
+	// ── Re-subscribe the picker universe + strike ladder on market open
+	// (mdengine (re)connect), not only at midnight ──
+	go svc.marketStateLoop(ctx)
 
 	// ── Discover streams for TF=60 (1m candles) ──
 	svc.streams = svc.buildStreams(ctx)
@@ -369,9 +384,17 @@ func (svc *Service) Run(ctx context.Context) error {
 	// ── Start signal processor (signals → journal + notify + orders) ──
 	go svc.signalLoop(ctx)
 
+	// ── Global option picker: chain refresh + streamed universe ──
+	go svc.runPicker(ctx)
+
 	// ── Range strategy dashboard state (pub:range) ──
 	if svc.cfg.RangeEnabled {
 		go svc.rangeStateLoop(ctx)
+	}
+
+	// ── NIFTY50_SR strike selection view (pub:strikesel) ──
+	if svc.cfg.SREnabled || svc.picker != nil {
+		go svc.strikeSelLoop(ctx)
 	}
 
 	// ── Start snapshot loop ──
@@ -429,6 +452,9 @@ func (svc *Service) tickRouterLoop(ctx context.Context, tfTickCh chan<- model.Ti
 			}
 			// Update FNO LTP tracker
 			svc.orderExecutor.UpdateLTP(tick)
+			if svc.picker != nil {
+				svc.picker.OnTick(tick)
+			}
 			svc.updateLiveOrdersFromTick(ctx, tick)
 			if tick.Token == niftyToken && (svc.cfg.RangeEnabled || svc.cfg.RangeICEnabled) {
 				svc.refreshStrikeLadder(ctx, tick.Price)
@@ -507,15 +533,9 @@ func (svc *Service) tickRouterLoop(ctx context.Context, tfTickCh chan<- model.Ti
 					})
 
 					// Publish resolved FNO tokens to mdengine for WS subscription
-					subCmd, _ := json.Marshal(map[string]interface{}{
-						"exchange_type": 2, // NFO
-						"tokens":        []string{ce.Token, pe.Token},
-					})
-					if pubErr := svc.redisWriter.Client().Publish(ctx, "cmd:subscribe_token", string(subCmd)).Err(); pubErr != nil {
-						log.Printf("[stratengine] ⚠️  failed to publish subscribe command: %v", pubErr)
-					} else {
-						log.Printf("[stratengine] 📡 published FNO subscribe command: CE=%s PE=%s", ce.Token, pe.Token)
-					}
+					// (SnapQuote when the picker runs, so the ATM pair has
+					// bid/ask like every other picker-tracked contract).
+					svc.publishFNOSubscription(ctx, ce.Token, pe.Token)
 
 					// Publish strike info for frontend FNO Instruments tab
 					// Use lot size from StrikeInfo (fetched from Angel One), fallback to env/default
@@ -1259,7 +1279,26 @@ func (svc *Service) publishLiveOrders(ctx context.Context) {
 	svc.redisWriter.Client().Publish(ctx, "pub:orders", payloadStr)
 }
 
+// publishFNOSubscription subscribes option tokens; SnapQuote when the picker
+// runs (every option needs bid/ask), else Quote as before.
 func (svc *Service) publishFNOSubscription(ctx context.Context, tokens ...string) {
+	svc.publishFNOSubscriptionMode(ctx, svc.fnoSubscribeMode(), tokens...)
+}
+
+// fnoSubscribeMode is the feed mode publishFNOSubscription uses: SnapQuote
+// while the global option picker is running (every option needs a two-sided
+// quote), else Quote as before. A small, Redis-free seam so the mode
+// selection itself is unit-tested without a broker or Redis.
+func (svc *Service) fnoSubscribeMode() int {
+	if svc.picker != nil {
+		return smartSnapQuote
+	}
+	return smartconnect.ModeQuote
+}
+
+// publishFNOSubscriptionMode asks mdengine to stream tokens in a feed mode
+// (smartconnect.ModeQuote / ModeSnapQuote).
+func (svc *Service) publishFNOSubscriptionMode(ctx context.Context, mode int, tokens ...string) {
 	uniq := make([]string, 0, len(tokens))
 	seen := make(map[string]struct{})
 	for _, token := range tokens {
@@ -1280,12 +1319,13 @@ func (svc *Service) publishFNOSubscription(ctx context.Context, tokens ...string
 	subCmd, _ := json.Marshal(map[string]interface{}{
 		"exchange_type": 2,
 		"tokens":        uniq,
+		"mode":          mode,
 	})
 	if err := svc.redisWriter.Client().Publish(ctx, "cmd:subscribe_token", string(subCmd)).Err(); err != nil {
 		log.Printf("[stratengine] ⚠️  failed to publish FNO subscribe command: %v", err)
 		return
 	}
-	log.Printf("[stratengine] 📡 published FNO subscribe command: tokens=%v", uniq)
+	log.Printf("[stratengine] 📡 published FNO subscribe command: mode=%d tokens=%v", mode, uniq)
 }
 
 func (svc *Service) publishStrikeInfo(ctx context.Context, spotPrice int64) {

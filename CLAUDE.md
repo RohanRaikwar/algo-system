@@ -78,6 +78,7 @@ Channels the gateway forwards to the browser are listed in `dynamicPubSubPattern
 | `pub:strike` | stratengine |
 | `pub:range` | stratengine |
 | `pub:refused` | stratengine |
+| `pub:strikesel` | stratengine |
 
 `pub:candle` and `pub:market` are published but are **not** in that list — they are internal-only and never reach the browser. A new channel must be added to `dynamicPubSubPatterns` before the hub will fan it out; the frontend then consumes it via `envelope.channel` switching in `frontend/src/hooks/useWebSocket.ts`.
 

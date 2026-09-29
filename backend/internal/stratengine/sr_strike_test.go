@@ -116,3 +116,55 @@ func TestSREntryResolvesGreeksPick(t *testing.T) {
 		t.Fatalf("bought %d %s, want 24050 (delta 0.52)", sig.Strike, sig.FNOToken)
 	}
 }
+
+// IV and cost are part of the pick: an expensive contract is skipped for
+// the next one in the band instead of being picked and then refused.
+func TestSRStrikeSkipsHighIVForNextInBand(t *testing.T) {
+	now := time.Date(2026, 9, 30, 10, 0, 0, 0, istSR)
+	hot := srContract(24200, "CE", 0.52, 0.001, -9, 150, testExpiry)
+	hot.IV = 31
+	ok := srContract(24250, "CE", 0.47, 0.001, -8, 120, testExpiry)
+	ok.IV = 0.18 // fraction form
+	lim := srLimits
+	lim.MaxBuyIV = 25
+	ev, err := evalSRContracts([]orderexec.OptionContract{hot, ok}, "CE", now, lim, chainPremium)
+	if err != nil || !ev.Found || ev.Best.Strike != 24250 || ev.Rejects.IV != 1 {
+		t.Fatalf("ev=%+v err=%v, want 24250 with 1 IV reject", ev, err)
+	}
+}
+
+func TestSRStrikeSkipsContractWhoseGainMissesCost(t *testing.T) {
+	now := time.Date(2026, 9, 30, 10, 0, 0, 0, istSR)
+	chain := []orderexec.OptionContract{
+		srContract(24250, "CE", 0.46, 0.001, -8, 120, testExpiry),
+		srContract(24200, "CE", 0.53, 0.001, -9, 150, testExpiry),
+	}
+	lim := srLimits
+	lim.CostMultiple = 3
+	lim.TargetMove = 2000                               // 20 index points
+	lim.Slippage = func(ltp int64) int64 { return 160 } // ₹1.60 a side
+	// gain = 2000 × delta: 0.53 → 1060, 0.46 → 920; need ≥ 3 × 320 = 960.
+	ev, err := evalSRContracts(chain, "CE", now, lim, chainPremium)
+	if err != nil || !ev.Found || ev.Best.Strike != 24200 || ev.Rejects.Cost != 1 {
+		t.Fatalf("ev=%+v err=%v, want 24200 with 1 cost reject", ev, err)
+	}
+	lim.TargetMove = 0 // live view: no target, no cost rule
+	if ev, _ := evalSRContracts(chain, "CE", now, lim, chainPremium); ev.Rejects.Cost != 0 {
+		t.Fatalf("cost rule applied without a target: %+v", ev.Rejects)
+	}
+}
+
+func TestSRStrikeMinDTESkipsNextDayExpiry(t *testing.T) {
+	monday := time.Date(2026, 10, 5, 10, 0, 0, 0, istSR) // expiry Tue 06 Oct, 1 day out
+	next := testExpiry.AddDate(0, 0, 7)
+	chain := []orderexec.OptionContract{
+		srContract(24200, "CE", 0.52, 0.002, -9, 60, testExpiry),
+		srContract(24200, "CE", 0.52, 0.001, -9, 180, next),
+	}
+	lim := srLimits
+	lim.MinDTE = 2
+	ev, err := evalSRContracts(chain, "CE", monday, lim, chainPremium)
+	if err != nil || !ev.Found || !sameDay(ev.Expiry, next) || ev.DTE != 8 {
+		t.Fatalf("ev=%+v err=%v, want next week (8d)", ev, err)
+	}
+}

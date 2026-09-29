@@ -50,11 +50,11 @@ type Service struct {
 	tickPubCh        chan model.Tick // tick router -> Redis tick publisher (nil without Redis)
 
 	// Dynamic FNO token subscription channel
-	dynamicSubCh chan []smartconnect.TokenListEntry
+	dynamicSubCh chan dynSub
 
-	// Dynamic tokens subscribed so far, re-subscribed after a re-login.
+	// Dynamic tokens subscribed so far, per feed mode, re-subscribed after a re-login.
 	dynMu     sync.Mutex
-	dynTokens []smartconnect.TokenListEntry
+	dynTokens map[int][]smartconnect.TokenListEntry
 
 	// Pipeline components
 	fanout     *bus.FanOut
@@ -92,7 +92,7 @@ func New(cfg Config) (*Service, error) {
 		tfFinalCh:        make(chan model.TFCandle, tfFinalQueueLen),
 		redisTFCandleCh:  make(chan model.TFCandle, tfSinkQueueLen),
 		sqliteTFCandleCh: make(chan model.TFCandle, tfSinkQueueLen),
-		dynamicSubCh:     make(chan []smartconnect.TokenListEntry, 10),
+		dynamicSubCh:     make(chan dynSub, 10),
 		tfFlushReq:       make(chan chan struct{}),
 	}
 
@@ -232,6 +232,29 @@ func (s *Service) shutdown() {
 	log.Println("[mdengine] shutdown complete.")
 }
 
+// dynSub is one dynamic subscription request: tokens in one feed mode.
+type dynSub struct {
+	Mode   int
+	Tokens []smartconnect.TokenListEntry
+}
+
+// parseSubscribeCommand reads cmd:subscribe_token. Mode defaults to Quote (2)
+// so publishers that predate the field keep their behaviour.
+func parseSubscribeCommand(payload string) (dynSub, bool) {
+	var cmd struct {
+		ExchangeType int      `json:"exchange_type"`
+		Tokens       []string `json:"tokens"`
+		Mode         int      `json:"mode"`
+	}
+	if err := json.Unmarshal([]byte(payload), &cmd); err != nil || len(cmd.Tokens) == 0 {
+		return dynSub{}, false
+	}
+	if cmd.Mode == 0 {
+		cmd.Mode = smartconnect.ModeQuote
+	}
+	return dynSub{Mode: cmd.Mode, Tokens: []smartconnect.TokenListEntry{{ExchangeType: cmd.ExchangeType, Tokens: cmd.Tokens}}}, true
+}
+
 // listenForDynamicSubscriptions subscribes to Redis PubSub channel "cmd:subscribe_token"
 // and forwards parsed token lists to dynamicSubCh. This allows stratengine to dynamically
 // add FNO tokens to the WebSocket feed after ATM strike resolution.
@@ -253,30 +276,14 @@ func (s *Service) listenForDynamicSubscriptions(ctx context.Context) {
 				return
 			}
 
-			// Parse: {"exchange_type": 2, "tokens": ["57710", "57709"]}
-			var cmd struct {
-				ExchangeType int      `json:"exchange_type"`
-				Tokens       []string `json:"tokens"`
-			}
-			if err := json.Unmarshal([]byte(msg.Payload), &cmd); err != nil {
-				log.Printf("[mdengine] ⚠️  invalid subscribe_token command: %v", err)
+			sub, ok := parseSubscribeCommand(msg.Payload)
+			if !ok {
+				log.Printf("[mdengine] ⚠️  invalid subscribe_token command: %s", msg.Payload)
 				continue
 			}
-
-			if len(cmd.Tokens) == 0 {
-				continue
-			}
-
-			entry := smartconnect.TokenListEntry{
-				ExchangeType: cmd.ExchangeType,
-				Tokens:       cmd.Tokens,
-			}
-
-			log.Printf("[mdengine] 📡 received dynamic subscribe command: exchange=%d tokens=%v",
-				cmd.ExchangeType, cmd.Tokens)
-
+			log.Printf("[mdengine] 📡 received dynamic subscribe command: mode=%d tokens=%v", sub.Mode, sub.Tokens)
 			select {
-			case s.dynamicSubCh <- []smartconnect.TokenListEntry{entry}:
+			case s.dynamicSubCh <- sub:
 			default:
 				log.Println("[mdengine] ⚠️  dynamicSubCh full, dropping subscribe command")
 			}

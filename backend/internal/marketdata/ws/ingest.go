@@ -50,6 +50,11 @@ type IngestConfig struct {
 	// Tokens to subscribe, grouped by exchange type and mode.
 	SubscribeMode int
 	TokenList     []smartconnect.TokenListEntry
+
+	// Extra subscriptions per mode (dynamic tokens remembered for this
+	// session, e.g. options in SnapQuote). Stored like TokenList so every
+	// (re)connect sends them.
+	Extra map[int][]smartconnect.TokenListEntry
 }
 
 // Ingest connects to Angel One WebSocket and pushes normalized ticks into tickCh.
@@ -113,6 +118,11 @@ func (ing *Ingest) Start(ctx context.Context, tickCh chan<- model.Tick) error {
 // wire installs the socket callbacks.
 func (ing *Ingest) wire(tickCh chan<- model.Tick) {
 	ing.ws.AddSubscription(ing.cfg.SubscribeMode, ing.cfg.TokenList)
+	for mode, list := range ing.cfg.Extra {
+		if len(list) > 0 {
+			ing.ws.AddSubscription(mode, list)
+		}
+	}
 
 	ing.ws.OnOpen = func() {
 		if ing.OnConnState != nil {
@@ -231,6 +241,13 @@ func parseTick(msg map[string]interface{}, recvTS time.Time) (model.Tick, error)
 		eventTS = time.Unix(0, exTS*int64(time.Millisecond)).UTC()
 	}
 
+	bid := bestBid(msg["best_5_buy_data"])
+	ask := bestAsk(msg["best_5_sell_data"])
+	var quoteTS time.Time
+	if bid > 0 || ask > 0 {
+		quoteTS = recvTS
+	}
+
 	return model.Tick{
 		Token:     token,
 		Exchange:  exchange,
@@ -239,7 +256,57 @@ func parseTick(msg map[string]interface{}, recvTS time.Time) (model.Tick, error)
 		DayVolume: dayVol,
 		TickTS:    recvTS,
 		EventTS:   eventTS,
+		BestBid:   bid,
+		BestAsk:   ask,
+		OI:        toInt64(msg["open_interest"]),
+		QuoteTS:   quoteTS,
 	}, nil
+}
+
+// bestBid returns the highest price (paise) among buy-side depth levels with
+// quantity > 0, 0 when none qualify. Angel documents best-5 depth as
+// best-first, but nothing guarantees that ordering (or that every level is
+// populated), so every level is scanned rather than trusting index 0.
+func bestBid(v interface{}) int64 {
+	return bestPrice(v, true)
+}
+
+// bestAsk returns the lowest price (paise) among sell-side depth levels with
+// quantity > 0, 0 when none qualify. See bestBid.
+func bestAsk(v interface{}) int64 {
+	return bestPrice(v, false)
+}
+
+// bestPrice scans depth levels and returns the best price with quantity > 0:
+// the max when max is true (bid side), the min otherwise (ask side). Returns
+// 0 when v isn't a level slice or no level has quantity > 0.
+func bestPrice(v interface{}, max bool) int64 {
+	levels, ok := v.([]map[string]interface{})
+	if !ok || len(levels) == 0 {
+		return 0
+	}
+	var best int64
+	found := false
+	for _, lvl := range levels {
+		if toInt64(lvl["quantity"]) <= 0 {
+			continue
+		}
+		price := toInt64(lvl["price"])
+		if !found {
+			best = price
+			found = true
+			continue
+		}
+		if max && price > best {
+			best = price
+		} else if !max && price < best {
+			best = price
+		}
+	}
+	if !found {
+		return 0
+	}
+	return best
 }
 
 // seqGapLogInterval rate-limits feed gap log lines (the metric counts every gap).

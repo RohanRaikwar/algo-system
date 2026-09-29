@@ -93,3 +93,73 @@ func (sp *StrikePicker) lookupSymbol(symbol string) (string, int64, error) {
 	}
 	return sp.searchTokenWithRetry(symbol)
 }
+
+// ResolveStrikeOn resolves one NIFTY option contract on a given expiry (a
+// strategy that skips the nearest expiry). Unlike ResolveStrike it does not
+// change CurrentExpiry. Results are cached with ResolveStrike's.
+func (sp *StrikePicker) ResolveStrikeOn(expiry time.Time, strike int64, optionType string) (StrikeInfo, error) {
+	optionType = strings.ToUpper(optionType)
+	if optionType != "CE" && optionType != "PE" {
+		return StrikeInfo{}, fmt.Errorf("option type %q: want CE or PE", optionType)
+	}
+	if strike <= 0 || strike%sp.strikeStep != 0 {
+		return StrikeInfo{}, fmt.Errorf("strike %d is not a multiple of %d", strike, sp.strikeStep)
+	}
+	symbol := fmt.Sprintf("NIFTY%s%d%s", strings.ToUpper(expiry.In(istZone).Format("02Jan06")), strike, optionType)
+	sp.mu.RLock()
+	cached, ok := sp.legCache[symbol]
+	sp.mu.RUnlock()
+	if ok {
+		return cached, nil
+	}
+	token, lot, err := sp.lookupSymbol(symbol)
+	if err != nil {
+		return StrikeInfo{}, fmt.Errorf("resolve %s: %w", symbol, err)
+	}
+	info := StrikeInfo{Token: token, Symbol: symbol, Strike: strike, LotSize: lot}
+	sp.mu.Lock()
+	if sp.legCache == nil {
+		sp.legCache = make(map[string]StrikeInfo)
+	}
+	sp.legCache[symbol] = info
+	sp.mu.Unlock()
+	return info, nil
+}
+
+// LookupOn is ResolveStrikeOn without the SearchScrip fallback: the offline
+// instrument master (or the test hook) only. Used where a broker call is not
+// allowed (the option picker's universe; SearchScrip is limited to 1/s).
+func (sp *StrikePicker) LookupOn(expiry time.Time, strike int64, optionType string) (StrikeInfo, bool) {
+	optionType = strings.ToUpper(optionType)
+	symbol := fmt.Sprintf("NIFTY%s%d%s", strings.ToUpper(expiry.In(istZone).Format("02Jan06")), strike, optionType)
+	sp.mu.RLock()
+	cached, ok := sp.legCache[symbol]
+	sp.mu.RUnlock()
+	if ok {
+		return cached, true
+	}
+	var token string
+	var lot int64
+	if sp.lookup != nil {
+		t, l, err := sp.lookup(symbol)
+		if err != nil {
+			return StrikeInfo{}, false
+		}
+		token, lot = t, l
+	} else {
+		inst, err := GetInstrumentMaster().GetInstrument(symbol)
+		if err != nil || inst.Token == "" {
+			return StrikeInfo{}, false
+		}
+		token = inst.Token
+		lot, _ = strconv.ParseInt(strings.TrimSpace(inst.LotSize), 10, 64)
+	}
+	info := StrikeInfo{Token: token, Symbol: symbol, Strike: strike, LotSize: lot}
+	sp.mu.Lock()
+	if sp.legCache == nil {
+		sp.legCache = make(map[string]StrikeInfo)
+	}
+	sp.legCache[symbol] = info
+	sp.mu.Unlock()
+	return info, true
+}
