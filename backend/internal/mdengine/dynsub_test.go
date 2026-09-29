@@ -32,3 +32,24 @@ func TestRememberDynamicTokensKeepsMode(t *testing.T) {
 		t.Fatalf("base list must be the configured tokens only: %+v", base)
 	}
 }
+
+// A dynamic subscribe command may repeat the same (mode, exchangeType,
+// token) many times over a session (e.g. the strike ladder re-touching a
+// contract it already subscribed). rememberDynamicTokens must dedupe per
+// (mode, exchangeType) rather than append a fresh TokenListEntry each call,
+// or the remembered list — replayed on every reconnect — grows without
+// bound.
+func TestRememberDynamicTokensDedupesPerModeAndExchange(t *testing.T) {
+	s := &Service{cfg: Config{TokenList: []smartconnect.TokenListEntry{{ExchangeType: 1, Tokens: []string{"99926000"}}}}}
+	s.rememberDynamicTokens(dynSub{Mode: 3, Tokens: []smartconnect.TokenListEntry{{ExchangeType: 2, Tokens: []string{"40712"}}}})
+	s.rememberDynamicTokens(dynSub{Mode: 3, Tokens: []smartconnect.TokenListEntry{{ExchangeType: 2, Tokens: []string{"40712"}}}}) // repeat
+	s.rememberDynamicTokens(dynSub{Mode: 3, Tokens: []smartconnect.TokenListEntry{{ExchangeType: 2, Tokens: []string{"57710"}}}}) // new token, same mode+exchange
+
+	extra := s.sessionExtraSubs()[3]
+	if len(extra) != 1 {
+		t.Fatalf("expected one TokenListEntry per (mode, exchangeType), got %d: %+v", len(extra), extra)
+	}
+	if got := extra[0].Tokens; len(got) != 2 || got[0] != "40712" || got[1] != "57710" {
+		t.Fatalf("tokens = %v, want deduped [40712 57710]", got)
+	}
+}

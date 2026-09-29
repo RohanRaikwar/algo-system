@@ -86,14 +86,45 @@ func feedLostMidSession(startErr, wsCtxErr error, now time.Time) bool {
 }
 
 // rememberDynamicTokens records dynamically subscribed tokens, per feed mode,
-// so a re-login (new socket) subscribes them again in the same mode.
+// so a re-login (new socket) subscribes them again in the same mode. Merges
+// into the existing entry for (mode, exchangeType) and dedupes tokens,
+// rather than appending a fresh TokenListEntry every call: a subscribe
+// command can repeat the same token many times over a session (e.g. the
+// strike ladder re-touching a contract), and this list is replayed on every
+// reconnect, so an unmerged append would grow it without bound.
 func (s *Service) rememberDynamicTokens(sub dynSub) {
 	s.dynMu.Lock()
 	if s.dynTokens == nil {
 		s.dynTokens = make(map[int][]smartconnect.TokenListEntry)
 	}
-	s.dynTokens[sub.Mode] = append(s.dynTokens[sub.Mode], sub.Tokens...)
+	for _, in := range sub.Tokens {
+		s.dynTokens[sub.Mode] = mergeTokenEntry(s.dynTokens[sub.Mode], in)
+	}
 	s.dynMu.Unlock()
+}
+
+// mergeTokenEntry merges in's tokens into the entry already present for
+// in.ExchangeType (deduping), or appends in as a new entry when that
+// exchange type hasn't been seen for this mode yet.
+func mergeTokenEntry(entries []smartconnect.TokenListEntry, in smartconnect.TokenListEntry) []smartconnect.TokenListEntry {
+	for i, e := range entries {
+		if e.ExchangeType != in.ExchangeType {
+			continue
+		}
+		seen := make(map[string]bool, len(e.Tokens))
+		for _, tok := range e.Tokens {
+			seen[tok] = true
+		}
+		for _, tok := range in.Tokens {
+			if !seen[tok] {
+				e.Tokens = append(e.Tokens, tok)
+				seen[tok] = true
+			}
+		}
+		entries[i] = e
+		return entries
+	}
+	return append(entries, in)
 }
 
 // sessionTokenList is the configured token list (subscribed in the session mode).

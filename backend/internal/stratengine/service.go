@@ -330,6 +330,10 @@ func (svc *Service) Run(ctx context.Context) error {
 	go svc.configUpdateLoop(ctx)
 	go svc.positionReconcileLoop(ctx)
 
+	// ── Re-subscribe the picker universe + strike ladder on market open
+	// (mdengine (re)connect), not only at midnight ──
+	go svc.marketStateLoop(ctx)
+
 	// ── Discover streams for TF=60 (1m candles) ──
 	svc.streams = svc.buildStreams(ctx)
 	log.Printf("[stratengine] consuming from %d streams: %v", len(svc.streams), svc.streams)

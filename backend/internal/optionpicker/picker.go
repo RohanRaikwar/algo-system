@@ -77,6 +77,20 @@ func (p *Picker) Run(ctx context.Context, active func(time.Time) bool) {
 	}
 }
 
+// NewSession forces the universe to forget its subscriptions and ladder
+// centre, so the next refreshUniverseAt re-subscribes the whole ladder. This
+// is the intraday hook for mdengine reconnecting (a fresh WS connection
+// forgets dynamic subscriptions) and for the market re-opening, in addition
+// to the midnight date-change reset in refreshUniverseAt. It records today's
+// date so that date-change check does not also fire on the same day and
+// double the resubscribe.
+func (p *Picker) NewSession() {
+	p.univ.NewSession()
+	p.mu.Lock()
+	p.lastDay = dayKey(time.Now())
+	p.mu.Unlock()
+}
+
 // refreshUniverseAt re-centres the universe on spot over the chain's
 // expiries. mdengine forgets dynamic subscriptions each trading session, so
 // on a calendar-day change (IST) the universe re-subscribes its whole ladder
