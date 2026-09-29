@@ -81,6 +81,12 @@ export async function fetchStrikeInfo(): Promise<import('../store/useStrikeStore
     return res.json();
 }
 
+export async function fetchStrikeSel(): Promise<import('../types/strikesel').StrikeSelView | null> {
+    const res = await fetch(`${BASE}/api/strikesel`);
+    if (!res.ok) return null;
+    return res.json();
+}
+
 export interface PnLSummary {
     realized_pnl: number;
     total_trades: number;

@@ -967,6 +967,25 @@
     color: var(--sg-faint);
 }
 
+.fno-atm-value.fno-param {
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+.fno-atm-head-strike,
+.fno-inst-header .fno-na {
+    margin-left: auto;
+}
+
+.fno-atm-head-strike {
+    font-variant-numeric: tabular-nums;
+}
+
+.fno-inst-header .fno-na {
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
 .fno-instruments-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -523,6 +523,22 @@ func RegisterRoutes(mux *http.ServeMux, hub *Hub, rdb *goredis.Client, ctx conte
 		w.Write([]byte(val))
 	})
 
+	// REST: NIFTY50_SR strike selection (live greeks pick, rules, last pick)
+	mux.HandleFunc("/api/strikesel", func(w http.ResponseWriter, r *http.Request) {
+		SetCORS(w, r)
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		val, err := rdb.Get(ctx, "strikesel:state").Result()
+		if err != nil {
+			w.Write([]byte("null"))
+			return
+		}
+		w.Write([]byte(val))
+	})
+
 	// REST: P&L summary from stratengine
 	mux.HandleFunc("/api/pnl", func(w http.ResponseWriter, r *http.Request) {
 		SetCORS(w, r)

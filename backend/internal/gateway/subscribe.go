@@ -64,11 +64,12 @@ type SnapshotResponse struct {
 	// Full-state channels for resync. LiveSeqs holds their channel_seq in Epoch
 	// (0 = read from the Redis key, no seq known); clients skip state older
 	// than what they already applied.
-	Orders   *json.RawMessage `json:"orders,omitempty"`
-	PnL      *json.RawMessage `json:"pnl,omitempty"`
-	Range    *json.RawMessage `json:"range,omitempty"`   // NIFTY50_RANGE dashboard view (pub:range)
-	Refused  *json.RawMessage `json:"refused,omitempty"` // today's blocked entries (pub:refused)
-	LiveSeqs map[string]int64 `json:"liveSeqs,omitempty"`
+	Orders    *json.RawMessage `json:"orders,omitempty"`
+	PnL       *json.RawMessage `json:"pnl,omitempty"`
+	Range     *json.RawMessage `json:"range,omitempty"`     // NIFTY50_RANGE dashboard view (pub:range)
+	Refused   *json.RawMessage `json:"refused,omitempty"`   // today's blocked entries (pub:refused)
+	StrikeSel *json.RawMessage `json:"strikesel,omitempty"` // NIFTY50_SR strike selection (pub:strikesel)
+	LiveSeqs  map[string]int64 `json:"liveSeqs,omitempty"`
 	// Most recent pub:signal envelopes (oldest first, each with its
 	// channel_seq); clients apply the ones they have not seen.
 	Signals []json.RawMessage `json:"signals,omitempty"`

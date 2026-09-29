@@ -1,142 +1,163 @@
 import { useEffect } from 'react';
-import { useStrikeStore } from '../../store/useStrikeStore';
-import { fetchStrikeInfo } from '../../services/api';
-import { Target, TrendingUp, TrendingDown, Clock, Activity, Package } from 'lucide-react';
+import { useStrikeSelStore } from '../../store/useStrikeSelStore';
+import { fetchStrikeSel } from '../../services/api';
+import type { SRContract, SRRejects, SRSide, StrikeSelView } from '../../types/strikesel';
+import { Target, TrendingUp, TrendingDown, Clock, SlidersHorizontal, History } from 'lucide-react';
 
-/** Format paise to rupees string */
-function fmtPrice(paise: number): string {
-    if (!paise || paise <= 0) return '—';
-    return '₹' + (paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/** Rupees (the chain's unit) to a display string. */
+function fmtRupees(v: number): string {
+    if (!v || v <= 0) return '—';
+    return '₹' + v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-/** Format ISO timestamp to IST HH:MM:SS */
+/** ISO timestamp to IST HH:MM:SS. */
 function fmtTime(iso: string): string {
     if (!iso) return '—';
     const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '—';
     return d.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
 }
 
+function fmtExpiry(ymd: string, dte: number): string {
+    const d = new Date(`${ymd}T00:00:00+05:30`);
+    if (Number.isNaN(d.getTime())) return ymd;
+    const s = d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', timeZone: 'Asia/Kolkata' });
+    return `${s} (${dte}d)`;
+}
+
+const num = (v: number, digits: number) => (Number.isFinite(v) ? v.toFixed(digits) : '—');
+
+/** "delta 12, liquidity 3" — only filters that dropped something. */
+export function rejectSummary(r: SRRejects): string {
+    const parts = (Object.entries(r) as Array<[keyof SRRejects, number]>)
+        .filter(([, n]) => n > 0)
+        .map(([k, n]) => `${k} ${n}`);
+    return parts.length ? parts.join(', ') : 'none';
+}
+
+/** The active selection rules, in words. */
+export function paramRows(p: StrikeSelView['params']): Array<[string, string]> {
+    return [
+        ['Delta band', `${num(p.delta_min, 2)} – ${num(p.delta_max, 2)} (closest to ${num((p.delta_min + p.delta_max) / 2, 3)} wins)`],
+        ['Max theta', p.max_theta_pct > 0 ? `${num(p.max_theta_pct, 1)}% of premium per day` : 'off'],
+        ['Gamma cap', p.max_gamma > 0 ? `${p.max_gamma} within ${p.gamma_dte}d of expiry` : 'off'],
+        ['Min liquidity', p.min_liquidity > 0 ? p.min_liquidity.toLocaleString('en-IN') : 'off'],
+        ['Expiry', 'nearest after today'],
+    ];
+}
+
+function ContractRows({ c }: { c: SRContract }) {
+    const rows: Array<[string, string, string?]> = [
+        ['Symbol', c.symbol || `${c.strike}${c.option}`, 'mono'],
+        ['Token', c.token || '—', 'mono'],
+        ['Expiry', fmtExpiry(c.expiry, c.dte)],
+        ['Premium', fmtRupees(c.premium), 'ltp live'],
+        ['Delta', num(c.delta, 3)],
+        ['Gamma', num(c.gamma, 5)],
+        ['Theta', `${num(c.theta, 2)} /day`],
+        ['Vega', num(c.vega, 2)],
+        ['IV', `${num(c.iv, 1)}%`],
+        ['Liquidity', c.liquidity > 0 ? Math.round(c.liquidity).toLocaleString('en-IN') : '—'],
+    ];
+    return (
+        <>
+            {rows.map(([label, value, cls]) => (
+                <div key={label} className="fno-inst-row">
+                    <span className="fno-inst-label">{label}</span>
+                    <span className={`fno-inst-value${cls ? ` ${cls}` : ''}`}>{value}</span>
+                </div>
+            ))}
+        </>
+    );
+}
+
+function SideCard({ title, kind, side, chainError }: { title: string; kind: 'call' | 'put'; side?: SRSide; chainError?: string }) {
+    const Icon = kind === 'call' ? TrendingUp : TrendingDown;
+    return (
+        <div className={`fno-instrument-card ${kind}`}>
+            <div className="fno-inst-header">
+                <Icon size={16} />
+                <span>{title}</span>
+                {side?.pick && <span className="fno-atm-head-strike">{side.pick.strike}</span>}
+            </div>
+            <div className="fno-inst-body">
+                {side?.pick ? (
+                    <ContractRows c={side.pick} />
+                ) : (
+                    <div className="fno-inst-row">
+                        <span className="fno-na">
+                            {chainError || side?.error || 'No contract passes the rules right now'}
+                        </span>
+                    </div>
+                )}
+                {side && !side.error && (
+                    <div className="fno-inst-row">
+                        <span className="fno-inst-label">Rejected</span>
+                        <span className="fno-inst-value">{rejectSummary(side.rejects)}</span>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
 export function FnoInstrumentsTab() {
-    const strike = useStrikeStore(s => s.strike);
-    const setStrike = useStrikeStore(s => s.setStrike);
-    const callLTP = useStrikeStore(s => s.callLTP);
-    const putLTP = useStrikeStore(s => s.putLTP);
+    const view = useStrikeSelStore(s => s.view);
+    const setView = useStrikeSelStore(s => s.setView);
 
-    // Fetch from REST on mount
     useEffect(() => {
-        fetchStrikeInfo().then(data => {
-            if (data && data.resolved) setStrike(data);
+        fetchStrikeSel().then(v => {
+            if (v && v.params) setView(v);
         }).catch(() => { });
-    }, [setStrike]);
+    }, [setView]);
 
-    if (!strike || !strike.resolved) {
+    if (!view) {
         return (
             <div className="fno-instruments-wrap">
                 <div className="fno-pending">
                     <Target size={48} strokeWidth={1.5} />
-                    <p>Waiting for ATM strike resolution…</p>
-                    <span className="fno-pending-sub">Strikes resolve on first NIFTY tick after market open</span>
+                    <p>Waiting for the greeks strike selection…</p>
+                    <span className="fno-pending-sub">Updates every 30s during market hours when NIFTY50_SR is enabled</span>
                 </div>
             </div>
         );
     }
 
-    const lotSize = strike.lot_size || 65;
-    const qty = strike.qty || 1;
+    const last = view.last;
 
     return (
         <div className="fno-instruments-wrap">
-            {/* ATM Info Card */}
             <div className="fno-atm-card">
                 <div className="fno-atm-header">
-                    <Target size={16} />
-                    <span>ATM Strike</span>
-                    <span className="fno-badge resolved">Resolved</span>
+                    <SlidersHorizontal size={16} />
+                    <span>{view.strategy || 'NIFTY50_SR'} strike selection (greeks)</span>
+                    <span className="fno-badge resolved"><Clock size={11} /> {fmtTime(view.updated_at)}</span>
                 </div>
                 <div className="fno-atm-body">
-                    <div className="fno-atm-stat">
-                        <span className="fno-atm-label">Strike</span>
-                        <span className="fno-atm-value">{strike.atm_strike}</span>
-                    </div>
-                    <div className="fno-atm-stat">
-                        <span className="fno-atm-label">Spot Price</span>
-                        <span className="fno-atm-value">{fmtPrice(strike.spot_price)}</span>
-                    </div>
-                    <div className="fno-atm-stat">
-                        <span className="fno-atm-label">Resolved At</span>
-                        <span className="fno-atm-value">
-                            <Clock size={12} /> {fmtTime(strike.resolved_at)}
-                        </span>
-                    </div>
-                    <div className="fno-atm-stat">
-                        <span className="fno-atm-label">Lot Size</span>
-                        <span className="fno-atm-value">
-                            <Package size={12} /> {lotSize}
-                        </span>
-                    </div>
-                    <div className="fno-atm-stat">
-                        <span className="fno-atm-label">Qty (Lots)</span>
-                        <span className="fno-atm-value">{qty} × {lotSize} = {qty * lotSize}</span>
-                    </div>
+                    {paramRows(view.params).map(([label, value]) => (
+                        <div key={label} className="fno-atm-stat">
+                            <span className="fno-atm-label">{label}</span>
+                            <span className="fno-atm-value fno-param">{value}</span>
+                        </div>
+                    ))}
                 </div>
             </div>
 
-            {/* CE / PE Instrument Cards */}
             <div className="fno-instruments-grid">
-                {/* CALL Card */}
-                <div className="fno-instrument-card call">
-                    <div className="fno-inst-header">
-                        <TrendingUp size={16} />
-                        <span>CALL (CE)</span>
-                    </div>
-                    <div className="fno-inst-body">
-                        <div className="fno-inst-row">
-                            <span className="fno-inst-label">Symbol</span>
-                            <span className="fno-inst-value mono">{strike.call.symbol}</span>
-                        </div>
-                        <div className="fno-inst-row">
-                            <span className="fno-inst-label">Token</span>
-                            <span className="fno-inst-value mono">{strike.call.token}</span>
-                        </div>
-                        <div className="fno-inst-row">
-                            <span className="fno-inst-label">Live LTP</span>
-                            <span className={`fno-inst-value ltp${callLTP > 0 ? ' live' : ''}`}>
-                                {callLTP > 0 ? (
-                                    <><Activity size={12} /> {fmtPrice(callLTP)}</>
-                                ) : (
-                                    <span className="fno-na">awaiting tick…</span>
-                                )}
-                            </span>
-                        </div>
-                    </div>
-                </div>
+                <SideCard title="CALL pick now" kind="call" side={view.call} chainError={view.error} />
+                <SideCard title="PUT pick now" kind="put" side={view.put} chainError={view.error} />
+            </div>
 
-                {/* PUT Card */}
-                <div className="fno-instrument-card put">
-                    <div className="fno-inst-header">
-                        <TrendingDown size={16} />
-                        <span>PUT (PE)</span>
-                    </div>
-                    <div className="fno-inst-body">
-                        <div className="fno-inst-row">
-                            <span className="fno-inst-label">Symbol</span>
-                            <span className="fno-inst-value mono">{strike.put.symbol}</span>
-                        </div>
-                        <div className="fno-inst-row">
-                            <span className="fno-inst-label">Token</span>
-                            <span className="fno-inst-value mono">{strike.put.token}</span>
-                        </div>
-                        <div className="fno-inst-row">
-                            <span className="fno-inst-label">Live LTP</span>
-                            <span className={`fno-inst-value ltp${putLTP > 0 ? ' live' : ''}`}>
-                                {putLTP > 0 ? (
-                                    <><Activity size={12} /> {fmtPrice(putLTP)}</>
-                                ) : (
-                                    <span className="fno-na">awaiting tick…</span>
-                                )}
-                            </span>
-                        </div>
-                    </div>
+            <div className="fno-instrument-card">
+                <div className="fno-inst-header">
+                    <History size={16} />
+                    <span>Last picked for an entry</span>
+                    {last && <span className="fno-na">{fmtTime(last.ts)} · {last.side} · asked {last.asked_strike}</span>}
+                </div>
+                <div className="fno-inst-body">
+                    {last ? <ContractRows c={last} /> : (
+                        <div className="fno-inst-row"><span className="fno-na">No SR entry signal yet</span></div>
+                    )}
                 </div>
             </div>
         </div>

@@ -66,9 +66,12 @@ type Service struct {
 
 	rangePublishHook func(payload string) // test hook for publishRangeState
 
-	refused            refusedLog          // today's blocked entries (refused.go)
+	refused            refusedLog           // today's blocked entries (refused.go)
 	refusedPublishHook func(payload string) // test hook for recordRefusedEntry
-	legPriceWait     time.Duration        // 0 = defaultLegPriceWait
+
+	strikeSel            strikeSelState       // NIFTY50_SR strike selection view (sr_strike_view.go)
+	strikeSelPublishHook func(payload string) // test hook for publishStrikeSel
+	legPriceWait         time.Duration        // 0 = defaultLegPriceWait
 
 	// Portfolio & P&L tracking
 	pnlTracker *portfolio.PnLTracker
@@ -372,6 +375,11 @@ func (svc *Service) Run(ctx context.Context) error {
 	// ── Range strategy dashboard state (pub:range) ──
 	if svc.cfg.RangeEnabled {
 		go svc.rangeStateLoop(ctx)
+	}
+
+	// ── NIFTY50_SR strike selection view (pub:strikesel) ──
+	if svc.cfg.SREnabled {
+		go svc.strikeSelLoop(ctx)
 	}
 
 	// ── Start snapshot loop ──

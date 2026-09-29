@@ -150,8 +150,8 @@ func TestAttachLiveStatePrefersHubLatest(t *testing.T) {
 	if snap.LiveSeqs["pub:orders"] != 2 || snap.LiveSeqs["pub:pnl"] != 0 {
 		t.Fatalf("liveSeqs: got %v", snap.LiveSeqs)
 	}
-	// orders came from the hub; pnl, range and refused were missing, so only they fall back.
-	if len(asked) != 3 || asked[0] != "pnl:summary" || asked[1] != "range:state" || asked[2] != "refused:state" {
+	// orders came from the hub; pnl, range, refused and strikesel were missing, so only they fall back.
+	if len(asked) != 4 || asked[0] != "pnl:summary" || asked[1] != "range:state" || asked[2] != "refused:state" || asked[3] != "strikesel:state" {
 		t.Fatalf("fallback should only be used for missing state, asked %v", asked)
 	}
 	if snap.Range != nil {
@@ -302,5 +302,29 @@ func TestAttachLiveStateIncludesRefused(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("pub:refused not forwarded to the browser")
+	}
+}
+
+func TestStrikeSelIsForwardedFullState(t *testing.T) {
+	h := newTestHub()
+	snap := &SnapshotResponse{}
+	h.attachLiveState(snap, func(key string) ([]byte, error) {
+		if key == "strikesel:state" {
+			return []byte(`{"strategy":"NIFTY50_SR"}`), nil
+		}
+		return nil, errors.New("nil")
+	})
+	if snap.StrikeSel == nil || string(*snap.StrikeSel) != `{"strategy":"NIFTY50_SR"}` {
+		t.Fatalf("strikesel not attached: %v", snap.StrikeSel)
+	}
+	if !isStickyChannel("pub:strikesel") || !isLatestWins("pub:strikesel") {
+		t.Fatal("pub:strikesel must be sticky and latest-wins")
+	}
+	found := false
+	for _, p := range dynamicPubSubPatterns {
+		found = found || p == "pub:strikesel"
+	}
+	if !found {
+		t.Fatal("pub:strikesel not forwarded to the browser")
 	}
 }

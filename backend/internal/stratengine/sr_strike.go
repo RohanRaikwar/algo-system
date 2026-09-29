@@ -52,8 +52,22 @@ func (svc *Service) pickSRStrike(sig *strategy.Signal, now time.Time) error {
 		return fmt.Errorf("SR strike: no greeks (%v)", err)
 	}
 	opt := optionTypeFor(sig.Side)
-	// OptionGreek carries no LTP; premiums come from the subscribed ladder.
-	premium := func(c orderexec.OptionContract) float64 {
+	premium := svc.srPremium(now, opt)
+	c, err := selectSRContract(chain, opt, now, svc.srGreekLimits(), premium)
+	if err != nil {
+		return err
+	}
+	log.Printf("[stratengine] SR strike %d%s (asked %d): delta=%.2f gamma=%.4f theta=%.2f premium=%.2f iv=%.1f",
+		c.Strike, c.OptionType, sig.Strike, c.Delta, c.Gamma, c.Theta, premium(c), normIV(c.IV))
+	svc.recordSRPick(*sig, c, premium(c), now)
+	sig.Strike = c.Strike
+	return nil
+}
+
+// srPremium returns a contract's premium in rupees. OptionGreek carries no
+// LTP; premiums come from the subscribed ladder.
+func (svc *Service) srPremium(now time.Time, opt string) func(orderexec.OptionContract) float64 {
+	return func(c orderexec.OptionContract) float64 {
 		if c.Premium > 0 {
 			return c.Premium
 		}
@@ -63,77 +77,97 @@ func (svc *Service) pickSRStrike(sig *strategy.Signal, now time.Time) error {
 		}
 		return float64(svc.orderExecutor.GetLTP(info.Token)) / 100
 	}
-	c, err := selectSRContract(chain, opt, now, svc.srGreekLimits(), premium)
-	if err != nil {
-		return err
-	}
-	log.Printf("[stratengine] SR strike %d%s (asked %d): delta=%.2f gamma=%.4f theta=%.2f premium=%.2f iv=%.1f",
-		c.Strike, c.OptionType, sig.Strike, c.Delta, c.Gamma, c.Theta, premium(c), normIV(c.IV))
-	sig.Strike = c.Strike
-	return nil
+}
+
+// srRejects counts contracts of the chosen expiry dropped by each filter.
+type srRejects struct {
+	Delta     int `json:"delta"`
+	Premium   int `json:"premium"`
+	Theta     int `json:"theta"`
+	Gamma     int `json:"gamma"`
+	Liquidity int `json:"liquidity"`
+}
+
+// srEval is one side's greek selection: the winner (if any), the expiry
+// examined and why the other contracts were dropped.
+type srEval struct {
+	Best    orderexec.OptionContract
+	Found   bool
+	Expiry  time.Time
+	DTE     int
+	Rejects srRejects
 }
 
 // selectSRContract applies the greek filters to one side of the chain.
 // premium returns a contract's premium in rupees (the chain's unit), 0 if unknown.
 func selectSRContract(chain []orderexec.OptionContract, opt string, now time.Time, lim srGreekLimits,
 	premium func(orderexec.OptionContract) float64) (orderexec.OptionContract, error) {
+	ev, err := evalSRContracts(chain, opt, now, lim, premium)
+	if err != nil {
+		return orderexec.OptionContract{}, err
+	}
+	if !ev.Found {
+		r := ev.Rejects
+		return orderexec.OptionContract{}, fmt.Errorf("SR strike: no %s passes greeks (dte=%d; out: delta %d, no premium %d, theta %d, gamma %d, liquidity %d)",
+			opt, ev.DTE, r.Delta, r.Premium, r.Theta, r.Gamma, r.Liquidity)
+	}
+	return ev.Best, nil
+}
+
+// evalSRContracts runs the greek filters and reports the winner and rejects.
+// It errors only when the chain has no contract of this type after today.
+func evalSRContracts(chain []orderexec.OptionContract, opt string, now time.Time, lim srGreekLimits,
+	premium func(orderexec.OptionContract) float64) (srEval, error) {
 	today := dayStart(now)
-	var expiry time.Time
+	var ev srEval
 	for _, c := range chain {
 		if string(c.OptionType) != opt || c.Expiry.IsZero() || !dayStart(c.Expiry).After(today) {
 			continue
 		}
-		if expiry.IsZero() || c.Expiry.Before(expiry) {
-			expiry = c.Expiry
+		if ev.Expiry.IsZero() || c.Expiry.Before(ev.Expiry) {
+			ev.Expiry = c.Expiry
 		}
 	}
-	if expiry.IsZero() {
-		return orderexec.OptionContract{}, fmt.Errorf("SR strike: no %s contracts after today in chain", opt)
+	if ev.Expiry.IsZero() {
+		return ev, fmt.Errorf("SR strike: no %s contracts after today in chain", opt)
 	}
-	dte := int(dayStart(expiry).Sub(today).Hours() / 24)
+	ev.DTE = int(dayStart(ev.Expiry).Sub(today).Hours() / 24)
 
 	mid := (lim.DeltaMin + lim.DeltaMax) / 2
-	var best orderexec.OptionContract
-	found := false
-	var nDelta, nPrem, nTheta, nGamma, nLiq int
 	for _, c := range chain {
-		if string(c.OptionType) != opt || !sameDay(c.Expiry, expiry) {
+		if string(c.OptionType) != opt || !sameDay(c.Expiry, ev.Expiry) {
 			continue
 		}
 		d := math.Abs(c.Delta)
 		if d < lim.DeltaMin || d > lim.DeltaMax {
-			nDelta++
+			ev.Rejects.Delta++
 			continue
 		}
 		p := premium(c)
 		switch {
 		case p <= 0:
-			nPrem++
+			ev.Rejects.Premium++
 			continue
 		case lim.MaxThetaPct > 0 && math.Abs(c.Theta)*100 > p*lim.MaxThetaPct:
-			nTheta++
+			ev.Rejects.Theta++
 			continue
-		case lim.MaxGamma > 0 && dte <= lim.GammaDTE && c.Gamma > lim.MaxGamma:
-			nGamma++
+		case lim.MaxGamma > 0 && ev.DTE <= lim.GammaDTE && c.Gamma > lim.MaxGamma:
+			ev.Rejects.Gamma++
 			continue
 		case lim.MinLiquidity > 0 && c.LiquidityScore < lim.MinLiquidity:
-			nLiq++
+			ev.Rejects.Liquidity++
 			continue
 		}
-		if !found {
-			best, found = c, true
+		if !ev.Found {
+			ev.Best, ev.Found = c, true
 			continue
 		}
-		db, dc := math.Abs(math.Abs(best.Delta)-mid), math.Abs(d-mid)
-		if dc < db || (dc == db && c.LiquidityScore > best.LiquidityScore) {
-			best = c
+		db, dc := math.Abs(math.Abs(ev.Best.Delta)-mid), math.Abs(d-mid)
+		if dc < db || (dc == db && c.LiquidityScore > ev.Best.LiquidityScore) {
+			ev.Best = c
 		}
 	}
-	if !found {
-		return orderexec.OptionContract{}, fmt.Errorf("SR strike: no %s passes greeks (dte=%d; out: delta %d, no premium %d, theta %d, gamma %d, liquidity %d)",
-			opt, dte, nDelta, nPrem, nTheta, nGamma, nLiq)
-	}
-	return best, nil
+	return ev, nil
 }
 
 func dayStart(t time.Time) time.Time {
