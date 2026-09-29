@@ -220,8 +220,38 @@ different contract, never touch exits.
 4. `STRAT_PICKER_MODE=on`: picker decides for all three strategies; delete the
    old selection code.
 
+## Broker rate limits
+
+Published by Angel One (SmartAPI forum, "Changes in API Rate Limit",
+topic 4387):
+
+| Endpoint | Limit |
+|---|---|
+| searchScrip | 1 / s |
+| Market quote (`getMarketData`) | 10 / s, 500 / min, 5000 / h |
+| Candle data | 3 / s, 180 / min, 5000 / h |
+| Place / modify / cancel order | 20 / s, 500 / min, 1000 / h |
+| Login, generate tokens | 1 / s (tokens also 1000 / h) |
+
+`optionGreek` is **not in the published table**. The picker calls it twice
+every 15 s (one call per candidate expiry) = 0.13 / s, 8 / min, 480 / h —
+below the strictest published per-endpoint limit (1 / s). The ChainCache
+backs off to 60 s after an `exceeding access rate` response and logs it;
+the chain-age limit (2 min) then decides whether entries are refused.
+
+Consequences for the design:
+
+- **Universe resolves tokens from the offline instrument master only.** A
+  burst of ~110 searchScrip calls at 1 / s would take ~2 min and trip the
+  limit (what stopped the strike ladder on 2026-09-29). Contracts missing
+  from the master are resolved by searchScrip in a throttled background
+  queue (≤ 1 / s), never on the order path.
+- No market-quote calls are needed (SnapQuote supplies bid/ask); the 10 / s
+  quote limit stays free for the gateway's account pages.
+
 ## Open points for planning
 
-- Exact Angel `OptionGreek` rate limit, to confirm 15 s × 2 expiries is safe.
+- Measure `optionGreek` behaviour in production: log every call's latency and
+  any rate-limit response for the first sessions after rollout step 2.
 - Whether SnapQuote packets arrive when only depth changes (affects quote-age
   semantics); verify with a recorded session.
