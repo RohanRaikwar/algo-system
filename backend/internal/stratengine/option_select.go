@@ -85,12 +85,15 @@ func (svc *Service) positionTokenSetterFor(name string) positionTokenSetter {
 // (see sr_strike.go), which replaces the range delta guard.
 func (svc *Service) resolveEntryStrike(ctx context.Context, sig *strategy.Signal, now time.Time) error {
 	sr := svc.isSRSignal(sig)
+	var expiry time.Time // zero = nearest expiry
 	if sr {
-		if err := svc.pickSRStrike(sig, now); err != nil {
+		c, err := svc.pickSRStrike(sig, now)
+		if err != nil {
 			return err
 		}
+		expiry = c.Expiry
 	}
-	info, err := svc.resolverForLegs().ResolveStrike(now, sig.Strike, optionTypeFor(sig.Side))
+	info, err := svc.resolveOn(now, expiry, sig.Strike, optionTypeFor(sig.Side))
 	if err != nil {
 		return fmt.Errorf("strike %d%s not resolvable: %w", sig.Strike, optionTypeFor(sig.Side), err)
 	}

@@ -21,6 +21,8 @@ export interface SRRejects {
     theta: number;
     gamma: number;
     liquidity: number;
+    iv: number;
+    cost: number;
 }
 
 export interface SRSide {
@@ -45,6 +47,9 @@ export interface StrikeSelView {
         max_gamma: number;
         gamma_dte: number;
         min_liquidity: number;
+        max_buy_iv?: number;
+        min_dte?: number;
+        cost_multiple?: number;
     };
     error?: string;
     call?: SRSide;

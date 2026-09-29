@@ -42,7 +42,9 @@ export function paramRows(p: StrikeSelView['params']): Array<[string, string]> {
         ['Max theta', p.max_theta_pct > 0 ? `${num(p.max_theta_pct, 1)}% of premium per day` : 'off'],
         ['Gamma cap', p.max_gamma > 0 ? `${p.max_gamma} within ${p.gamma_dte}d of expiry` : 'off'],
         ['Min liquidity', p.min_liquidity > 0 ? p.min_liquidity.toLocaleString('en-IN') : 'off'],
-        ['Expiry', 'nearest after today'],
+        ['Max IV', p.max_buy_iv ? `${num(p.max_buy_iv, 1)}%` : 'off'],
+        ['Cost rule', p.cost_multiple ? `delta × target ≥ ${p.cost_multiple}× round-trip cost` : 'off'],
+        ['Expiry', (p.min_dte ?? 1) > 1 ? `nearest ${p.min_dte}+ days out` : 'nearest after today'],
     ];
 }
 

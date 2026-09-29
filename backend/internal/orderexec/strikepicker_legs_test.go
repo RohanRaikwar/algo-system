@@ -48,3 +48,24 @@ func TestResolveStrike(t *testing.T) {
 		t.Errorf("NextExpiry = %s", got)
 	}
 }
+
+func TestResolveStrikeOnUsesGivenExpiryAndKeepsCurrentExpiry(t *testing.T) {
+	sp := NewStrikePicker(nil)
+	sp.lookup = func(symbol string) (string, int64, error) {
+		if symbol == "NIFTY13OCT2622700PE" {
+			return "7001", 65, nil
+		}
+		return "", 0, errors.New("not found")
+	}
+	exp := time.Date(2026, 10, 13, 0, 0, 0, 0, istZone)
+	info, err := sp.ResolveStrikeOn(exp, 22700, "pe")
+	if err != nil || info.Token != "7001" || info.Symbol != "NIFTY13OCT2622700PE" {
+		t.Fatalf("info=%+v err=%v", info, err)
+	}
+	if !sp.CurrentExpiry().IsZero() {
+		t.Fatalf("CurrentExpiry changed to %v", sp.CurrentExpiry())
+	}
+	if _, err := sp.ResolveStrikeOn(exp, 22725, "PE"); err == nil {
+		t.Fatal("off-step strike must fail")
+	}
+}

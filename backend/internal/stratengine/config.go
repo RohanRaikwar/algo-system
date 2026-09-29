@@ -83,6 +83,7 @@ type Config struct {
 	SRMaxThetaPct   float64 // |theta| per day ≤ this % of premium, 0 = off
 	SRMaxGamma      float64 // gamma cap within SRGammaDTE days of expiry, 0 = off
 	SRGammaDTE      int
+	SRMinDTE        int // buy the nearest expiry at least this many days out (2 = Monday skips Tuesday)
 
 	PaperSlippageBps      int64 // paper fills cross the spread: LTP ± max(LTP×bps/10000, min)
 	PaperSlippageMinPaise int64
@@ -145,6 +146,7 @@ func LoadConfig() Config {
 		SRMaxThetaPct:         getEnvFloat("STRAT_SR_MAX_THETA_PCT", 8),
 		SRMaxGamma:            getEnvFloat("STRAT_SR_MAX_GAMMA", 0.005),
 		SRGammaDTE:            config.GetEnvInt("STRAT_SR_GAMMA_DTE", 1),
+		SRMinDTE:              config.GetEnvInt("STRAT_SR_MIN_DTE", 2),
 		PaperSlippageBps:      config.GetEnvInt64("STRAT_PAPER_SLIPPAGE_BPS", 50),
 		PaperSlippageMinPaise: config.GetEnvInt64("STRAT_PAPER_SLIPPAGE_MIN_PAISE", 50),
 		WarmupDays:            config.GetEnvInt("STRAT_RANGE_WARMUP_DAYS", 5),

@@ -30,6 +30,9 @@ type srParamsView struct {
 	MaxGamma     float64 `json:"max_gamma"`     // 0 = off
 	GammaDTE     int     `json:"gamma_dte"`
 	MinLiquidity float64 `json:"min_liquidity"` // 0 = off
+	MaxBuyIV     float64 `json:"max_buy_iv"`    // %, 0 = off
+	MinDTE       int     `json:"min_dte"`
+	CostMultiple int64   `json:"cost_multiple"` // 0 = off
 }
 
 // srContractView is one contract with its greeks. Premium is rupees, IV is %.
@@ -77,6 +80,10 @@ type strikeSelView struct {
 type strikeSelState struct {
 	mu   sync.Mutex
 	view strikeSelView
+
+	// Tokens subscribed for the SR expiry ladder. Only refreshStrikeSel
+	// (one goroutine) touches it.
+	ladderSubscribed map[string]bool
 }
 
 func (svc *Service) srParamsView() srParamsView {
@@ -84,6 +91,7 @@ func (svc *Service) srParamsView() srParamsView {
 	return srParamsView{
 		DeltaMin: l.DeltaMin, DeltaMax: l.DeltaMax, MaxThetaPct: l.MaxThetaPct,
 		MaxGamma: l.MaxGamma, GammaDTE: l.GammaDTE, MinLiquidity: l.MinLiquidity,
+		MaxBuyIV: l.MaxBuyIV, MinDTE: l.MinDTE, CostMultiple: l.CostMultiple,
 	}
 }
 
@@ -95,7 +103,7 @@ func (svc *Service) contractView(c orderexec.OptionContract, premium float64, no
 		Premium: premium, Liquidity: c.LiquidityScore,
 	}
 	if v.Token == "" || v.Symbol == "" {
-		if info, err := svc.resolverForLegs().ResolveStrike(now, c.Strike, v.Option); err == nil {
+		if info, err := svc.resolveOn(now, c.Expiry, c.Strike, v.Option); err == nil {
 			v.Token, v.Symbol = info.Token, info.Symbol
 		}
 	}
@@ -134,6 +142,65 @@ func (svc *Service) strikeSelLoop(ctx context.Context) {
 	}
 }
 
+// subscribeSRExpiryLadder keeps ATM±ladderStrikes subscribed on the expiry
+// SR buys when it is not the nearest one (SRMinDTE skips a next-day expiry):
+// the main ladder only covers the nearest expiry, and without ticks those
+// contracts have no premium and are rejected.
+func (svc *Service) subscribeSRExpiryLadder(ctx context.Context, chain []orderexec.OptionContract, now time.Time) {
+	lim := svc.srGreekLimits()
+	if lim.MinDTE <= 1 || svc.orderExecutor == nil {
+		return
+	}
+	today := dayStart(now)
+	var nearest, srExp time.Time
+	for _, c := range chain {
+		if c.Expiry.IsZero() {
+			continue
+		}
+		d := daysBetween(today, c.Expiry)
+		if d >= 1 && (nearest.IsZero() || c.Expiry.Before(nearest)) {
+			nearest = c.Expiry
+		}
+		if d >= lim.MinDTE && (srExp.IsZero() || c.Expiry.Before(srExp)) {
+			srExp = c.Expiry
+		}
+	}
+	spot := svc.orderExecutor.GetLTP("99926000") // NIFTY 50 index
+	if srExp.IsZero() || sameDay(srExp, nearest) || spot <= 0 {
+		return
+	}
+	st := &svc.strikeSel
+	if st.ladderSubscribed == nil {
+		st.ladderSubscribed = make(map[string]bool)
+	}
+	atm := nearestStrike(spot, ladderStrikeStep)
+	var tokens []string
+	failures := 0
+	for i := -ladderStrikes; i <= ladderStrikes; i++ {
+		for _, opt := range [...]string{"CE", "PE"} {
+			info, err := svc.resolveOn(now, srExp, atm+int64(i)*ladderStrikeStep, opt)
+			if err != nil || info.Token == "" {
+				if failures++; failures >= 3 {
+					log.Printf("[stratengine] 🪜 SR expiry ladder stopped after %d lookup failures (last: %v)", failures, err)
+					svc.subscribeTokens(ctx, tokens...)
+					return
+				}
+				continue
+			}
+			failures = 0
+			if !st.ladderSubscribed[info.Token] {
+				st.ladderSubscribed[info.Token] = true
+				tokens = append(tokens, info.Token)
+			}
+		}
+	}
+	if len(tokens) > 0 {
+		svc.subscribeTokens(ctx, tokens...)
+		log.Printf("[stratengine] 🪜 SR expiry ladder %s around %d: subscribed %d contracts",
+			srExp.Format("02Jan06"), atm, len(tokens))
+	}
+}
+
 // refreshStrikeSel recomputes the live CE/PE pick and publishes the view.
 func (svc *Service) refreshStrikeSel(ctx context.Context, now time.Time) {
 	var call, put *srSideView
@@ -141,6 +208,7 @@ func (svc *Service) refreshStrikeSel(ctx context.Context, now time.Time) {
 	if chain, err := svc.optionChain(now); err != nil {
 		errText = "no greeks: " + err.Error()
 	} else {
+		svc.subscribeSRExpiryLadder(ctx, chain, now)
 		call = svc.liveSRSide(chain, "CE", now)
 		put = svc.liveSRSide(chain, "PE", now)
 	}
