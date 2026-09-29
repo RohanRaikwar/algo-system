@@ -518,3 +518,28 @@ func TestAggregator_LateTickAfterRolloverNoDuplicate(t *testing.T) {
 		t.Fatalf("candles for second N=%d late=%d, want 1 and 1", count, late)
 	}
 }
+
+// An idle token's candle is finalized once its clock passes the bucket end
+// plus ReorderBuffer (300ms), not whole seconds later: sub-second event time
+// must not be truncated away.
+func TestAggregator_IdleTokenFinalizedAfterReorderBuffer(t *testing.T) {
+	a := New()
+	base := time.Date(2026, 9, 23, 4, 0, 0, 0, time.UTC)
+	wall := base.Add(900 * time.Millisecond)
+	a.now = func() time.Time { return wall }
+	candleCh := make(chan model.Candle, 10)
+
+	ts := base.Add(900 * time.Millisecond) // last tick of second 0, on time
+	a.processTick(model.Tick{Token: "A", Exchange: "NSE", Price: 1, Qty: 1, TickTS: ts, EventTS: ts}, candleCh)
+
+	wall = base.Add(1250 * time.Millisecond)
+	a.flushOld(candleCh)
+	if len(candleCh) != 0 {
+		t.Fatal("finalized inside the reorder buffer")
+	}
+	wall = base.Add(1300 * time.Millisecond)
+	a.flushOld(candleCh)
+	if len(candleCh) != 1 {
+		t.Fatalf("candle not finalized at bucket end + ReorderBuffer: %d candles", len(candleCh))
+	}
+}

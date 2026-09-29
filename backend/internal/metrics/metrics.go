@@ -60,8 +60,8 @@ type Metrics struct {
 	// Market data path health
 	PipelineDrops      *prometheus.CounterVec // labels: stage (non-blocking channel sends that dropped)
 	RedisWriteFailures *prometheus.CounterVec // labels: op (tick|candle_1s|tf_candle) — errors or timeouts
-	FeedSeqGaps        prometheus.Counter     // feed sequence gap events
-	FeedSeqMissed      prometheus.Counter     // total sequence numbers skipped
+	FeedSeqGaps        prometheus.Counter     // per-token sequence_number jumps (informational, not tick loss)
+	FeedSeqMissed      prometheus.Counter     // total sequence_number distance across those jumps
 	EventTSClamped     prometheus.Counter     // implausible exchange timestamps replaced by receive time
 	TFLateCandles      prometheus.Counter     // 1s candles skipped: their TF bucket was already finalized
 	TFEmitDrops        *prometheus.CounterVec // labels: kind (final|forming) — TF builder output drops
@@ -227,11 +227,11 @@ func NewMetrics() *Metrics {
 		}),
 		FeedSeqGaps: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "mdengine_feed_seq_gaps_total",
-			Help: "Feed sequence-number gaps detected per token",
+			Help: "Per-token jumps in Angel sequence_number. Informational only: the counter is shared across all exchange instruments, so jumps are normal and do not mean lost ticks",
 		}),
 		FeedSeqMissed: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "mdengine_feed_seq_missed_total",
-			Help: "Total feed sequence numbers skipped across all gaps",
+			Help: "Total sequence_number distance across per-token jumps. Informational only: mostly other instruments' messages, not lost ticks",
 		}),
 
 		// Market session (ADR-006)

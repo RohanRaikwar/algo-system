@@ -224,7 +224,6 @@ A client that is gone longer than its channel's window gets
 | Tick publish | ≤ 5 ms; 0 failures per 15 min | `mdengine_redis_write_duration_seconds`, `mdengine_redis_write_failures_total{op="tick"}` |
 | 1s candle timeliness | candle lag ≤ 2.2 s | `mdengine_candle_lag_seconds` |
 | Loss | 0 drops per 15 min on every stage | `mdengine_pipeline_drops_total`, `mdengine_dropped_ticks_total`, `mdengine_fanout_drops_total`, plus late/clamped: `mdengine_late_ticks_total`, `mdengine_tf_late_candles_total`, `mdengine_event_ts_clamped_total` |
-| Feed integrity | ≤ 50 missed seq per 5 min (index token) | `mdengine_feed_seq_missed_total` |
 | TF close → signal | ≤ 2.6 s after boundary | **not measurable yet** (section 2 gaps) |
 | Signal → broker ack | ≤ 1.1 s | **not measurable yet** |
 

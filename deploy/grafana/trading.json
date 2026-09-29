@@ -762,7 +762,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Feed sequence gaps",
+      "title": "Sequence number jumps (informational, not tick loss)",
       "id": 13,
       "datasource": {
         "type": "prometheus",

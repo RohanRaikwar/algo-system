@@ -409,34 +409,20 @@ The in-process stop-loss check in the strategy (the FNO Fixed SL in `strategy/ni
 
 ---
 
-## 14. Feed sequence gap: `[ws] feed sequence gap: token=<t> missed=<n> seq=<s>`
+## 14. Sequence number jump: `[ws] sequence_number jump (exchange-wide counter, not tick loss): token=<t> jump=<n> seq=<s>`
 
-**Source:** `marketdata/ws/ingest.go`. The log line is rate-limited to one per 5 s. The metrics count every gap: `mdengine_feed_seq_gaps_total` and `mdengine_feed_seq_missed_total`.
+**Source:** `marketdata/ws/ingest.go`. The log line is rate-limited to one per 5 s. The metrics count every jump: `mdengine_feed_seq_gaps_total` and `mdengine_feed_seq_missed_total`.
 
-This is production only. The tracker resets on every reconnect (`OnOpen`), and backward jumps and duplicates are not counted.
+**Meaning:** informational only. This is **not** a tick-loss signal. Angel's `sequence_number` is one counter shared by every instrument on the exchange, not a per-token counter. Between two ticks of one of our tokens, other instruments' messages use up hundreds or thousands of sequence numbers. On 2026-09-29 production logs showed the counter rising about 2,600 per second across 35 tokens, with jumps of 38 to 5,644 (median 2,059). Jumps on almost every tick are normal.
 
-**Meaning:** Angel's per-token `sequence_number` skipped. Ticks were lost upstream of us, or in the SmartConnect read path. The feed has no replay.
+**Check for real tick loss instead:**
 
-**Blast radius:**
+- WS reconnects (`mdengine_ws_reconnects_total`) and section 16 (stale feed).
+- `mdengine_pipeline_drops_total{stage="ws_tick"}` and `mdengine_dropped_ticks_total` for our own drops.
 
-- 1s candles for those seconds are missing or have a wrong OHLC;
-- TF candles and indicators computed from them are slightly wrong;
-- a stop loss evaluated on ticks may miss a print.
+**Remediate:** nothing to do.
 
-**Check:**
-
-- `increase(mdengine_feed_seq_missed_total[5m])`.
-- Is it all tokens (connection or Angel side) or one (thin instrument)?
-- WS reconnects around the same time.
-- `mdengine_pipeline_drops_total{stage="ws_tick"}`, to rule out our own drops, which are counted separately and are *not* seq gaps.
-
-**Remediate:**
-
-- Isolated small gaps: nothing to do.
-- Sustained gaps: restart mdengine. It logs in again and reconnects.
-- If gaps line up with strategy entries, review those trades. Use the replay tool (`backend/cmd/replay`) with recorded ticks to see what candles would have been.
-
-**Kill switch:** yes, if sustained (for example more than 50 missed per 5 min on the index token during market hours). Signals are built from these candles.
+**Kill switch:** no.
 
 ---
 

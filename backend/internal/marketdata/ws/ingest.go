@@ -62,7 +62,7 @@ type Ingest struct {
 	OnTick      func(token string, price int64)  // called with token and LTP on every tick (for close detection)
 	OnIngested  func(tick *model.Tick)           // called for every parsed tick (TicksTotal, E2E latency)
 	OnDrop      func()                           // called when tickCh is full and the tick is dropped
-	OnSeqGap    func(token string, missed int64) // called when a feed sequence gap is detected
+	OnSeqGap    func(token string, missed int64) // called when a token's sequence_number jumps (informational: the counter is exchange-wide)
 	OnClockSkew func()                           // called when an implausible exchange timestamp was replaced
 	OnConnState func(connected bool)             // called on every socket open/close
 
@@ -143,7 +143,7 @@ func (ing *Ingest) wire(tickCh chan<- model.Tick) {
 					ing.OnSeqGap(tick.Token, missed)
 				}
 				if ing.seq.shouldLog(recvTS) {
-					log.Printf("[ws] feed sequence gap: token=%s missed=%d seq=%d", tick.Token, missed, seqNo)
+					log.Printf("[ws] sequence_number jump (exchange-wide counter, not tick loss): token=%s jump=%d seq=%d", tick.Token, missed, seqNo)
 				}
 			}
 		}
@@ -255,7 +255,10 @@ func sequenceGap(last, cur int64) int64 {
 	return cur - last - 1
 }
 
-// seqTracker holds the last sequence number seen per token.
+// seqTracker holds the last sequence number seen per token. Angel's
+// sequence_number is one counter shared by every instrument on the exchange,
+// so a per-token jump mostly counts other instruments' messages. It is not a
+// tick-loss signal.
 type seqTracker struct {
 	mu      sync.Mutex
 	last    map[string]int64
