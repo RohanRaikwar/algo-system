@@ -113,11 +113,12 @@ func (svc *Service) resolveEntryStrike(ctx context.Context, sig *strategy.Signal
 	return nil
 }
 
-func (svc *Service) cancelStrategyEntry(sig strategy.Signal, reason string) {
+func (svc *Service) cancelStrategyEntry(ctx context.Context, sig strategy.Signal, reason string, now time.Time) {
 	log.Printf("[stratengine] ENTRY REFUSED %s %s strike=%d: %s", sig.StrategyName, sig.Side, sig.Strike, reason)
 	if c := svc.entryCancellerFor(sig.StrategyName); c != nil {
 		c.CancelEntry(sig.Side, reason)
 	}
+	svc.recordRefusedEntry(ctx, sig, reason, now)
 }
 
 func (svc *Service) subscribeTokens(ctx context.Context, tokens ...string) {

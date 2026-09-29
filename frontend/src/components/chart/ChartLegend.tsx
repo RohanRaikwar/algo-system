@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useSignalStore } from '../../store/useSignalStore';
+import { useRefusedStore } from '../../store/useRefusedStore';
 import { useCandleStore } from '../../store/useCandleStore';
 import { tfLabel, IST_OFFSET, entryKey, getEntryColor } from '../../utils/helpers';
 import type { IndicatorEntry } from '../../types/api';
@@ -29,6 +30,16 @@ interface SignalLegendItem {
     price: string;
     reason: string;
     triggerPairs: Array<{ key: string; value: string }>;
+}
+
+interface RefusedLegendItem {
+    key: string;
+    strategy: string;
+    side: string;
+    strike: string;
+    time: string;
+    reason: string;
+    wanted: string;
 }
 
 function signalTimeSec(sig: SignalRecord): number | null {
@@ -128,6 +139,7 @@ export function ChartLegend({
     selectedToken,
 }: ChartLegendProps) {
     const signals = useSignalStore(s => s.signals);
+    const refused = useRefusedStore(s => s.entries);
     const indicators = useCandleStore(s => s.indicators);
 
     // One row per indicator: hovered value while the crosshair is on a
@@ -177,6 +189,30 @@ export function ChartLegend({
             }));
     }, [signals, selectedToken, focusTimeSec, tfSeconds]);
 
+    const refusedItems = useMemo<RefusedLegendItem[]>(() => {
+        if (!selectedToken || !focusTimeSec) return [];
+        const targetBucket = Math.floor(focusTimeSec / tfSeconds);
+        return refused
+            .filter(r => {
+                const full = r.exchange ? `${r.exchange}:${r.token}` : r.token;
+                if (!(full === selectedToken || r.token === selectedToken)) return false;
+                const ms = new Date(r.ts).getTime();
+                if (Number.isNaN(ms)) return false;
+                return Math.floor((Math.floor(ms / 1000) + IST_OFFSET) / tfSeconds) === targetBucket;
+            })
+            .slice(-4)
+            .reverse()
+            .map((r, idx) => ({
+                key: `${r.ts}|${r.strategy}|${idx}`,
+                strategy: r.strategy,
+                side: (r.side || '').toUpperCase(),
+                strike: r.strike ? String(r.strike) : '',
+                time: formatSignalTime(r.ts),
+                reason: trimReason(r.reason || ''),
+                wanted: trimReason(r.strategy_reason || ''),
+            }));
+    }, [refused, selectedToken, focusTimeSec, tfSeconds]);
+
     return (
         <div className={styles.legend}>
             {ohlc && (
@@ -200,7 +236,7 @@ export function ChartLegend({
                 </div>
             )}
 
-            {focusTimeSec && signalItems.length > 0 && (
+            {focusTimeSec && (signalItems.length > 0 || refusedItems.length > 0) && (
                 <div className={styles.signalCard}>
                     <div className={styles.signalCardHead}>
                         <span>{isPinned ? 'Pinned candle' : 'Signals on this candle'}</span>
@@ -227,6 +263,19 @@ export function ChartLegend({
                                     ))}
                                 </div>
                             )}
+                        </div>
+                    ))}
+                    {refusedItems.map((r) => (
+                        <div key={r.key} className={styles.signalItem}>
+                            <div className={styles.signalItemTop}>
+                                <span className={`${styles.signalBadge} ${styles.signalRefused}`}>Refused</span>
+                                <span className={styles.signalStrategy}>{r.strategy}</span>
+                                {r.side && <span className={styles.signalMuted}>{r.side}</span>}
+                                {r.strike && <span className={styles.signalMuted}>{r.strike}</span>}
+                                <span className={styles.signalMuted}>{r.time}</span>
+                            </div>
+                            <div className={styles.signalReason}><b>Blocked:</b> {r.reason}</div>
+                            {r.wanted && <div className={styles.signalReason}><b>Wanted:</b> {r.wanted}</div>}
                         </div>
                     ))}
                 </div>

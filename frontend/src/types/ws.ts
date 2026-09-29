@@ -26,6 +26,7 @@ export interface WSEnvelope {
     orders?: unknown;
     pnl?: unknown;
     range?: unknown; // NIFTY50_RANGE view (pub:range)
+    refused?: unknown; // today's blocked entries (pub:refused)
     liveSeqs?: Record<string, number>;
     // SNAPSHOT: recent pub:signal envelopes (with channel_seq), oldest first
     signals?: unknown[];

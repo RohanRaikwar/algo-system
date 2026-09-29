@@ -439,6 +439,7 @@ var liveStateChannels = []struct{ channel, key string }{
 	{"pub:orders", "orders:live"},
 	{"pub:pnl", "pnl:summary"},
 	{"pub:range", "range:state"},
+	{"pub:refused", "refused:state"},
 }
 
 // snapshotSignalCount is how many recent pub:signal envelopes a SNAPSHOT
@@ -488,6 +489,8 @@ func (h *Hub) attachLiveState(snap *SnapshotResponse, fallback func(key string) 
 			snap.PnL = &raw
 		case "pub:range":
 			snap.Range = &raw
+		case "pub:refused":
+			snap.Refused = &raw
 		}
 	}
 }
@@ -503,7 +506,7 @@ const (
 // channels whose latest value must survive long quiet periods.
 func isStickyChannel(ch string) bool {
 	switch ch {
-	case "pub:orders", "pub:pnl", "pub:signal", "pub:strike", "pub:range":
+	case "pub:orders", "pub:pnl", "pub:signal", "pub:strike", "pub:range", "pub:refused":
 		return true
 	}
 	return strings.HasPrefix(ch, "pub:analyst:")

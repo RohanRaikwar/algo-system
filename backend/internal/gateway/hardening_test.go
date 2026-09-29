@@ -150,8 +150,8 @@ func TestAttachLiveStatePrefersHubLatest(t *testing.T) {
 	if snap.LiveSeqs["pub:orders"] != 2 || snap.LiveSeqs["pub:pnl"] != 0 {
 		t.Fatalf("liveSeqs: got %v", snap.LiveSeqs)
 	}
-	// orders came from the hub; pnl and range were missing, so only they fall back.
-	if len(asked) != 2 || asked[0] != "pnl:summary" || asked[1] != "range:state" {
+	// orders came from the hub; pnl, range and refused were missing, so only they fall back.
+	if len(asked) != 3 || asked[0] != "pnl:summary" || asked[1] != "range:state" || asked[2] != "refused:state" {
 		t.Fatalf("fallback should only be used for missing state, asked %v", asked)
 	}
 	if snap.Range != nil {
@@ -277,5 +277,30 @@ func TestAttachLiveStateIncludesRange(t *testing.T) {
 	}
 	if !isStickyChannel("pub:range") || !isLatestWins("pub:range") {
 		t.Fatal("pub:range must be sticky and latest-wins")
+	}
+}
+
+func TestAttachLiveStateIncludesRefused(t *testing.T) {
+	h := newTestHub()
+	snap := &SnapshotResponse{}
+	const view = `{"date":"2026-09-29","entries":[{"strategy":"NIFTY50_SR","reason":"SR strike: no greeks"}]}`
+	h.attachLiveState(snap, func(key string) ([]byte, error) {
+		if key == "refused:state" {
+			return []byte(view), nil
+		}
+		return nil, errors.New("nil")
+	})
+	if snap.Refused == nil || string(*snap.Refused) != view {
+		t.Fatalf("refused not attached: %v", snap.Refused)
+	}
+	if !isStickyChannel("pub:refused") || !isLatestWins("pub:refused") {
+		t.Fatal("pub:refused must be sticky and latest-wins")
+	}
+	found := false
+	for _, p := range dynamicPubSubPatterns {
+		found = found || p == "pub:refused"
+	}
+	if !found {
+		t.Fatal("pub:refused not forwarded to the browser")
 	}
 }
