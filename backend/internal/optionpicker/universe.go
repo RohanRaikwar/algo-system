@@ -42,11 +42,25 @@ type Universe struct {
 	pending    []ukey
 	pendingSet map[ukey]bool
 	expiries   map[string]time.Time
+	curDays    map[string]bool // expiry days in the current window (for RunSearch staleness checks)
 }
 
 func NewUniverse(res Resolver, sub Subscriber, strikes int, step int64) *Universe {
 	return &Universe{res: res, sub: sub, strikes: strikes, step: step,
-		tokens: map[ukey]uval{}, subscribed: map[string]bool{}, pendingSet: map[ukey]bool{}, expiries: map[string]time.Time{}}
+		tokens: map[ukey]uval{}, subscribed: map[string]bool{}, pendingSet: map[ukey]bool{}, expiries: map[string]time.Time{}, curDays: map[string]bool{}}
+}
+
+// NewSession forgets what was subscribed (the feed's dynamic subscriptions
+// reset each trading session) and the ladder centre, so the next Refresh
+// subscribes the ladder again. The token cache is kept.
+func (u *Universe) NewSession() {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.subscribed = map[string]bool{}
+	u.pending = nil
+	u.pendingSet = map[ukey]bool{}
+	u.atm = 0
+	u.expKey = ""
 }
 
 func dayKey(t time.Time) string { return t.In(istZone).Format("2006-01-02") }
@@ -75,6 +89,11 @@ func (u *Universe) Refresh(spot int64, expiries []time.Time) {
 		return
 	}
 	u.atm, u.expKey = atm, expKey
+	newDays := make(map[string]bool, len(expiries))
+	for _, d := range days {
+		newDays[d] = true
+	}
+	u.curDays = newDays
 	var fresh []string
 	for _, e := range expiries {
 		u.expiries[dayKey(e)] = e
@@ -139,8 +158,13 @@ func (u *Universe) RunSearch(ctx context.Context, every time.Duration) {
 		k := u.pending[0]
 		u.pending = u.pending[1:]
 		delete(u.pendingSet, k)
+		stale := abs64(k.strike-u.atm) > int64(u.strikes)*u.step || !u.curDays[k.day]
 		exp := u.expiries[k.day]
 		u.mu.Unlock()
+
+		if stale {
+			continue
+		}
 
 		tok, sym, err := u.res.Search(exp, k.strike, k.opt)
 		if err != nil {
