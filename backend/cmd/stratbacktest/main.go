@@ -65,6 +65,9 @@ func main() {
 	optModel := flag.Bool("option-model", false, "Price each trade's own option (strike, weekly expiry) with Black-Scholes; P&L in option premium")
 	optIV := flag.Float64("option-iv", 13, "Flat IV %% for -option-model when no India VIX history is loaded")
 	premSL := flag.Int64("premium-sl", 20, "Modeled premium hard SL %% (0 = off), as the live strategy")
+	minPrem := flag.Float64("min-premium", 0, "With -option-model: skip entries whose option premium at the signal strike is below this many rupees (0 = off)")
+	expMinDTE := flag.Int("expiry-min-dte", 0, "With -option-model: buy the next weekly expiry when the nearest is fewer than this many days away (live SR: 2)")
+	minDTE := flag.Int("min-dte", 0, "With -option-model: skip entries whose expiry is fewer than this many calendar days away (0 = off)")
 	cmpStrikes := flag.Bool("compare-strikes", false, "With -option-model: price the same trades at the signal strike and at the option picker's delta and expected-return picks (use -premium-sl 0 for like-for-like exits)")
 	flag.Parse()
 
@@ -84,6 +87,7 @@ func main() {
 		Option: backtest.OptionModel{
 			Enabled: *optModel, IVPct: *optIV, RatePct: 6.5, PremiumSLPct: *premSL,
 			SlippageBps: 50, SlippageMinPsa: 50, StrikeStep: 50,
+			MinEntryPremium: int64(*minPrem * 100), MinEntryDTE: *minDTE, ExpiryMinDTE: *expMinDTE,
 		},
 		CallFNOToken: *callToken,
 		PutFNOToken:  *putToken,
@@ -115,6 +119,10 @@ func main() {
 		}
 	default:
 		backtest.PrintConsole(result)
+	}
+
+	if n := engine.Skipped(); n > 0 {
+		fmt.Printf("\n  Entry gate skipped %d entries (min premium ₹%.0f, min DTE %d)\n", n, *minPrem, *minDTE)
 	}
 
 	if *cmpStrikes {
