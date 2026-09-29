@@ -16,15 +16,43 @@ func condorChain() []Contract {
 	return append(c, ctr(23050, "CE", exp1), ctr(23100, "CE", exp1), ctr(23150, "CE", exp1), ctr(22350, "PE", exp1), ctr(22300, "PE", exp1))
 }
 
-// richQuotes: every leg bid 3990 / ask 4010 (credit = −40 paise).
+// richQuotes: every leg bid 3990 / ask 4010 (credit = −40 paise, a debit).
 func richQuotes(tok string) (Quote, bool) {
 	return Quote{Bid: 3990, Ask: 4010, OI: 50000, At: now}, true
 }
 
+// distanceQuotes prices every contract in chain by distance from spot
+// (22700): closer-to-money strikes (the shorts a condor sells) quote higher
+// than farther-out strikes (the wings it buys), so a short leg's bid always
+// beats a wing's ask 100 points further out — a real short condor's credit
+// shape — with a tight 20-paise spread throughout.
+func distanceQuotes(chain []Contract) func(string) (Quote, bool) {
+	byToken := make(map[string]int64, len(chain))
+	for _, c := range chain {
+		if c.Token != "" {
+			byToken[c.Token] = c.Strike
+		}
+	}
+	spotPts := spot / 100
+	return func(tok string) (Quote, bool) {
+		strike, ok := byToken[tok]
+		if !ok {
+			return Quote{}, false
+		}
+		d := strike - spotPts
+		if d < 0 {
+			d = -d
+		}
+		price := int64(6000) - 6*d
+		return Quote{Bid: price - 10, Ask: price + 10, OI: 50000, At: now}, true
+	}
+}
+
 func TestSelectCondorAnchorsAtEdgesWithDeltaCap(t *testing.T) {
 	in := condorIn
-	in.MinCreditPct = 0 // flat test quotes give a negative credit; the credit rule has its own test
-	cp, _, err := SelectCondor(condorChain(), in, rules, env(richQuotes))
+	in.MinCreditPct = 0 // credit floor has its own test; this test only checks leg placement
+	chain := condorChain()
+	cp, _, err := SelectCondor(chain, in, rules, env(distanceQuotes(chain)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,14 +63,27 @@ func TestSelectCondorAnchorsAtEdgesWithDeltaCap(t *testing.T) {
 	if cp.ShortCE.Delta > 0.25 || cp.ShortPE.Delta < -0.25 {
 		t.Fatalf("short deltas %.3f %.3f", cp.ShortCE.Delta, cp.ShortPE.Delta)
 	}
-	if cp.Credit != (3990+3990)-(4010+4010) {
+	// ShortCE 23050 (d=350 → bid 3890), LongCE 23150 (d=450 → ask 3310),
+	// ShortPE 22450 (d=250 → bid 4490), LongPE 22350 (d=350 → ask 3910):
+	// credit = (3890+4490) − (3310+3910) = 1160 paise.
+	if cp.Credit != 1160 {
 		t.Fatalf("credit = %d", cp.Credit)
 	}
 }
 
 func TestSelectCondorRefusesThinCredit(t *testing.T) {
 	in := condorIn
-	in.MinCreditPct = 50 // needs 5000 paise; richQuotes gives negative credit
+	in.MinCreditPct = 50 // needs 5000 paise; richQuotes gives a debit
+	_, rej, err := SelectCondor(condorChain(), in, rules, env(richQuotes))
+	var r *Refusal
+	if !errors.As(err, &r) || rej["credit"] != 1 {
+		t.Fatalf("err %v rej %v", err, rej)
+	}
+}
+
+func TestSelectCondorRefusesDebitEvenWithoutFloor(t *testing.T) {
+	in := condorIn
+	in.MinCreditPct = 0 // no floor at all — a short condor must still never be a debit
 	_, rej, err := SelectCondor(condorChain(), in, rules, env(richQuotes))
 	var r *Refusal
 	if !errors.As(err, &r) || rej["credit"] != 1 {
@@ -60,7 +101,7 @@ func TestSelectCondorMovesOutWhenWingNotStreamed(t *testing.T) {
 	in := condorIn
 	in.MinCreditPct = 0
 	in.MaxShortDelta = 0.5 // default 0.25 cap already rejects the 22900/22950 CE shorts on delta at this spot/IV/DTE; relaxed to isolate the wing-not-streamed rule
-	cp, _, err := SelectCondor(chain, in, rules, env(richQuotes))
+	cp, _, err := SelectCondor(chain, in, rules, env(distanceQuotes(chain)))
 	if err != nil || cp.ShortCE.Strike != 22950 {
 		t.Fatalf("short CE %d err %v, want 22950", cp.ShortCE.Strike, err)
 	}

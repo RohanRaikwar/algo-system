@@ -216,7 +216,12 @@ func SelectCondor(chain []Contract, in CondorIntent, r Rules, env Env) (CondorPi
 		return CondorPick{}, rej, &Refusal{Reason: fmt.Sprintf("short legs IV %.1f%% < %.1f%%", (sCE.IV+sPE.IV)/2, r.MinSellIV), Rejects: rej}
 	}
 	credit := sCE.Quote.Bid + sPE.Quote.Bid - lCE.Quote.Ask - lPE.Quote.Ask
-	if need := in.WingWidth * 100 * in.MinCreditPct / 100; in.MinCreditPct > 0 && credit < need {
+	need := in.WingWidth * 100 * in.MinCreditPct / 100
+	switch {
+	case credit <= 0:
+		rej["credit"]++
+		return CondorPick{}, rej, &Refusal{Reason: fmt.Sprintf("credit %d paise is not positive", credit), Rejects: rej}
+	case in.MinCreditPct > 0 && credit < need:
 		rej["credit"]++
 		return CondorPick{}, rej, &Refusal{Reason: fmt.Sprintf("credit %d < %d paise", credit, need), Rejects: rej}
 	}
