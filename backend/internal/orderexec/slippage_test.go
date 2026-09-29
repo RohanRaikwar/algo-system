@@ -2,6 +2,7 @@ package orderexec
 
 import (
 	"testing"
+	"time"
 
 	"trading-systemv1/internal/strategy"
 )
@@ -48,5 +49,27 @@ func TestPaperSlippageAppliedToFills(t *testing.T) {
 	}
 	if got[2].Direction != "SELL" || got[2].FillPricePaise != 9900 {
 		t.Fatalf("short leg open should sell at ltp−slip: %+v", got[2])
+	}
+}
+
+type fixedQuotes struct {
+	bid, ask int64
+	ok       bool
+}
+
+func (f fixedQuotes) BidAsk(string, time.Time) (int64, int64, bool) { return f.bid, f.ask, f.ok }
+
+func TestPaperFillUsesQuotedAskBid(t *testing.T) {
+	oe := NewOrderExecutor(Config{Qty: 1, FNOExchange: "NFO", LogPrefix: "[test]", PaperSlippageBps: 50, PaperSlippageMinPaise: 5})
+	oe.SetQuoteSource(fixedQuotes{bid: 20280, ask: 20320, ok: true})
+	if got := oe.paperFill("BUY", "40712", 20300); got != 20320 {
+		t.Fatalf("buy fill %d, want ask 20320", got)
+	}
+	if got := oe.paperFill("SELL", "40712", 20300); got != 20280 {
+		t.Fatalf("sell fill %d, want bid 20280", got)
+	}
+	oe.SetQuoteSource(fixedQuotes{ok: false}) // stale/no quote → LTP ± slippage
+	if got := oe.paperFill("BUY", "40712", 10000); got != 10050 {
+		t.Fatalf("fallback buy fill %d, want 10050", got)
 	}
 }

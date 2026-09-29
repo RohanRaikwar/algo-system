@@ -44,7 +44,7 @@ func (oe *OrderExecutor) executeLegPaper(sig strategy.Signal) {
 			return
 		}
 		closeDir := legDirection(rec.Short, true)
-		ltp := oe.paperFillPrice(closeDir, oe.GetLTP(rec.Token))
+		ltp := oe.paperFill(closeDir, rec.Token, oe.GetLTP(rec.Token))
 		oe.mu.Lock()
 		delete(oe.entryOrders, posKey)
 		delete(oe.positionInst, posKey)
@@ -69,7 +69,10 @@ func (oe *OrderExecutor) executeLegPaper(sig strategy.Signal) {
 		log.Printf("%s 🚫 BLOCKED: leg %s already open", prefix, posKey)
 		return
 	}
-	ltp := oe.paperFillPrice(openDir, oe.ltp[sig.FNOToken])
+	// oe.mu is already held (write lock) here for the open-check/reserve
+	// below; paperFill's own RLock would deadlock against it (RWMutex is
+	// not reentrant), so call the lock-free variant instead.
+	ltp := oe.paperFillLocked(openDir, sig.FNOToken, oe.ltp[sig.FNOToken])
 	orderID := fmt.Sprintf("PAPER_%s_%s_%s_%d", sig.StrategyName, sig.Leg, openDir, time.Now().UnixMilli())
 	oe.positionInst[posKey] = fnoInstrument{Token: sig.FNOToken, Symbol: sig.FNOSymbol}
 	oe.entryOrders[posKey] = OrderRecord{

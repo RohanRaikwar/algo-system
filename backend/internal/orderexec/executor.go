@@ -115,6 +115,9 @@ type OrderExecutor struct {
 	// Optional fill listener; set via SetFillListener.
 	onFill func(FillReport)
 
+	// Optional quote source for paper fills; set via SetQuoteSource.
+	quotes QuoteSource
+
 	mu           sync.RWMutex
 	ltp          map[string]int64 // token → latest price (paise)
 	positionInst map[string]fnoInstrument
@@ -643,7 +646,7 @@ func (oe *OrderExecutor) executePaper(sig strategy.Signal, posKey, direction, fn
 	if !isRealOrderStrategy {
 		paperReason = "PAPER (strategy not enabled for real orders)"
 	}
-	fill := oe.paperFillPrice(direction, ltp)
+	fill := oe.paperFill(direction, fnoToken, ltp)
 	log.Printf("%s 📋 %s: would %s %d lots of %s (%s) at LTP=%d (paper fill %d)",
 		prefix, paperReason, direction, oe.cfg.Qty, fnoSymbol, fnoToken, ltp, fill)
 	ltp = fill
@@ -708,6 +711,42 @@ func (oe *OrderExecutor) paperFillPrice(direction string, ltp int64) int64 {
 		return p
 	}
 	return 5
+}
+
+// QuoteSource gives a fresh two-sided quote for paper fills.
+type QuoteSource interface {
+	BidAsk(token string, now time.Time) (bid, ask int64, ok bool)
+}
+
+// SetQuoteSource makes paper fills cross the real spread when a fresh quote
+// exists (buy at ask, sell at bid). Real orders are unaffected.
+func (oe *OrderExecutor) SetQuoteSource(q QuoteSource) {
+	oe.mu.Lock()
+	oe.quotes = q
+	oe.mu.Unlock()
+}
+
+// paperFill is the paper fill price: quoted ask/bid when fresh, else
+// paperFillPrice (LTP ± slippage), so an exit always fills.
+func (oe *OrderExecutor) paperFill(direction, token string, ltp int64) int64 {
+	oe.mu.RLock()
+	defer oe.mu.RUnlock()
+	return oe.paperFillLocked(direction, token, ltp)
+}
+
+// paperFillLocked is paperFill's logic for a caller that already holds
+// oe.mu (read or write). It must not itself take oe.mu — RWMutex is not
+// reentrant, so a second Lock/RLock from inside a held Lock deadlocks.
+func (oe *OrderExecutor) paperFillLocked(direction, token string, ltp int64) int64 {
+	if oe.quotes != nil {
+		if bid, ask, ok := oe.quotes.BidAsk(token, time.Now()); ok {
+			if direction == "BUY" {
+				return ask
+			}
+			return bid
+		}
+	}
+	return oe.paperFillPrice(direction, ltp)
 }
 
 // executeReal sends an order to the broker and settles it. The position
