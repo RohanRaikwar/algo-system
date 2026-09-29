@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -90,5 +91,25 @@ func TestPlaceOrder_JSON5xxIsOutcomeUnknown(t *testing.T) {
 	_, err := testClient(srv.URL, time.Second).PlaceOrder(map[string]any{})
 	if !errors.Is(err, ErrOutcomeUnknown) {
 		t.Fatalf("JSON 5xx must be ErrOutcomeUnknown, got %v", err)
+	}
+}
+
+// buildURL concatenates rootURL and the route, so every route needs a leading
+// slash: "rest/..." produced https://apiconnect.angelone.inrest/... (no such
+// host), which broke OptionGreek in production.
+func TestRoutes_BuildValidURLs(t *testing.T) {
+	sc := testClient("https://apiconnect.angelone.in", time.Second)
+	for route, uri := range routes {
+		if !strings.HasPrefix(uri, "/") {
+			t.Errorf("route %s = %q: missing leading slash", route, uri)
+			continue
+		}
+		u, err := sc.buildURL(route)
+		if err != nil {
+			t.Fatalf("buildURL(%s): %v", route, err)
+		}
+		if !strings.HasPrefix(u, "https://apiconnect.angelone.in/") {
+			t.Errorf("buildURL(%s) = %q", route, u)
+		}
 	}
 }
