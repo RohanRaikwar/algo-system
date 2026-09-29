@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useStrikeSelStore } from '../../store/useStrikeSelStore';
 import { fetchStrikeSel } from '../../services/api';
-import type { SRContract, SRRejects, SRSide, StrikeSelView } from '../../types/strikesel';
+import type { SRContract, SRRejects, SRSide, StrikeSelView, PickerDecision, PickerView } from '../../types/strikesel';
 import { Target, TrendingUp, TrendingDown, Clock, SlidersHorizontal, History } from 'lucide-react';
 
 /** Rupees (the chain's unit) to a display string. */
@@ -73,6 +73,44 @@ function ContractRows({ c }: { c: SRContract }) {
     );
 }
 
+const paise = (v?: number) => (v && v > 0 ? `₹${(v / 100).toFixed(2)}` : '—');
+
+export function decisionLine(d: PickerDecision): string {
+    if (d.result !== 'picked') return `refused: ${d.reason ?? ''}`;
+    return `picked ${d.symbol ?? d.strike} · Δ ${num(d.delta ?? NaN, 2)} · ${paise(d.bid)} / ${paise(d.ask)}`;
+}
+
+function PickerCard({ p }: { p: PickerView }) {
+    return (
+        <div className="fno-atm-card">
+            <div className="fno-atm-header">
+                <Target size={16} />
+                <span>Global option picker · {p.mode}</span>
+                <span className="fno-badge resolved">{p.streamed} streamed</span>
+            </div>
+            <div className="fno-atm-body">
+                <div className="fno-atm-stat"><span className="fno-atm-label">Greeks (chain)</span>
+                    <span className="fno-atm-value fno-param">{p.chain_error ? `error: ${p.chain_error}` : fmtTime(p.chain_at ?? '')}</span></div>
+                <div className="fno-atm-stat"><span className="fno-atm-label">Max spread</span>
+                    <span className="fno-atm-value fno-param">{num(p.rules.max_spread_pct, 1)}% of mid</span></div>
+                <div className="fno-atm-stat"><span className="fno-atm-label">Max quote age</span>
+                    <span className="fno-atm-value fno-param">{p.rules.max_quote_age_s}s</span></div>
+                <div className="fno-atm-stat"><span className="fno-atm-label">Max greeks age</span>
+                    <span className="fno-atm-value fno-param">{p.rules.max_chain_age_s}s</span></div>
+            </div>
+            <div className="fno-inst-body">
+                {(p.decisions ?? []).length === 0 && <div className="fno-inst-row"><span className="fno-na">No entry signal yet</span></div>}
+                {(p.decisions ?? []).map(d => (
+                    <div key={d.strategy} className="fno-inst-row">
+                        <span className="fno-inst-label">{d.strategy} · {fmtTime(d.ts)}</span>
+                        <span className="fno-inst-value">{decisionLine(d)}</span>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 function SideCard({ title, kind, side, chainError }: { title: string; kind: 'call' | 'put'; side?: SRSide; chainError?: string }) {
     const Icon = kind === 'call' ? TrendingUp : TrendingDown;
     return (
@@ -129,6 +167,7 @@ export function FnoInstrumentsTab() {
 
     return (
         <div className="fno-instruments-wrap">
+            {view.picker && <PickerCard p={view.picker} />}
             <div className="fno-atm-card">
                 <div className="fno-atm-header">
                     <SlidersHorizontal size={16} />

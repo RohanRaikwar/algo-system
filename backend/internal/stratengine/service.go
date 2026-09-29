@@ -389,7 +389,7 @@ func (svc *Service) Run(ctx context.Context) error {
 	}
 
 	// ── NIFTY50_SR strike selection view (pub:strikesel) ──
-	if svc.cfg.SREnabled {
+	if svc.cfg.SREnabled || svc.picker != nil {
 		go svc.strikeSelLoop(ctx)
 	}
 

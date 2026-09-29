@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"sort"
 	"sync"
 	"time"
 
@@ -75,6 +76,27 @@ type strikeSelView struct {
 	Call      *srSideView     `json:"call,omitempty"`
 	Put       *srSideView     `json:"put,omitempty"`
 	Last      *srLastPickView `json:"last,omitempty"`
+	Picker    *pickerView     `json:"picker,omitempty"`
+}
+
+// pickerRulesView mirrors the picker's Rules that gate a contract, in units
+// the dashboard can show directly (seconds, not time.Duration).
+type pickerRulesView struct {
+	MaxSpreadPct float64 `json:"max_spread_pct"`
+	MaxQuoteAgeS float64 `json:"max_quote_age_s"`
+	MaxChainAgeS float64 `json:"max_chain_age_s"`
+}
+
+// pickerView is the global option picker's status and last decision per
+// strategy, from optionpicker.Picker.Status and svc.pickerDec.
+type pickerView struct {
+	Mode       string           `json:"mode"`
+	ChainAt    string           `json:"chain_at,omitempty"`
+	ChainError string           `json:"chain_error,omitempty"`
+	Streamed   int              `json:"streamed"`
+	Spot       int64            `json:"spot"`
+	Rules      pickerRulesView  `json:"rules"`
+	Decisions  []pickerDecision `json:"decisions"`
 }
 
 type strikeSelState struct {
@@ -243,6 +265,22 @@ func (svc *Service) stampStrikeSel(now time.Time) []byte {
 	}
 	v.Params = svc.srParamsView()
 	v.UpdatedAt = now.UTC().Format(time.RFC3339)
+	v.Picker = nil
+	if svc.picker != nil {
+		st := svc.picker.Status(now)
+		pv := &pickerView{Mode: svc.cfg.PickerMode, Streamed: st.Streamed, Spot: st.Spot, ChainError: st.ChainErr,
+			Rules: pickerRulesView{MaxSpreadPct: svc.cfg.PickMaxSpreadPct, MaxQuoteAgeS: svc.cfg.PickMaxQuoteAge.Seconds(), MaxChainAgeS: svc.cfg.PickMaxChainAge.Seconds()}}
+		if !st.ChainAt.IsZero() {
+			pv.ChainAt = st.ChainAt.UTC().Format(time.RFC3339)
+		}
+		svc.pickerDec.mu.Lock()
+		for _, d := range svc.pickerDec.last {
+			pv.Decisions = append(pv.Decisions, d)
+		}
+		svc.pickerDec.mu.Unlock()
+		sort.Slice(pv.Decisions, func(i, j int) bool { return pv.Decisions[i].Strategy < pv.Decisions[j].Strategy })
+		v.Picker = pv
+	}
 	b, err := json.Marshal(v)
 	if err != nil {
 		log.Printf("[stratengine] strike selection marshal error: %v", err)

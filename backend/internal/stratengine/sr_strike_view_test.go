@@ -116,6 +116,20 @@ func TestSREntryOnMondayBuysNextWeekContract(t *testing.T) {
 	}
 }
 
+func TestStrikeSelIncludesPickerStatusAndDecisions(t *testing.T) {
+	var sent []string
+	svc := strikeSelSvc(&fakeGreeks{chain: []orderexec.OptionContract{contract(22700, "CE", 0.52)}}, &sent)
+	svc.cfg.PickerMode, svc.cfg.PickMaxSpreadPct, svc.cfg.PickMaxQuoteAge, svc.cfg.PickMaxChainAge = "shadow", 2, 3*time.Second, 2*time.Minute
+	svc.picker = testPicker(t, svc)
+	svc.recordPickerDecision(pickerDecision{Strategy: "NIFTY50_SR", Mode: "shadow", Result: "picked", Symbol: "NIFTY06OCT2622700CE", TS: "x"})
+	svc.refreshStrikeSel(context.Background(), pickerNow)
+	v := lastStrikeSel(t, sent)
+	if v.Picker == nil || v.Picker.Mode != "shadow" || v.Picker.Streamed == 0 || v.Picker.Rules.MaxSpreadPct != 2 ||
+		len(v.Picker.Decisions) != 1 || v.Picker.Decisions[0].Symbol != "NIFTY06OCT2622700CE" {
+		t.Fatalf("picker view = %+v", v.Picker)
+	}
+}
+
 func TestSRExpiryLadderSubscribesNextWeekOnMonday(t *testing.T) {
 	monday := time.Date(2026, 10, 5, 5, 0, 0, 0, time.UTC)
 	far := contract(22700, "CE", 0.52)

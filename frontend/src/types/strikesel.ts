@@ -37,6 +37,31 @@ export interface SRLastPick extends SRContract {
     ts: string;
 }
 
+export interface PickerDecision {
+    strategy: string;
+    mode: string;
+    result: 'picked' | 'refused' | string;
+    reason?: string;
+    strike?: number;
+    symbol?: string;
+    token?: string;
+    delta?: number;
+    iv?: number;
+    bid?: number; // paise
+    ask?: number; // paise
+    ts: string;
+}
+
+export interface PickerView {
+    mode: string;
+    chain_at?: string;
+    chain_error?: string;
+    streamed: number;
+    spot: number;
+    rules: { max_spread_pct: number; max_quote_age_s: number; max_chain_age_s: number };
+    decisions?: PickerDecision[];
+}
+
 export interface StrikeSelView {
     strategy: string;
     updated_at: string;
@@ -55,4 +80,5 @@ export interface StrikeSelView {
     call?: SRSide;
     put?: SRSide;
     last?: SRLastPick;
+    picker?: PickerView;
 }

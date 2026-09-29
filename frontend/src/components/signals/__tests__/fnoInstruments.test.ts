@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { paramRows, rejectSummary } from '../FnoInstrumentsTab';
+import { paramRows, rejectSummary, decisionLine } from '../FnoInstrumentsTab';
 import { parseStrikeSelView } from '../../../store/useStrikeSelStore';
 import { channelKind } from '../../../utils/seqTracker';
 
@@ -25,5 +25,14 @@ describe('FNO strike selection', () => {
         expect(channelKind('pub:strikesel')).toBe('full_state');
         expect(parseStrikeSelView('{"strategy":"NIFTY50_SR","params":{}}')?.strategy).toBe('NIFTY50_SR');
         expect(parseStrikeSelView('null')).toBeNull();
+    });
+});
+
+describe('picker decisions', () => {
+    it('formats picked and refused decisions', () => {
+        expect(decisionLine({ strategy: 'NIFTY50_SR', mode: 'shadow', result: 'picked', symbol: 'NIFTY06OCT2622700CE', delta: 0.52, bid: 20280, ask: 20320, ts: '' }))
+            .toBe('picked NIFTY06OCT2622700CE · Δ 0.52 · ₹202.80 / ₹203.20');
+        expect(decisionLine({ strategy: 'NIFTY50_RANGE', mode: 'on', result: 'refused', reason: 'no CE passes (dte 6; rejected spread 3)', ts: '' }))
+            .toBe('refused: no CE passes (dte 6; rejected spread 3)');
     });
 });
