@@ -91,7 +91,8 @@ export function decisionLine(d: PickerDecision): string {
         return `picked ${legs} · credit ${paise(d.credit)}${oldChoiceSuffix(d)}`;
     }
     if (d.result !== 'picked') return `refused: ${d.reason ?? ''}${oldChoiceSuffix(d)}`;
-    return `picked ${d.symbol ?? d.strike} · Δ ${num(d.delta ?? NaN, 2)} · ${paise(d.bid)} / ${paise(d.ask)}${oldChoiceSuffix(d)}`;
+    const score = d.score ? ` · exp ${d.score > 0 ? '+' : ''}${(d.score * 100).toFixed(1)}%` : '';
+    return `picked ${d.symbol ?? d.strike} · Δ ${num(d.delta ?? NaN, 2)} · ${paise(d.bid)} / ${paise(d.ask)}${score}${oldChoiceSuffix(d)}`;
 }
 
 function PickerCard({ p }: { p: PickerView }) {
@@ -111,6 +112,8 @@ function PickerCard({ p }: { p: PickerView }) {
                     <span className="fno-atm-value fno-param">{p.rules.max_quote_age_s}s</span></div>
                 <div className="fno-atm-stat"><span className="fno-atm-label">Max greeks age</span>
                     <span className="fno-atm-value fno-param">{p.rules.max_chain_age_s}s</span></div>
+                <div className="fno-atm-stat"><span className="fno-atm-label">Pick by</span>
+                    <span className="fno-atm-value fno-param">{p.rules.rank === 'return' ? 'expected return on premium' : 'delta closest to band middle'}</span></div>
             </div>
             <div className="fno-inst-body">
                 {(p.decisions ?? []).length === 0 && <div className="fno-inst-row"><span className="fno-na">No entry signal yet</span></div>}

@@ -62,3 +62,10 @@ describe('picker decisions', () => {
             .toBe('refused: no condor legs pass');
     });
 });
+
+describe('expected return score', () => {
+    it('shows the expected return on premium when the picker scored the contract', () => {
+        expect(decisionLine({ strategy: 'NIFTY50_SR', mode: 'shadow', result: 'picked', symbol: 'NIFTY06OCT2622800CE', delta: 0.38, bid: 12990, ask: 13010, score: 0.254, ts: '' }))
+            .toBe('picked NIFTY06OCT2622800CE · Δ 0.38 · ₹129.90 / ₹130.10 · exp +25.4%');
+    });
+});

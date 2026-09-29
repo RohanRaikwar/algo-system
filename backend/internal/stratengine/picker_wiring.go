@@ -38,6 +38,7 @@ func (svc *Service) pickerConfig() optionpicker.Config {
 			GammaDTE: svc.cfg.SRGammaDTE,
 			MaxBuyIV: svc.cfg.RangeMaxBuyIV, MinSellIV: svc.cfg.RangeMinSellIV,
 			MinLiquidity: float64(svc.cfg.RangeMinLiquidity), CostMultiple: svc.cfg.RangeCostMultiple, RatePct: 6.5,
+			Rank: svc.cfg.PickRank, HoldMinutes: svc.cfg.PickHoldMinutes,
 		},
 		LadderStrikes: strikes, StrikeStep: ladderStrikeStep,
 		ChainEvery: 15 * time.Second, ChainBackoff: 60 * time.Second, SearchEvery: time.Second,
@@ -194,6 +195,7 @@ type pickerDecision struct {
 	Token    string  `json:"token,omitempty"`
 	Delta    float64 `json:"delta,omitempty"`
 	IV       float64 `json:"iv,omitempty"`
+	Score    float64 `json:"score,omitempty"` // expected return on premium for the target move (0.25 = 25 %)
 	Bid      int64   `json:"bid,omitempty"`
 	Ask      int64   `json:"ask,omitempty"`
 
@@ -245,6 +247,7 @@ func decisionFor(name, mode string, p optionpicker.Pick, err error, now time.Tim
 	d.Result = "picked"
 	d.Strike, d.Symbol, d.Token = p.Strike, p.Symbol, p.Token
 	d.Delta, d.IV, d.Bid, d.Ask = math.Round(p.Delta*1000)/1000, p.IV, p.Quote.Bid, p.Quote.Ask
+	d.Score = math.Round(p.Score*1000) / 1000
 	return d
 }
 
@@ -386,4 +389,12 @@ func (svc *Service) runPicker(ctx context.Context) {
 	}
 	svc.orderExecutor.SetQuoteSource(svc.picker.Quotes())
 	svc.picker.Run(ctx, markethours.IsMarketOpen)
+}
+
+// pickRank is the effective rank name ("" means delta).
+func pickRank(r string) string {
+	if r == "" {
+		return optionpicker.RankDelta
+	}
+	return r
 }

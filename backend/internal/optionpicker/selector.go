@@ -123,6 +123,7 @@ func SelectSingle(chain []Contract, in SingleIntent, r Rules, env Env) (Pick, Re
 		return Pick{}, rej, &Refusal{Reason: fmt.Sprintf("no %s expiry %d+ days out", in.Option, minDTE)}
 	}
 	mid := (in.DeltaMin + in.DeltaMax) / 2
+	byReturn := r.Rank == RankReturn && in.TargetMove > 0
 	var best Pick
 	found := false
 	for _, c := range chain {
@@ -138,8 +139,15 @@ func SelectSingle(chain []Contract, in SingleIntent, r Rules, env Env) (Pick, Re
 			continue
 		}
 		p := ev.pick
+		p.Score = expectedReturn(p, in.TargetMove, r.HoldMinutes)
 		if !found {
 			best, found = p, true
+			continue
+		}
+		if byReturn && p.Score != best.Score {
+			if p.Score > best.Score {
+				best = p
+			}
 			continue
 		}
 		db, dp := math.Abs(math.Abs(best.Delta)-mid), math.Abs(math.Abs(p.Delta)-mid)
@@ -151,6 +159,25 @@ func SelectSingle(chain []Contract, in SingleIntent, r Rules, env Env) (Pick, Re
 		return Pick{}, rej, &Refusal{Reason: fmt.Sprintf("no %s passes (dte %d; rejected %s)", in.Option, dte, rej), Rejects: rej}
 	}
 	return best, rej, nil
+}
+
+// tradingMinutesPerDay spreads a calendar day's theta over the session
+// (09:15–15:30), where intraday decay is realised.
+const tradingMinutesPerDay = 375
+
+// expectedReturn is the option's expected gain for an index move of move
+// paise — delta and gamma, less theta over holdMin minutes and the spread
+// paid to get in and out — as a fraction of the ask. 0 without a target.
+func expectedReturn(p Pick, move int64, holdMin float64) float64 {
+	ask := float64(p.Quote.Ask) / 100
+	if move <= 0 || ask <= 0 {
+		return 0
+	}
+	m := float64(move) / 100 // index points
+	gain := math.Abs(p.Delta)*m + 0.5*p.Gamma*m*m -
+		math.Abs(p.Theta)*holdMin/tradingMinutesPerDay -
+		float64(p.Quote.Ask-p.Quote.Bid)/100
+	return gain / ask
 }
 
 // SelectCondor builds a short iron condor past the range edges. All legs

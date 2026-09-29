@@ -43,7 +43,18 @@ type Rules struct {
 	MinLiquidity float64       // max(live OI, chain liquidity)
 	CostMultiple int64         // bought: |delta| × TargetMove ≥ k × (ask − bid)
 	RatePct      float64       // risk-free rate for greeks, e.g. 6.5
+	// Rank chooses the winner among contracts that pass every rule:
+	// RankDelta (default, "") = |delta| closest to the band middle;
+	// RankReturn = highest expected return on premium for the intent's
+	// TargetMove (falls back to RankDelta when TargetMove is 0).
+	Rank        string
+	HoldMinutes float64 // expected holding time for RankReturn's decay term
 }
+
+const (
+	RankDelta  = "delta"
+	RankReturn = "return"
+)
 
 // SingleIntent asks for one bought option.
 type SingleIntent struct {
@@ -73,6 +84,9 @@ type Pick struct {
 	Delta, Gamma, Theta, Vega float64
 	Quote                     Quote
 	DTE                       int
+	// Score is the expected return on premium (0.25 = 25 %) for the
+	// intent's TargetMove; 0 when there is no target.
+	Score float64
 }
 
 // CondorPick is the four legs of a condor and its net credit (paise).

@@ -85,6 +85,7 @@ type pickerRulesView struct {
 	MaxSpreadPct float64 `json:"max_spread_pct"`
 	MaxQuoteAgeS float64 `json:"max_quote_age_s"`
 	MaxChainAgeS float64 `json:"max_chain_age_s"`
+	Rank         string  `json:"rank"`
 }
 
 // pickerView is the global option picker's status and last decision per
@@ -274,7 +275,7 @@ func (svc *Service) stampStrikeSel(now time.Time) []byte {
 	if svc.picker != nil {
 		st := svc.picker.Status(now)
 		pv := &pickerView{Mode: svc.cfg.PickerMode, Streamed: st.Streamed, Spot: st.Spot, ChainError: st.ChainErr,
-			Rules: pickerRulesView{MaxSpreadPct: svc.cfg.PickMaxSpreadPct, MaxQuoteAgeS: svc.cfg.PickMaxQuoteAge.Seconds(), MaxChainAgeS: svc.cfg.PickMaxChainAge.Seconds()}}
+			Rules: pickerRulesView{MaxSpreadPct: svc.cfg.PickMaxSpreadPct, MaxQuoteAgeS: svc.cfg.PickMaxQuoteAge.Seconds(), MaxChainAgeS: svc.cfg.PickMaxChainAge.Seconds(), Rank: pickRank(svc.cfg.PickRank)}}
 		if !st.ChainAt.IsZero() {
 			pv.ChainAt = st.ChainAt.UTC().Format(time.RFC3339)
 		}

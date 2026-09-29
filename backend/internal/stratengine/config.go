@@ -90,6 +90,8 @@ type Config struct {
 	PickMaxSpreadPct float64       // (ask−bid)/mid × 100 ceiling
 	PickMaxQuoteAge  time.Duration // bid/ask older than this is not tradable
 	PickMaxChainAge  time.Duration // greeks snapshot older than this refuses selection
+	PickRank         string        // delta (closest to band middle) | return (highest expected return on premium)
+	PickHoldMinutes  float64       // expected holding time for the return rank's decay term
 	// RANGE's picker intent has no theta/gamma cap by default (0 = off);
 	// unlike SR, RANGE's strike rule already targets a delta band, so a
 	// cap is opt-in via these envs.
@@ -162,6 +164,8 @@ func LoadConfig() Config {
 		PickMaxSpreadPct:      getEnvFloat("STRAT_PICK_MAX_SPREAD_PCT", 2),
 		PickMaxQuoteAge:       getEnvDuration("STRAT_PICK_MAX_QUOTE_AGE", 3*time.Second),
 		PickMaxChainAge:       getEnvDuration("STRAT_PICK_MAX_CHAIN_AGE", 2*time.Minute),
+		PickRank:              config.GetEnv("STRAT_PICK_RANK", "delta"),
+		PickHoldMinutes:       getEnvFloat("STRAT_PICK_HOLD_MIN", 60),
 		RangePickMaxThetaPct:  getEnvFloat("STRAT_RANGE_PICK_MAX_THETA_PCT", 0),
 		RangePickMaxGamma:     getEnvFloat("STRAT_RANGE_PICK_MAX_GAMMA", 0),
 		PaperSlippageBps:      config.GetEnvInt64("STRAT_PAPER_SLIPPAGE_BPS", 50),
@@ -221,6 +225,11 @@ func (c *Config) Validate() error {
 	case "", "off", "shadow", "on":
 	default:
 		return fmt.Errorf("STRAT_PICKER_MODE=%q: want off, shadow or on", c.PickerMode)
+	}
+	switch c.PickRank {
+	case "", "delta", "return":
+	default:
+		return fmt.Errorf("STRAT_PICK_RANK=%q: want delta or return", c.PickRank)
 	}
 	if len(c.SubscribeTokenKeys) == 0 {
 		return fmt.Errorf("STRAT_SUBSCRIBE_TOKENS is required")

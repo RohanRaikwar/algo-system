@@ -290,3 +290,15 @@ func testPicker(t *testing.T, svc *Service) *optionpicker.Picker {
 	}
 	return p
 }
+
+func TestPickerConfigCarriesRankAndDecisionCarriesScore(t *testing.T) {
+	svc := deltaSvc(&fakeGreeks{}, 2270000)
+	svc.cfg.PickRank, svc.cfg.PickHoldMinutes = "return", 45
+	if r := svc.pickerConfig().Rules; r.Rank != "return" || r.HoldMinutes != 45 {
+		t.Fatalf("rules = %+v", r)
+	}
+	d := decisionFor("NIFTY50_SR", "shadow", optionpicker.Pick{Score: 0.2543}, nil, pickerNow)
+	if d.Score != 0.254 {
+		t.Fatalf("decision score = %v, want 0.254", d.Score)
+	}
+}

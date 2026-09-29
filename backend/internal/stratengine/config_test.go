@@ -136,3 +136,18 @@ func TestConfigValidate_PickerMode(t *testing.T) {
 		t.Fatal("unknown picker mode accepted")
 	}
 }
+
+func TestConfigValidate_PickRank(t *testing.T) {
+	for _, rank := range []string{"", "delta", "return"} {
+		cfg := validBaseConfig()
+		cfg.PickRank = rank
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("rank %q rejected: %v", rank, err)
+		}
+	}
+	cfg := validBaseConfig()
+	cfg.PickRank = "momentum"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("unknown rank accepted")
+	}
+}

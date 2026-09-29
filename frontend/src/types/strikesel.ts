@@ -59,6 +59,8 @@ export interface PickerDecision {
     iv?: number;
     bid?: number; // paise
     ask?: number; // paise
+    /** Expected return on premium for the target move (0.25 = 25 %). */
+    score?: number;
     /** Condor decisions: all four legs and the net credit (paise). */
     legs?: PickerLeg[];
     credit?: number; // paise
@@ -76,7 +78,7 @@ export interface PickerView {
     chain_error?: string;
     streamed: number;
     spot: number;
-    rules: { max_spread_pct: number; max_quote_age_s: number; max_chain_age_s: number };
+    rules: { max_spread_pct: number; max_quote_age_s: number; max_chain_age_s: number; rank?: string };
     decisions?: PickerDecision[];
 }
 

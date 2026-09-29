@@ -2,10 +2,13 @@ package optionpicker
 
 import (
 	"errors"
+	"math"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"trading-systemv1/internal/optionmath"
 )
 
 var ist = time.FixedZone("IST", 5*3600+30*60)
@@ -185,4 +188,61 @@ func TestSelectSingleRejectsTheta(t *testing.T) {
 func sameDate(a, b time.Time) bool {
 	a, b = a.In(ist), b.In(ist)
 	return a.Year() == b.Year() && a.YearDay() == b.YearDay()
+}
+
+// bsQuotes prices every contract at its Black-Scholes value (IV 14 %) with a
+// 20-paise spread, so premiums differ by strike like a real chain.
+func bsQuotes(chain []Contract, at time.Time) func(string) (Quote, bool) {
+	byTok := map[string]Contract{}
+	for _, c := range chain {
+		byTok[c.Token] = c
+	}
+	return func(tok string) (Quote, bool) {
+		c, ok := byTok[tok]
+		if !ok {
+			return Quote{}, false
+		}
+		mid := int64(optionmath.Price(float64(spot)/100, float64(c.Strike), optionmath.YearsTo(c.Expiry, at), 0.14, 0.065, c.Option == "CE") * 100)
+		return Quote{LTP: mid, Bid: mid - 10, Ask: mid + 10, OI: 50000, At: at}, true
+	}
+}
+
+func TestSelectSingleRankByExpectedReturn(t *testing.T) {
+	chain := ladder("CE", exp1)
+	in := callIn
+	in.DeltaMin, in.DeltaMax = 0.30, 0.60
+	in.TargetMove = 8000 // 80 index points
+	e := env(bsQuotes(chain, now))
+
+	byDelta, _, err := SelectSingle(chain, in, rules, e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := rules
+	r.Rank, r.HoldMinutes = RankReturn, 60
+	byReturn, _, err := SelectSingle(chain, in, r, e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if byReturn.Score <= 0 || byDelta.Score <= 0 {
+		t.Fatalf("scores not computed: delta pick %.4f, return pick %.4f", byDelta.Score, byReturn.Score)
+	}
+	if byReturn.Strike <= byDelta.Strike || byReturn.Score < byDelta.Score {
+		t.Fatalf("return rank picked %d (score %.4f), delta rank %d (score %.4f): want a further-OTM strike with a higher expected return",
+			byReturn.Strike, byReturn.Score, byDelta.Strike, byDelta.Score)
+	}
+	if d := byReturn.Delta; d < in.DeltaMin || d > in.DeltaMax {
+		t.Fatalf("return rank left the delta band: %.3f", d)
+	}
+}
+
+func TestExpectedReturnNetsDecayAndSpread(t *testing.T) {
+	p := Pick{Delta: 0.5, Gamma: 0.001, Theta: -15, Quote: Quote{Bid: 19990, Ask: 20010}}
+	// gain = 0.5×80 + ½×0.001×6400 − 15×60/375 − 0.20 = 40 + 3.2 − 2.4 − 0.2 = 40.6 ; ask ₹200.10
+	if got, want := expectedReturn(p, 8000, 60), 40.6/200.10; math.Abs(got-want) > 1e-9 {
+		t.Fatalf("expectedReturn = %.6f, want %.6f", got, want)
+	}
+	if expectedReturn(p, 0, 60) != 0 {
+		t.Fatal("no target must give no score")
+	}
 }
