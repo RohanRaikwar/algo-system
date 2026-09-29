@@ -21,8 +21,8 @@ type candleState struct {
 // tokenClock is one token's event-time clock. Watermarks are per token so a
 // token whose exchange time runs ahead cannot make another token's ticks late.
 type tokenClock struct {
-	maxEventTS  int64     // newest bucket seen for the token (Unix seconds)
-	wall        time.Time // wall time when maxEventTS last advanced
+	maxEventMs  int64     // newest event time seen for the token (Unix ms)
+	wall        time.Time // wall time when maxEventMs last advanced
 	finalBefore int64     // buckets < finalBefore were finalized by flushOld
 	lastEmitted int64     // newest bucket emitted for the token; buckets <= it are final
 	lastDayVol  int64     // newest cumulative day volume seen (volume baseline)
@@ -56,7 +56,10 @@ func (tc *tokenClock) tickVolume(t model.Tick) int64 {
 //
 // Event-time watermark: candles are finalized based on each token's event-time
 // watermark (max event-time seen for that token minus ReorderBuffer, advancing
-// with wall time while the token is idle), not a shared wall clock. This
+// with wall time while the token is idle), not a shared wall clock. The
+// watermark is kept in milliseconds: a bucket is final once the watermark
+// reaches its end, so an idle token's candle closes ReorderBuffer after the
+// second ends rather than whole seconds later. This
 // handles out-of-order ticks within the reorder window, and one token's clock
 // cannot make another token's ticks late.
 type Aggregator struct {
@@ -76,7 +79,7 @@ type Aggregator struct {
 
 	// Event-time watermark tracking, per token (key = "exchange:token").
 	clocks    map[string]*tokenClock
-	watermark int64 // newest per-token event watermark (observability only)
+	watermark int64 // newest per-token event watermark, Unix ms (observability only)
 
 	// Metrics hooks (optional, set externally)
 	OnDroppedTick func()               // called when candleCh is full
@@ -106,7 +109,7 @@ func (a *Aggregator) WatermarkDelay() time.Duration {
 	if wm == 0 {
 		return 0
 	}
-	return time.Since(time.Unix(wm, 0))
+	return time.Since(time.UnixMilli(wm))
 }
 
 // Run consumes ticks from tickCh in a single goroutine, aggregates into 1s candles,
@@ -178,14 +181,14 @@ func (a *Aggregator) processTick(tick model.Tick, candleCh chan<- model.Candle) 
 		tc = &tokenClock{}
 		a.clocks[key] = tc
 	}
-	if bucket > tc.maxEventTS {
-		tc.maxEventTS = bucket
+	if eventMs := canonicalTS.UnixMilli(); eventMs > tc.maxEventMs {
+		tc.maxEventMs = eventMs
 		tc.wall = a.now()
-		if wm := tc.maxEventTS - a.bufSec(); wm > a.watermark {
+		if wm := eventMs - a.ReorderBuffer.Milliseconds(); wm > a.watermark {
 			a.watermark = wm
 		}
 	}
-	watermark := tc.maxEventTS - a.bufSec()
+	watermark := a.finalBucket(tc.maxEventMs)
 	if tc.finalBefore > watermark {
 		watermark = tc.finalBefore
 	}
@@ -281,13 +284,11 @@ func (a *Aggregator) processTick(tick model.Tick, candleCh chan<- model.Candle) 
 	c.TicksCount++
 }
 
-// bufSec is the bucket-level reorder tolerance (whole seconds, minimum 1).
-func (a *Aggregator) bufSec() int64 {
-	bufSec := int64(a.ReorderBuffer.Seconds())
-	if bufSec < 1 {
-		bufSec = 1 // minimum 1 second granularity for bucket-level watermark
-	}
-	return bufSec
+// finalBucket returns the first bucket (Unix second) not yet final for an
+// event clock at eventMs: buckets ending at or before eventMs - ReorderBuffer
+// are final.
+func (a *Aggregator) finalBucket(eventMs int64) int64 {
+	return (eventMs - a.ReorderBuffer.Milliseconds()) / 1000
 }
 
 // flushOld emits candles for any bucket that is behind its token's event-time
@@ -308,7 +309,7 @@ func (a *Aggregator) flushOld(candleCh chan<- model.Candle) {
 			}
 			continue
 		}
-		wm := tc.maxEventTS + int64(now.Sub(tc.wall)/time.Second) - a.bufSec()
+		wm := a.finalBucket(tc.maxEventMs + now.Sub(tc.wall).Milliseconds())
 		if state.bucket < wm {
 			a.emit(state, candleCh)
 			delete(a.states, key)
