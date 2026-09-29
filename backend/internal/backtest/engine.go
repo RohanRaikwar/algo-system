@@ -75,9 +75,12 @@ type Trade struct {
 	FNOEntryPrice int64 `json:"fno_entry_price,omitempty"`
 	FNOExitPrice  int64 `json:"fno_exit_price,omitempty"`
 
-	Strike   int64 `json:"strike,omitempty"` // option strike traded (points)
-	SameDay  bool  `json:"same_day_expiry,omitempty"`
-	modelMid int64 // modeled entry premium before slippage (premium SL reference)
+	Strike  int64 `json:"strike,omitempty"` // option strike traded (points)
+	SameDay bool  `json:"same_day_expiry,omitempty"`
+	// TargetMove is the signal's index move to target (paise), for the
+	// strike-choice comparison's expected-return rank.
+	TargetMove int64 `json:"target_move,omitempty"`
+	modelMid   int64 // modeled entry premium before slippage (premium SL reference)
 }
 
 // PnLPaise returns the trade P&L in paise.
@@ -801,6 +804,7 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 				FNOEntryPrice: e.lookupFNOPrice(sig.Side, candle.TS.Unix()),
 			}
 			openTrade.SameDay = sig.SameDayExpiry
+			openTrade.TargetMove = sig.TargetMove
 			e.modelEntry(openTrade, sig.Strike, candle.TS)
 			e.armModelTicks(strat, openTrade)
 			log.Printf("[backtest] 🟢 ENTRY %s @ %s index=%d fno=%d reason=%s",

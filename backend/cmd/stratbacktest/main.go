@@ -65,6 +65,7 @@ func main() {
 	optModel := flag.Bool("option-model", false, "Price each trade's own option (strike, weekly expiry) with Black-Scholes; P&L in option premium")
 	optIV := flag.Float64("option-iv", 13, "Flat IV %% for -option-model when no India VIX history is loaded")
 	premSL := flag.Int64("premium-sl", 20, "Modeled premium hard SL %% (0 = off), as the live strategy")
+	cmpStrikes := flag.Bool("compare-strikes", false, "With -option-model: price the same trades at the signal strike and at the option picker's delta and expected-return picks (use -premium-sl 0 for like-for-like exits)")
 	flag.Parse()
 
 	cfg := backtest.Config{
@@ -114,6 +115,27 @@ func main() {
 		}
 	default:
 		backtest.PrintConsole(result)
+	}
+
+	if *cmpStrikes {
+		vs, err := engine.CompareStrikes(result.Trades)
+		if err != nil {
+			log.Fatalf("[stratbacktest] strike comparison: %v", err)
+		}
+		fmt.Println("\n  Strike choice comparison (same trades, same entry/exit times; P&L per unit, rupees)")
+		fmt.Printf("  %-30s %7s %8s %9s %12s %10s %11s\n", "choice", "trades", "refused", "win rate", "P&L ₹", "avg ₹/trd", "avg strike")
+		for _, v := range vs {
+			avg := 0.0
+			if v.Trades > 0 {
+				avg = float64(v.PnLPaise) / 100 / float64(v.Trades)
+			}
+			fmt.Printf("  %-30s %7d %8d %8.1f%% %12.2f %10.2f %11.0f\n",
+				v.Name, v.Trades, v.Refused, v.WinRate()*100, float64(v.PnLPaise)/100, avg, v.AvgStrike)
+		}
+		for _, v := range vs[1:] {
+			fmt.Printf("  %s: signal strike on the same %d trades ₹%.2f; on the %d refused trades ₹%.2f; refused by %v\n",
+				v.Name, v.Trades, float64(v.SignalPnLOnPriced)/100, v.Refused, float64(v.SignalPnLOnRefused)/100, v.RefusedBy)
+		}
 	}
 }
 
