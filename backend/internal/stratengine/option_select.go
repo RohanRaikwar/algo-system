@@ -84,6 +84,11 @@ func (svc *Service) positionTokenSetterFor(name string) positionTokenSetter {
 // NIFTY50_SR entries pick their strike from the chain by greeks first
 // (see sr_strike.go), which replaces the range delta guard.
 func (svc *Service) resolveEntryStrike(ctx context.Context, sig *strategy.Signal, now time.Time) error {
+	// STRAT_PICKER_MODE=on: the picker's contract (quoted, streamed) or a
+	// refusal. Off/shadow fall through to the selection below unchanged.
+	if decided, err := svc.pickEntry(sig, now); decided {
+		return err
+	}
 	sr := svc.isSRSignal(sig)
 	var expiry time.Time // zero = nearest expiry
 	if sr {

@@ -17,6 +17,7 @@ import (
 	"trading-systemv1/internal/markethours"
 	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/notification"
+	"trading-systemv1/internal/optionpicker"
 	"trading-systemv1/internal/orderexec"
 	"trading-systemv1/internal/portfolio"
 	redisstore "trading-systemv1/internal/store/redis"
@@ -52,6 +53,10 @@ type Service struct {
 	notifier      notification.Notifier
 	orderExecutor *orderexec.OrderExecutor
 	strikePicker  *orderexec.StrikePicker
+
+	// Global option picker (picker_wiring.go); nil when STRAT_PICKER_MODE=off.
+	picker    *optionpicker.Picker
+	pickerDec pickerDecisions
 
 	// Multi-leg contract resolution (legs.go). legResolver is a test hook;
 	// legPicker is built lazily when no ATM picker exists.
@@ -291,6 +296,9 @@ func New(cfg Config) (*Service, error) {
 	// Attach P&L tracker for profit cap monitoring
 	svc.orderExecutor.SetPnLTracker(svc.pnlTracker)
 
+	// ── Global option picker (off | shadow | on) ──
+	svc.picker = svc.newPicker()
+
 	// ── Dynamic Strike Picker ──
 	if cfg.DynamicStrikes {
 		log.Println("[stratengine] 🎯 dynamic strike selection ENABLED")
@@ -372,6 +380,9 @@ func (svc *Service) Run(ctx context.Context) error {
 	// ── Start signal processor (signals → journal + notify + orders) ──
 	go svc.signalLoop(ctx)
 
+	// ── Global option picker: chain refresh + streamed universe ──
+	go svc.runPicker(ctx)
+
 	// ── Range strategy dashboard state (pub:range) ──
 	if svc.cfg.RangeEnabled {
 		go svc.rangeStateLoop(ctx)
@@ -437,6 +448,9 @@ func (svc *Service) tickRouterLoop(ctx context.Context, tfTickCh chan<- model.Ti
 			}
 			// Update FNO LTP tracker
 			svc.orderExecutor.UpdateLTP(tick)
+			if svc.picker != nil {
+				svc.picker.OnTick(tick)
+			}
 			svc.updateLiveOrdersFromTick(ctx, tick)
 			if tick.Token == niftyToken && (svc.cfg.RangeEnabled || svc.cfg.RangeICEnabled) {
 				svc.refreshStrikeLadder(ctx, tick.Price)
@@ -1267,7 +1281,19 @@ func (svc *Service) publishLiveOrders(ctx context.Context) {
 	svc.redisWriter.Client().Publish(ctx, "pub:orders", payloadStr)
 }
 
+// publishFNOSubscription subscribes option tokens; SnapQuote when the picker
+// runs (every option needs bid/ask), else Quote as before.
 func (svc *Service) publishFNOSubscription(ctx context.Context, tokens ...string) {
+	mode := smartconnect.ModeQuote
+	if svc.picker != nil {
+		mode = smartSnapQuote
+	}
+	svc.publishFNOSubscriptionMode(ctx, mode, tokens...)
+}
+
+// publishFNOSubscriptionMode asks mdengine to stream tokens in a feed mode
+// (smartconnect.ModeQuote / ModeSnapQuote).
+func (svc *Service) publishFNOSubscriptionMode(ctx context.Context, mode int, tokens ...string) {
 	uniq := make([]string, 0, len(tokens))
 	seen := make(map[string]struct{})
 	for _, token := range tokens {
@@ -1288,12 +1314,13 @@ func (svc *Service) publishFNOSubscription(ctx context.Context, tokens ...string
 	subCmd, _ := json.Marshal(map[string]interface{}{
 		"exchange_type": 2,
 		"tokens":        uniq,
+		"mode":          mode,
 	})
 	if err := svc.redisWriter.Client().Publish(ctx, "cmd:subscribe_token", string(subCmd)).Err(); err != nil {
 		log.Printf("[stratengine] ⚠️  failed to publish FNO subscribe command: %v", err)
 		return
 	}
-	log.Printf("[stratengine] 📡 published FNO subscribe command: tokens=%v", uniq)
+	log.Printf("[stratengine] 📡 published FNO subscribe command: mode=%d tokens=%v", mode, uniq)
 }
 
 func (svc *Service) publishStrikeInfo(ctx context.Context, spotPrice int64) {

@@ -1,6 +1,9 @@
 package stratengine
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func validBaseConfig() Config {
 	return Config{
@@ -102,5 +105,34 @@ func TestLoadConfig_MetricsAddrDefault(t *testing.T) {
 	t.Setenv("STRAT_METRICS_ADDR", "")
 	if got := LoadConfig().MetricsAddr; got != ":9096" {
 		t.Fatalf("MetricsAddr default %q, want :9096", got)
+	}
+}
+
+func TestLoadConfig_PickerDefaults(t *testing.T) {
+	for _, k := range []string{"STRAT_PICKER_MODE", "STRAT_PICK_MAX_SPREAD_PCT", "STRAT_PICK_MAX_QUOTE_AGE", "STRAT_PICK_MAX_CHAIN_AGE"} {
+		t.Setenv(k, "")
+	}
+	c := LoadConfig()
+	if c.PickerMode != "shadow" || c.PickMaxSpreadPct != 2 || c.PickMaxQuoteAge != 3*time.Second || c.PickMaxChainAge != 2*time.Minute {
+		t.Fatalf("picker defaults = %q %v %v %v", c.PickerMode, c.PickMaxSpreadPct, c.PickMaxQuoteAge, c.PickMaxChainAge)
+	}
+	t.Setenv("STRAT_PICK_MAX_QUOTE_AGE", "1500ms")
+	if got := LoadConfig().PickMaxQuoteAge; got != 1500*time.Millisecond {
+		t.Fatalf("PickMaxQuoteAge = %v", got)
+	}
+}
+
+func TestConfigValidate_PickerMode(t *testing.T) {
+	for _, m := range []string{"", "off", "shadow", "on"} {
+		cfg := validBaseConfig()
+		cfg.PickerMode = m
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("mode %q: %v", m, err)
+		}
+	}
+	cfg := validBaseConfig()
+	cfg.PickerMode = "ON"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("unknown picker mode accepted")
 	}
 }

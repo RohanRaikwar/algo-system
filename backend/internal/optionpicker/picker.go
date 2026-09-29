@@ -138,3 +138,9 @@ func (p *Picker) Status(now time.Time) Status {
 	}
 	return st
 }
+
+// RefreshForTest loads the chain and re-centres the universe synchronously.
+func RefreshForTest(p *Picker, now time.Time) {
+	p.chain.Refresh(now)
+	p.refreshUniverseAt(now)
+}

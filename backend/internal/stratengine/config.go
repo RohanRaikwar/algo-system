@@ -85,6 +85,12 @@ type Config struct {
 	SRGammaDTE      int
 	SRMinDTE        int // buy the nearest expiry at least this many days out (2 = Monday skips Tuesday)
 
+	// ── Global option picker (internal/optionpicker) ──
+	PickerMode       string        // off | shadow (log decisions only) | on (picker chooses the contract)
+	PickMaxSpreadPct float64       // (ask−bid)/mid × 100 ceiling
+	PickMaxQuoteAge  time.Duration // bid/ask older than this is not tradable
+	PickMaxChainAge  time.Duration // greeks snapshot older than this refuses selection
+
 	PaperSlippageBps      int64 // paper fills cross the spread: LTP ± max(LTP×bps/10000, min)
 	PaperSlippageMinPaise int64
 	WarmupDays            int    // calendar days of 1m history replayed at startup
@@ -147,6 +153,10 @@ func LoadConfig() Config {
 		SRMaxGamma:            getEnvFloat("STRAT_SR_MAX_GAMMA", 0.005),
 		SRGammaDTE:            config.GetEnvInt("STRAT_SR_GAMMA_DTE", 1),
 		SRMinDTE:              config.GetEnvInt("STRAT_SR_MIN_DTE", 2),
+		PickerMode:            config.GetEnv("STRAT_PICKER_MODE", "shadow"),
+		PickMaxSpreadPct:      getEnvFloat("STRAT_PICK_MAX_SPREAD_PCT", 2),
+		PickMaxQuoteAge:       getEnvDuration("STRAT_PICK_MAX_QUOTE_AGE", 3*time.Second),
+		PickMaxChainAge:       getEnvDuration("STRAT_PICK_MAX_CHAIN_AGE", 2*time.Minute),
 		PaperSlippageBps:      config.GetEnvInt64("STRAT_PAPER_SLIPPAGE_BPS", 50),
 		PaperSlippageMinPaise: config.GetEnvInt64("STRAT_PAPER_SLIPPAGE_MIN_PAISE", 50),
 		WarmupDays:            config.GetEnvInt("STRAT_RANGE_WARMUP_DAYS", 5),
@@ -200,6 +210,11 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("STRAT_EOD_EXIT_TIME=%s must be before the 15:30 market close", c.EODExitTime)
 		}
 	}
+	switch c.PickerMode {
+	case "", "off", "shadow", "on":
+	default:
+		return fmt.Errorf("STRAT_PICKER_MODE=%q: want off, shadow or on", c.PickerMode)
+	}
 	if len(c.SubscribeTokenKeys) == 0 {
 		return fmt.Errorf("STRAT_SUBSCRIBE_TOKENS is required")
 	}
@@ -223,6 +238,15 @@ func getEnvFloat(key string, def float64) float64 {
 	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			return f
+		}
+	}
+	return def
+}
+
+func getEnvDuration(key string, def time.Duration) time.Duration {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
 		}
 	}
 	return def
