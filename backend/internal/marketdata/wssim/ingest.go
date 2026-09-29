@@ -183,6 +183,16 @@ func (ing *Ingest) handleMessage(raw []byte, recvTS time.Time, tickCh chan<- mod
 		}
 	}
 
+	if tick.Exchange == "NFO" && tick.Price > 0 && tick.BestBid == 0 && tick.BestAsk == 0 {
+		// Staging has no depth: a ±0.1% spread (min one 5-paise tick) lets
+		// the option picker run end to end.
+		s := tick.Price / 1000
+		if s < 5 {
+			s = 5
+		}
+		tick.BestBid, tick.BestAsk, tick.QuoteTS = tick.Price-s, tick.Price+s, recvTS
+	}
+
 	if ing.OnIngested != nil {
 		ing.OnIngested(&tick)
 	}
