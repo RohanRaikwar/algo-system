@@ -533,15 +533,9 @@ func (svc *Service) tickRouterLoop(ctx context.Context, tfTickCh chan<- model.Ti
 					})
 
 					// Publish resolved FNO tokens to mdengine for WS subscription
-					subCmd, _ := json.Marshal(map[string]interface{}{
-						"exchange_type": 2, // NFO
-						"tokens":        []string{ce.Token, pe.Token},
-					})
-					if pubErr := svc.redisWriter.Client().Publish(ctx, "cmd:subscribe_token", string(subCmd)).Err(); pubErr != nil {
-						log.Printf("[stratengine] ⚠️  failed to publish subscribe command: %v", pubErr)
-					} else {
-						log.Printf("[stratengine] 📡 published FNO subscribe command: CE=%s PE=%s", ce.Token, pe.Token)
-					}
+					// (SnapQuote when the picker runs, so the ATM pair has
+					// bid/ask like every other picker-tracked contract).
+					svc.publishFNOSubscription(ctx, ce.Token, pe.Token)
 
 					// Publish strike info for frontend FNO Instruments tab
 					// Use lot size from StrikeInfo (fetched from Angel One), fallback to env/default
@@ -1288,11 +1282,18 @@ func (svc *Service) publishLiveOrders(ctx context.Context) {
 // publishFNOSubscription subscribes option tokens; SnapQuote when the picker
 // runs (every option needs bid/ask), else Quote as before.
 func (svc *Service) publishFNOSubscription(ctx context.Context, tokens ...string) {
-	mode := smartconnect.ModeQuote
+	svc.publishFNOSubscriptionMode(ctx, svc.fnoSubscribeMode(), tokens...)
+}
+
+// fnoSubscribeMode is the feed mode publishFNOSubscription uses: SnapQuote
+// while the global option picker is running (every option needs a two-sided
+// quote), else Quote as before. A small, Redis-free seam so the mode
+// selection itself is unit-tested without a broker or Redis.
+func (svc *Service) fnoSubscribeMode() int {
 	if svc.picker != nil {
-		mode = smartSnapQuote
+		return smartSnapQuote
 	}
-	svc.publishFNOSubscriptionMode(ctx, mode, tokens...)
+	return smartconnect.ModeQuote
 }
 
 // publishFNOSubscriptionMode asks mdengine to stream tokens in a feed mode
