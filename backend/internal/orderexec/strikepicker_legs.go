@@ -125,3 +125,41 @@ func (sp *StrikePicker) ResolveStrikeOn(expiry time.Time, strike int64, optionTy
 	sp.mu.Unlock()
 	return info, nil
 }
+
+// LookupOn is ResolveStrikeOn without the SearchScrip fallback: the offline
+// instrument master (or the test hook) only. Used where a broker call is not
+// allowed (the option picker's universe; SearchScrip is limited to 1/s).
+func (sp *StrikePicker) LookupOn(expiry time.Time, strike int64, optionType string) (StrikeInfo, bool) {
+	optionType = strings.ToUpper(optionType)
+	symbol := fmt.Sprintf("NIFTY%s%d%s", strings.ToUpper(expiry.In(istZone).Format("02Jan06")), strike, optionType)
+	sp.mu.RLock()
+	cached, ok := sp.legCache[symbol]
+	sp.mu.RUnlock()
+	if ok {
+		return cached, true
+	}
+	var token string
+	var lot int64
+	if sp.lookup != nil {
+		t, l, err := sp.lookup(symbol)
+		if err != nil {
+			return StrikeInfo{}, false
+		}
+		token, lot = t, l
+	} else {
+		inst, err := GetInstrumentMaster().GetInstrument(symbol)
+		if err != nil || inst.Token == "" {
+			return StrikeInfo{}, false
+		}
+		token = inst.Token
+		lot, _ = strconv.ParseInt(strings.TrimSpace(inst.LotSize), 10, 64)
+	}
+	info := StrikeInfo{Token: token, Symbol: symbol, Strike: strike, LotSize: lot}
+	sp.mu.Lock()
+	if sp.legCache == nil {
+		sp.legCache = make(map[string]StrikeInfo)
+	}
+	sp.legCache[symbol] = info
+	sp.mu.Unlock()
+	return info, true
+}

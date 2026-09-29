@@ -69,3 +69,20 @@ func TestResolveStrikeOnUsesGivenExpiryAndKeepsCurrentExpiry(t *testing.T) {
 		t.Fatal("off-step strike must fail")
 	}
 }
+
+func TestLookupOnNeverSearches(t *testing.T) {
+	sp := NewStrikePicker(nil)
+	sp.lookup = func(symbol string) (string, int64, error) {
+		if symbol == "NIFTY13OCT2622700CE" {
+			return "7002", 65, nil
+		}
+		return "", 0, errors.New("not in master")
+	}
+	exp := time.Date(2026, 10, 13, 0, 0, 0, 0, istZone)
+	if info, ok := sp.LookupOn(exp, 22700, "CE"); !ok || info.Token != "7002" {
+		t.Fatalf("info=%+v ok=%v", info, ok)
+	}
+	if _, ok := sp.LookupOn(exp, 22750, "CE"); ok {
+		t.Fatal("miss reported as found")
+	}
+}
