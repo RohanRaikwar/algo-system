@@ -931,6 +931,99 @@
 
 .fno-badge.resolved { color: var(--sg-profit); background: var(--sg-profit-soft); }
 
+/* ── Global option picker decisions ── */
+.picker-decisions {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 10px;
+    padding: 12px 14px 14px;
+    border-top: 1px solid var(--sg-line-soft);
+}
+
+.picker-dec {
+    border: 1px solid var(--sg-line-soft);
+    border-radius: 10px;
+    background: var(--sg-surface);
+    overflow: hidden;
+}
+
+.picker-dec-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--sg-line-soft);
+}
+
+.picker-dec-strategy { font-weight: 600; }
+
+.picker-dec-badge {
+    margin-left: auto;
+    padding: 2px 9px;
+    border-radius: var(--sg-r-pill);
+    font-size: 0.74rem;
+    font-weight: 600;
+}
+
+.picker-dec-badge.agree { color: var(--sg-profit); background: var(--sg-profit-soft); }
+.picker-dec-badge.disagree { color: var(--sg-loss); background: var(--sg-loss-soft); }
+.picker-dec-badge.none { color: var(--sg-muted); background: var(--sg-raised); }
+
+.picker-dec-cols {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.picker-dec-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    padding: 10px 12px;
+}
+
+.picker-dec-col + .picker-dec-col { border-left: 1px solid var(--sg-line-soft); }
+
+.picker-dec .mono {
+    font-family: var(--mono, monospace);
+}
+
+.picker-dec-symbol {
+    font-size: 0.82rem;
+    overflow-wrap: anywhere;
+}
+
+.picker-dec-facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    font-size: 0.8rem;
+    color: var(--sg-text-2);
+    font-variant-numeric: tabular-nums;
+}
+
+.picker-dec-up { color: var(--sg-profit); font-weight: 600; }
+.picker-dec-down { color: var(--sg-loss); font-weight: 600; }
+
+.picker-dec-leg {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 0.8rem;
+}
+
+.picker-dec-leg .mono { overflow-wrap: anywhere; text-align: right; }
+
+.picker-dec-refused {
+    font-size: 0.8rem;
+    color: var(--sg-loss);
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+    .picker-decisions { grid-template-columns: minmax(0, 1fr); padding: 10px; }
+}
+
 .fno-atm-body {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));

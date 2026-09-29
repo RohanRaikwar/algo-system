@@ -69,3 +69,31 @@ describe('expected return score', () => {
             .toBe('picked NIFTY06OCT2622800CE · Δ 0.38 · ₹129.90 / ₹130.10 · exp +25.4%');
     });
 });
+
+import { comparison, scoreText } from '../FnoInstrumentsTab';
+
+describe('decision cards', () => {
+    it('classifies the old-vs-new comparison', () => {
+        expect(comparison({ strategy: 'S', mode: 'shadow', result: 'picked', old_symbol: 'X', agree: true, ts: '' })).toBe('agree');
+        expect(comparison({ strategy: 'S', mode: 'shadow', result: 'picked', old_symbol: 'X', agree: false, ts: '' })).toBe('disagree');
+        expect(comparison({ strategy: 'S', mode: 'on', result: 'picked', ts: '' })).toBe('none');
+        expect(comparison({ strategy: 'IC', mode: 'shadow', result: 'picked', legs: [{ leg: 'SHORT_CE', strike: 1, symbol: 'A' }], old_legs: ['A'], agree: true, ts: '' })).toBe('agree');
+    });
+
+    it('formats the expected return', () => {
+        expect(scoreText(0.254)).toBe('+25.4%');
+        expect(scoreText(-0.031)).toBe('−3.1%');
+        expect(scoreText(undefined)).toBe('');
+        expect(scoreText(0)).toBe('');
+    });
+});
+
+import { shortSymbol } from '../FnoInstrumentsTab';
+
+describe('shortSymbol', () => {
+    it('reduces an option symbol to strike and type', () => {
+        expect(shortSymbol('NIFTY06OCT2623050CE')).toBe('23050 CE');
+        expect(shortSymbol('NIFTY13OCT2622450PE')).toBe('22450 PE');
+        expect(shortSymbol('SOMETHING')).toBe('SOMETHING');
+    });
+});

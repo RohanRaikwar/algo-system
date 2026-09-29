@@ -95,7 +95,103 @@ export function decisionLine(d: PickerDecision): string {
     return `picked ${d.symbol ?? d.strike} · Δ ${num(d.delta ?? NaN, 2)} · ${paise(d.bid)} / ${paise(d.ask)}${score}${oldChoiceSuffix(d)}`;
 }
 
+/** Old-vs-new comparison for a decision: nothing to compare in "on" mode or
+ * before the old path chose (no old symbol/legs). */
+export function comparison(d: PickerDecision): 'agree' | 'disagree' | 'none' {
+    const hasOld = d.legs && d.legs.length ? (d.old_legs ?? []).length > 0 : !!d.old_symbol;
+    if (!hasOld) return 'none';
+    return d.agree ? 'agree' : 'disagree';
+}
+
+/** Expected return on premium as "+25.4%" / "−3.1%"; blank without a score. */
+export function scoreText(score?: number): string {
+    if (!score) return '';
+    const pct = (Math.abs(score) * 100).toFixed(1);
+    return `${score > 0 ? '+' : '−'}${pct}%`;
+}
+
+/** "NIFTY06OCT2623050CE" → "23050 CE"; anything else unchanged. */
+export function shortSymbol(sym: string): string {
+    const m = /^NIFTY\d{2}[A-Z]{3}\d{2}(\d+)(CE|PE)$/.exec(sym);
+    return m ? `${m[1]} ${m[2]}` : sym;
+}
+
+const COMPARISON_LABEL = { agree: 'Agree', disagree: 'Disagree', none: 'No comparison' } as const;
+
+function NewChoice({ d }: { d: PickerDecision }) {
+    if (d.result !== 'picked') {
+        return <div className="picker-dec-refused">Refused: {d.reason ?? '—'}</div>;
+    }
+    if (d.legs && d.legs.length) {
+        return (
+            <>
+                {d.legs.map(l => (
+                    <div key={l.leg} className="picker-dec-leg" title={l.symbol}>
+                        <span className="fno-inst-label">{l.leg.replace('_', ' ')}</span>
+                        <span className="mono">{shortSymbol(l.symbol)}</span>
+                    </div>
+                ))}
+                <div className="picker-dec-leg"><span className="fno-inst-label">Credit</span><b>{paise(d.credit)}</b></div>
+            </>
+        );
+    }
+    const score = scoreText(d.score);
+    return (
+        <>
+            <div className="mono picker-dec-symbol">{d.symbol ?? d.strike}</div>
+            <div className="picker-dec-facts">
+                <span>Δ {num(d.delta ?? NaN, 2)}</span>
+                <span>{paise(d.bid)} / {paise(d.ask)}</span>
+                {score && <span className={(d.score ?? 0) > 0 ? 'picker-dec-up' : 'picker-dec-down'}>exp {score}</span>}
+            </div>
+        </>
+    );
+}
+
+function OldChoice({ d }: { d: PickerDecision }) {
+    const old = d.legs && d.legs.length ? d.old_legs ?? [] : d.old_symbol ? [d.old_symbol] : [];
+    if (old.length === 0) {
+        return <div className="fno-na">{d.mode === 'on' ? 'Picker decides (on mode)' : 'Not chosen yet'}</div>;
+    }
+    if (d.legs && d.legs.length) {
+        return (
+            <>
+                {old.map(o => (
+                    <div key={o} className="picker-dec-leg" title={o}>
+                        <span className="mono">{shortSymbol(o)}</span>
+                    </div>
+                ))}
+            </>
+        );
+    }
+    return <>{old.map(o => <div key={o} className="mono picker-dec-symbol">{o}</div>)}</>;
+}
+
+function DecisionCard({ d }: { d: PickerDecision }) {
+    const cmp = comparison(d);
+    return (
+        <div className="picker-dec" title={decisionLine(d)}>
+            <div className="picker-dec-head">
+                <span className="picker-dec-strategy">{d.strategy}</span>
+                <span className="fno-na">{fmtTime(d.ts)}</span>
+                <span className={`picker-dec-badge ${cmp}`}>{COMPARISON_LABEL[cmp]}</span>
+            </div>
+            <div className="picker-dec-cols">
+                <div className="picker-dec-col">
+                    <div className="fno-atm-label">New picker</div>
+                    <NewChoice d={d} />
+                </div>
+                <div className="picker-dec-col">
+                    <div className="fno-atm-label">Old picker</div>
+                    <OldChoice d={d} />
+                </div>
+            </div>
+        </div>
+    );
+}
+
 function PickerCard({ p }: { p: PickerView }) {
+    const decisions = p.decisions ?? [];
     return (
         <div className="fno-atm-card">
             <div className="fno-atm-header">
@@ -115,15 +211,13 @@ function PickerCard({ p }: { p: PickerView }) {
                 <div className="fno-atm-stat"><span className="fno-atm-label">Pick by</span>
                     <span className="fno-atm-value fno-param">{p.rules.rank === 'return' ? 'expected return on premium' : 'delta closest to band middle'}</span></div>
             </div>
-            <div className="fno-inst-body">
-                {(p.decisions ?? []).length === 0 && <div className="fno-inst-row"><span className="fno-na">No entry signal yet</span></div>}
-                {(p.decisions ?? []).map(d => (
-                    <div key={d.strategy} className="fno-inst-row">
-                        <span className="fno-inst-label">{d.strategy} · {fmtTime(d.ts)}</span>
-                        <span className="fno-inst-value">{decisionLine(d)}</span>
-                    </div>
-                ))}
-            </div>
+            {decisions.length === 0 ? (
+                <div className="fno-inst-body"><div className="fno-inst-row"><span className="fno-na">No entry signal yet</span></div></div>
+            ) : (
+                <div className="picker-decisions">
+                    {decisions.map(d => <DecisionCard key={d.strategy} d={d} />)}
+                </div>
+            )}
         </div>
     );
 }
