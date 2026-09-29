@@ -35,4 +35,30 @@ describe('picker decisions', () => {
         expect(decisionLine({ strategy: 'NIFTY50_RANGE', mode: 'on', result: 'refused', reason: 'no CE passes (dte 6; rejected spread 3)', ts: '' }))
             .toBe('refused: no CE passes (dte 6; rejected spread 3)');
     });
+
+    it('shows the old path\'s choice and agree/disagree for a single entry', () => {
+        const base = { strategy: 'NIFTY50_SR', mode: 'shadow', result: 'picked' as const, symbol: 'SYM', delta: 0.5, bid: 100, ask: 110, ts: '' };
+        expect(decisionLine({ ...base, old_symbol: 'SYM', agree: true }))
+            .toBe('picked SYM · Δ 0.50 · ₹1.00 / ₹1.10 · old SYM ✓ agree');
+        expect(decisionLine({ ...base, old_symbol: 'OTHER', agree: false }))
+            .toBe('picked SYM · Δ 0.50 · ₹1.00 / ₹1.10 · old OTHER ✗ disagree');
+        // No old choice recorded (e.g. "on" mode, or "off"): unchanged, no suffix.
+        expect(decisionLine(base)).toBe('picked SYM · Δ 0.50 · ₹1.00 / ₹1.10');
+    });
+
+    it('shows all four legs and the credit for a condor decision', () => {
+        const legs = [
+            { leg: 'LONG_CE', strike: 23000, symbol: 'LCE' },
+            { leg: 'SHORT_CE', strike: 22900, symbol: 'SCE' },
+            { leg: 'LONG_PE', strike: 22400, symbol: 'LPE' },
+            { leg: 'SHORT_PE', strike: 22500, symbol: 'SPE' },
+        ];
+        expect(decisionLine({
+            strategy: 'NIFTY50_RANGE_IC', mode: 'shadow', result: 'picked', legs, credit: 4600,
+            old_legs: ['SCE', 'LCE', 'SPE', 'LPE'], agree: true, ts: '',
+        })).toBe('picked LONG_CE LCE, SHORT_CE SCE, LONG_PE LPE, SHORT_PE SPE · credit ₹46.00 · old SCE, LCE, SPE, LPE ✓ agree');
+
+        expect(decisionLine({ strategy: 'NIFTY50_RANGE_IC', mode: 'shadow', result: 'refused', reason: 'no condor legs pass', ts: '' }))
+            .toBe('refused: no condor legs pass');
+    });
 });

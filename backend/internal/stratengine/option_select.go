@@ -118,6 +118,10 @@ func (svc *Service) resolveEntryStrike(ctx context.Context, sig *strategy.Signal
 	}
 	sig.Strike = info.Strike
 	sig.FNOToken, sig.FNOSymbol = info.Token, info.Symbol
+	// Shadow mode: record what this old path chose against the picker's
+	// decision (recorded earlier in pickEntry), for the go/no-go review.
+	// No-op when there's no picker decision to attach it to (mode "off").
+	svc.recordOldChoice(sig.StrategyName, sig.FNOSymbol, nil)
 	return nil
 }
 

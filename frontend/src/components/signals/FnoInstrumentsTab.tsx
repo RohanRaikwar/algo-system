@@ -75,9 +75,23 @@ function ContractRows({ c }: { c: SRContract }) {
 
 const paise = (v?: number) => (v && v > 0 ? `₹${(v / 100).toFixed(2)}` : '—');
 
+/** " · old <symbol(s)> ✓ agree" / "✗ disagree" — what the old (non-picker)
+ * path chose for the same entry, blank when there's nothing to compare yet
+ * (e.g. "on" mode or no entry signal). */
+function oldChoiceSuffix(d: PickerDecision): string {
+    const old = d.legs && d.legs.length ? (d.old_legs ?? []).join(', ') : (d.old_symbol ?? '');
+    if (!old) return '';
+    return ` · old ${old} ${d.agree ? '✓ agree' : '✗ disagree'}`;
+}
+
 export function decisionLine(d: PickerDecision): string {
-    if (d.result !== 'picked') return `refused: ${d.reason ?? ''}`;
-    return `picked ${d.symbol ?? d.strike} · Δ ${num(d.delta ?? NaN, 2)} · ${paise(d.bid)} / ${paise(d.ask)}`;
+    if (d.legs && d.legs.length) {
+        if (d.result !== 'picked') return `refused: ${d.reason ?? ''}${oldChoiceSuffix(d)}`;
+        const legs = d.legs.map(l => `${l.leg} ${l.symbol}`).join(', ');
+        return `picked ${legs} · credit ${paise(d.credit)}${oldChoiceSuffix(d)}`;
+    }
+    if (d.result !== 'picked') return `refused: ${d.reason ?? ''}${oldChoiceSuffix(d)}`;
+    return `picked ${d.symbol ?? d.strike} · Δ ${num(d.delta ?? NaN, 2)} · ${paise(d.bid)} / ${paise(d.ask)}${oldChoiceSuffix(d)}`;
 }
 
 function PickerCard({ p }: { p: PickerView }) {

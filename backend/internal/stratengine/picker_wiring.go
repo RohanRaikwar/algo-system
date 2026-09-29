@@ -174,6 +174,16 @@ func (svc *Service) condorIntentFor(sig strategy.Signal) (optionpicker.CondorInt
 		MaxShortDelta: 0.25, WingWidth: lCE - sCE, MinDTE: 1, MinCreditPct: minCreditPct}, true
 }
 
+// pickerLeg is one leg of a condor decision, for the shadow/on dashboard.
+type pickerLeg struct {
+	Leg    string  `json:"leg"` // LONG_CE / SHORT_CE / LONG_PE / SHORT_PE
+	Strike int64   `json:"strike"`
+	Symbol string  `json:"symbol"`
+	Bid    int64   `json:"bid,omitempty"`
+	Ask    int64   `json:"ask,omitempty"`
+	Delta  float64 `json:"delta,omitempty"`
+}
+
 type pickerDecision struct {
 	Strategy string  `json:"strategy"`
 	Mode     string  `json:"mode"`
@@ -186,7 +196,23 @@ type pickerDecision struct {
 	IV       float64 `json:"iv,omitempty"`
 	Bid      int64   `json:"bid,omitempty"`
 	Ask      int64   `json:"ask,omitempty"`
-	TS       string  `json:"ts"`
+
+	// Condor decisions: all four legs and the net credit (paise) the
+	// picker found, so a go/no-go review can see the whole basket instead
+	// of just the short CE leg mirrored into the fields above.
+	Legs   []pickerLeg `json:"legs,omitempty"`
+	Credit int64       `json:"credit,omitempty"`
+
+	// What the old (non-picker) path chose for the same entry, recorded by
+	// recordOldChoice after it runs — shadow mode never substitutes it, this
+	// is purely for comparison. OldSymbol is set for a single-leg entry,
+	// OldLegs for a basket. Agree reports whether the old choice matches
+	// the picker's pick (false when the picker refused).
+	OldSymbol string   `json:"old_symbol,omitempty"`
+	OldLegs   []string `json:"old_legs,omitempty"`
+	Agree     bool     `json:"agree,omitempty"`
+
+	TS string `json:"ts"`
 }
 
 type pickerDecisions struct {
@@ -220,6 +246,80 @@ func decisionFor(name, mode string, p optionpicker.Pick, err error, now time.Tim
 	d.Strike, d.Symbol, d.Token = p.Strike, p.Symbol, p.Token
 	d.Delta, d.IV, d.Bid, d.Ask = math.Round(p.Delta*1000)/1000, p.IV, p.Quote.Bid, p.Quote.Ask
 	return d
+}
+
+// legFrom converts one condor leg to its dashboard shape.
+func legFrom(leg string, p optionpicker.Pick) pickerLeg {
+	return pickerLeg{Leg: leg, Strike: p.Strike, Symbol: p.Symbol, Bid: p.Quote.Bid, Ask: p.Quote.Ask, Delta: math.Round(p.Delta*1000) / 1000}
+}
+
+// decisionForCondor is decisionFor for a condor: all four legs and the net
+// credit, so a refusal or a pick shows the whole basket. The short CE leg's
+// fields are mirrored into the flat Strike/Symbol/Token/Delta/IV/Bid/Ask so
+// existing single-leg-shaped consumers keep something sensible to show.
+func decisionForCondor(name, mode string, cp optionpicker.CondorPick, err error, now time.Time) pickerDecision {
+	d := pickerDecision{Strategy: name, Mode: mode, TS: now.UTC().Format(time.RFC3339)}
+	if err != nil {
+		d.Result, d.Reason = "refused", err.Error()
+		return d
+	}
+	d.Result = "picked"
+	d.Legs = []pickerLeg{
+		legFrom(strategy.LegLongCE, cp.LongCE),
+		legFrom(strategy.LegShortCE, cp.ShortCE),
+		legFrom(strategy.LegLongPE, cp.LongPE),
+		legFrom(strategy.LegShortPE, cp.ShortPE),
+	}
+	d.Credit = cp.Credit
+	d.Strike, d.Symbol, d.Token = cp.ShortCE.Strike, cp.ShortCE.Symbol, cp.ShortCE.Token
+	d.Delta, d.IV, d.Bid, d.Ask = math.Round(cp.ShortCE.Delta*1000)/1000, cp.ShortCE.IV, cp.ShortCE.Quote.Bid, cp.ShortCE.Quote.Ask
+	return d
+}
+
+// recordOldChoice attaches what the old (non-picker) path chose to the most
+// recently recorded picker decision for name, so a shadow/on-mode review
+// can see agree/disagree without the old path itself changing at all. A
+// single-leg entry passes symbol (legSymbols nil); a basket passes
+// legSymbols (symbol ""). No-op when there's no decision to attach to
+// (e.g. PickerMode "off", where the picker never runs).
+func (svc *Service) recordOldChoice(strategyName, symbol string, legSymbols []string) {
+	svc.pickerDec.mu.Lock()
+	defer svc.pickerDec.mu.Unlock()
+	d, ok := svc.pickerDec.last[strategyName]
+	if !ok {
+		return
+	}
+	picked := d.Result == "picked"
+	switch {
+	case len(legSymbols) > 0:
+		d.OldLegs = legSymbols
+		d.Agree = picked && legSymbolsMatch(d.Legs, legSymbols)
+	case symbol != "":
+		d.OldSymbol = symbol
+		d.Agree = picked && d.Symbol == symbol
+	default:
+		return
+	}
+	svc.pickerDec.last[strategyName] = d
+}
+
+// legSymbolsMatch reports whether old (the old path's leg symbols) is the
+// same set of contracts as the picker's legs, order not mattering.
+func legSymbolsMatch(legs []pickerLeg, old []string) bool {
+	if len(legs) != len(old) {
+		return false
+	}
+	want := make(map[string]int, len(old))
+	for _, s := range old {
+		want[s]++
+	}
+	for _, l := range legs {
+		if want[l.Symbol] == 0 {
+			return false
+		}
+		want[l.Symbol]--
+	}
+	return true
 }
 
 // pickEntry runs the picker on a single-leg entry. decided=false means the
@@ -257,7 +357,7 @@ func (svc *Service) pickBasket(sig *strategy.Signal, now time.Time) (bool, error
 		return false, nil
 	}
 	cp, _, err := svc.picker.PickCondor(in, now)
-	svc.recordPickerDecision(decisionFor(sig.StrategyName, svc.cfg.PickerMode, cp.ShortCE, err, now))
+	svc.recordPickerDecision(decisionForCondor(sig.StrategyName, svc.cfg.PickerMode, cp, err, now))
 	if svc.cfg.PickerMode != "on" {
 		return false, nil
 	}

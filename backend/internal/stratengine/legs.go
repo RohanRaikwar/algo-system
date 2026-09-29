@@ -141,6 +141,20 @@ func (svc *Service) handleBasketSignal(ctx context.Context, sig strategy.Signal,
 		cancel(err.Error())
 		return
 	}
+	if sig.Action == strategy.ActionBuy && !pickerDecided {
+		// Shadow (or off) mode only: in "on" mode these legs already are
+		// the picker's own choice (expandLegSignals skips resolving a leg
+		// the picker set), so recording them as the "old path" would be
+		// meaningless. Record what this old path chose against the
+		// picker's condor decision (recorded earlier in pickBasket), for
+		// the go/no-go review. No-op when there's no decision to attach
+		// it to (mode "off").
+		symbols := make([]string, len(legs))
+		for i, l := range legs {
+			symbols[i] = l.FNOSymbol
+		}
+		svc.recordOldChoice(sig.StrategyName, "", symbols)
+	}
 	if sig.Action == strategy.ActionBuy && svc.cfg.RangeDeltaGuard && !pickerDecided {
 		if err := svc.basketQualityCheck(legs, now); err != nil {
 			cancel(err.Error())
