@@ -1,6 +1,9 @@
 package optionpicker
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Contract is one option from the Angel chain, joined with its feed token.
 type Contract struct {
@@ -77,6 +80,24 @@ type CondorPick struct {
 
 // Rejects counts candidates dropped per rule name.
 type Rejects map[string]int
+
+// String lists rejects as "delta 12, spread 1" in rule order.
+func (r Rejects) String() string {
+	order := []string{"not streamed", "quote stale", "spread", "no iv", "delta", "theta", "gamma", "iv", "liquidity", "cost", "credit"}
+	s := ""
+	for _, k := range order {
+		if n := r[k]; n > 0 {
+			if s != "" {
+				s += ", "
+			}
+			s += fmt.Sprintf("%s %d", k, n)
+		}
+	}
+	if s == "" {
+		return "none"
+	}
+	return s
+}
 
 // Refusal is returned when nothing passes; Reason names the cause.
 type Refusal struct {
