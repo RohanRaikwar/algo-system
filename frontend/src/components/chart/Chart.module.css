@@ -280,6 +280,7 @@
 
 .signalBuy { color: var(--sg-profit); background: var(--sg-profit-soft); }
 .signalExit { color: var(--sg-loss); background: var(--sg-loss-soft); }
+.signalRefused { color: var(--sg-text-2); background: var(--sg-raised); }
 
 .signalStrategy {
     color: var(--sg-text);

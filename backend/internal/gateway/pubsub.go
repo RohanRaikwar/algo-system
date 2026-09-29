@@ -17,6 +17,7 @@ var dynamicPubSubPatterns = []string{
 	"pub:signal",
 	"pub:pnl",
 	"pub:range",
+	"pub:refused",
 }
 
 // PubSubRouter manages Redis PubSub subscriptions and routes messages

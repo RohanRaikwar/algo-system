@@ -107,10 +107,11 @@ func (b *Broadcaster) Broadcast(channel string, data []byte) {
 // pub:orders on every option tick while a position is open, so disconnecting
 // on overflow here would flap slow clients at tick rate.
 var latestWinsChannels = map[string]bool{
-	"pub:orders": true,
-	"pub:pnl":    true,
-	"pub:strike": true,
-	"pub:range":  true,
+	"pub:orders":  true,
+	"pub:pnl":     true,
+	"pub:strike":  true,
+	"pub:range":   true,
+	"pub:refused": true,
 }
 
 // isLatestWins also covers pub:analyst:* — each frame is the full analyst

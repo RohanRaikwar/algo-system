@@ -129,17 +129,17 @@ var routes = map[string]string{
 	"api.allholding":   "/rest/secure/angelbroking/portfolio/v1/getAllHolding",
 
 	"api.individual.order.details": "/rest/secure/angelbroking/order/v1/details/",
-	"api.margin.api":               "rest/secure/angelbroking/margin/v1/batch",
-	"api.estimateCharges":          "rest/secure/angelbroking/brokerage/v1/estimateCharges",
-	"api.verifyDis":                "rest/secure/angelbroking/edis/v1/verifyDis",
-	"api.generateTPIN":             "rest/secure/angelbroking/edis/v1/generateTPIN",
-	"api.getTranStatus":            "rest/secure/angelbroking/edis/v1/getTranStatus",
-	"api.optionGreek":              "rest/secure/angelbroking/marketData/v1/optionGreek",
-	"api.gainersLosers":            "rest/secure/angelbroking/marketData/v1/gainersLosers",
-	"api.putCallRatio":             "rest/secure/angelbroking/marketData/v1/putCallRatio",
-	"api.oIBuildup":                "rest/secure/angelbroking/marketData/v1/OIBuildup",
-	"api.nseIntraday":              "rest/secure/angelbroking/marketData/v1/nseIntraday",
-	"api.bseIntraday":              "rest/secure/angelbroking/marketData/v1/bseIntraday",
+	"api.margin.api":               "/rest/secure/angelbroking/margin/v1/batch",
+	"api.estimateCharges":          "/rest/secure/angelbroking/brokerage/v1/estimateCharges",
+	"api.verifyDis":                "/rest/secure/angelbroking/edis/v1/verifyDis",
+	"api.generateTPIN":             "/rest/secure/angelbroking/edis/v1/generateTPIN",
+	"api.getTranStatus":            "/rest/secure/angelbroking/edis/v1/getTranStatus",
+	"api.optionGreek":              "/rest/secure/angelbroking/marketData/v1/optionGreek",
+	"api.gainersLosers":            "/rest/secure/angelbroking/marketData/v1/gainersLosers",
+	"api.putCallRatio":             "/rest/secure/angelbroking/marketData/v1/putCallRatio",
+	"api.oIBuildup":                "/rest/secure/angelbroking/marketData/v1/OIBuildup",
+	"api.nseIntraday":              "/rest/secure/angelbroking/marketData/v1/nseIntraday",
+	"api.bseIntraday":              "/rest/secure/angelbroking/marketData/v1/bseIntraday",
 }
 
 func GetPublicIP() (string, error) {

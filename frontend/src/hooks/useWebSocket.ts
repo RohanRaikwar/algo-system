@@ -20,6 +20,7 @@ import type {
 } from '../types/ws';
 import type { LiveOrdersPayload, SignalPayload } from '../types/signal';
 import { useRangeStore, parseRangeView } from '../store/useRangeStore';
+import { useRefusedStore, parseRefusedView } from '../store/useRefusedStore';
 import { listPaneSubs } from '../services/paneSubscriptions';
 
 /**
@@ -367,6 +368,13 @@ export function useWebSocket() {
                 return;
             }
 
+            // ── Refused entries (pub:refused channel, full state) ──
+            if (envelope.channel === 'pub:refused' && envelope.data) {
+                const view = parseRefusedView(envelope.data);
+                if (view) useRefusedStore.getState().setView(view);
+                return;
+            }
+
             // ── Live Order State (pub:orders channel) ──
             if (envelope.channel === 'pub:orders' && envelope.data) {
                 let orderData = envelope.data;
@@ -611,6 +619,9 @@ export function useWebSocket() {
                     } else if (u.channel === 'pub:range') {
                         const view = parseRangeView(u.data);
                         if (view) useRangeStore.getState().setView(view);
+                    } else if (u.channel === 'pub:refused') {
+                        const view = parseRefusedView(u.data);
+                        if (view) useRefusedStore.getState().setView(view);
                     } else if (u.channel === 'pub:pnl') {
                         // PnL is consumed by ws:message listeners.
                         window.dispatchEvent(new CustomEvent('ws:message', {

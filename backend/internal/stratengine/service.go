@@ -65,6 +65,9 @@ type Service struct {
 	futures     futureResolver // test hook; nil = instrument master
 
 	rangePublishHook func(payload string) // test hook for publishRangeState
+
+	refused            refusedLog          // today's blocked entries (refused.go)
+	refusedPublishHook func(payload string) // test hook for recordRefusedEntry
 	legPriceWait     time.Duration        // 0 = defaultLegPriceWait
 
 	// Portfolio & P&L tracking
@@ -588,6 +591,7 @@ func (svc *Service) signalLoop(ctx context.Context) {
 				if svc.killSwitchActive() && sig.Action == strategy.ActionBuy {
 					log.Printf("[stratengine] KILL SWITCH: blocked entry signal %s %s:%s",
 						sig.StrategyName, sig.Exchange, sig.Token)
+					svc.recordRefusedEntry(ctx, sig, "kill switch active", now)
 					continue
 				}
 
@@ -597,6 +601,7 @@ func (svc *Service) signalLoop(ctx context.Context) {
 				if sig.Action == strategy.ActionBuy && !markethours.IsMarketOpen(now) {
 					log.Printf("[stratengine] MARKET CLOSED: blocked entry signal %s %s:%s at %s",
 						sig.StrategyName, sig.Exchange, sig.Token, now.In(markethours.IST).Format("15:04:05"))
+					svc.recordRefusedEntry(ctx, sig, "market closed", now)
 					continue
 				}
 
@@ -605,6 +610,7 @@ func (svc *Service) signalLoop(ctx context.Context) {
 				if sig.Action == strategy.ActionBuy && svc.pastEODCutoff(now) {
 					log.Printf("[stratengine] EOD CUTOFF: blocked entry signal %s %s:%s at %s",
 						sig.StrategyName, sig.Exchange, sig.Token, now.In(markethours.IST).Format("15:04:05"))
+					svc.recordRefusedEntry(ctx, sig, "past EOD entry cutoff", now)
 					continue
 				}
 
@@ -614,7 +620,7 @@ func (svc *Service) signalLoop(ctx context.Context) {
 				// different strike.
 				if sig.Action == strategy.ActionBuy && sig.Strike > 0 && sig.Leg == "" && sig.FNOToken == "" {
 					if err := svc.resolveEntryStrike(ctx, &sig, now); err != nil {
-						svc.cancelStrategyEntry(sig, err.Error())
+						svc.cancelStrategyEntry(ctx, sig, err.Error(), now)
 						continue
 					}
 				} else if sig.Action == strategy.ActionBuy {

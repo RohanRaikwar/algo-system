@@ -183,11 +183,11 @@ func (sp *StrikePicker) candidateExpiries(now time.Time) []string {
 	// Normal NIFTY expiry is Tuesday.
 	daysUntilTues := (int(time.Tuesday) - int(today.Weekday()) + 7) % 7
 	if daysUntilTues == 0 {
-		// On Tuesday (normal expiry day): during market hours aim at next week;
-		// after 15:30 IST also advance to next week.
-		if now.Hour() > 15 || (now.Hour() == 15 && now.Minute() >= 30) {
-			daysUntilTues = 7
-		}
+		// On Tuesday (normal expiry day) today's contract is never traded, so
+		// aim at next week. Keeping this week would leave only Wednesday and
+		// Thursday, which never exist when Tuesday is expiry, and each miss
+		// costs a broker SearchScrip call.
+		daysUntilTues = 7
 	}
 
 	// Try: Tuesday (0), Monday (-1), Wednesday (+1), Thursday (+2 — old NIFTY expiry)

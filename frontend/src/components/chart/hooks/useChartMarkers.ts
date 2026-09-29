@@ -1,7 +1,78 @@
 import { useEffect, useRef, type MutableRefObject } from 'react';
 import type { ISeriesApi, SeriesMarker, Time } from 'lightweight-charts';
 import { useSignalStore } from '../../../store/useSignalStore';
+import { useRefusedStore } from '../../../store/useRefusedStore';
 import { IST_OFFSET } from '../../../utils/helpers';
+import type { SignalRecord } from '../../../types/signal';
+import type { RefusedEntry } from '../../../types/refused';
+
+export const REFUSED_COLOR = '#8a94a6';
+
+function matchesToken(token: string, exchange: string, selectedToken: string): boolean {
+    const full = exchange ? `${exchange}:${token}` : token;
+    return full === selectedToken || token === selectedToken;
+}
+
+/** Chart time (IST-shifted seconds) of an RFC3339 timestamp, aligned to the TF bucket. */
+function bucketTime(ts: string, tfSec: number): number | null {
+    const ms = new Date(ts).getTime();
+    if (Number.isNaN(ms)) return null;
+    const rawSec = Math.floor(ms / 1000) + IST_OFFSET;
+    return Math.floor(rawSec / tfSec) * tfSec;
+}
+
+function sideShort(side: string | undefined): string {
+    const s = (side || '').toUpperCase();
+    return s === 'CALL' ? 'C' : s === 'PUT' ? 'P' : '';
+}
+
+/**
+ * Chart markers for the selected instrument: entries (green, below the bar),
+ * exits (red, above) and refused entries (grey circle, above), sorted by time.
+ */
+export function buildChartMarkers(
+    signals: SignalRecord[],
+    refused: RefusedEntry[],
+    selectedToken: string,
+    tfSec: number,
+    compact: boolean,
+): SeriesMarker<Time>[] {
+    const out: SeriesMarker<Time>[] = [];
+
+    for (const s of signals) {
+        if (!matchesToken(s.token, s.exchange, selectedToken)) continue;
+        const time = bucketTime(s.candle_ts || s.created_at, tfSec);
+        if (time === null) continue;
+        const isBuy = s.action.toUpperCase() === 'BUY';
+        const side = sideShort(s.side);
+        const text = compact
+            ? `${isBuy ? '▲' : '▼'}${side}`
+            : [isBuy ? 'BUY' : 'EXIT', side].filter(Boolean).join(' ');
+        out.push({
+            time: time as Time,
+            position: isBuy ? 'belowBar' : 'aboveBar',
+            color: isBuy ? '#3ecf8e' : '#f0616d',
+            shape: isBuy ? 'arrowUp' : 'arrowDown',
+            text,
+        });
+    }
+
+    for (const r of refused) {
+        if (!matchesToken(r.token, r.exchange, selectedToken)) continue;
+        const time = bucketTime(r.ts, tfSec);
+        if (time === null) continue;
+        const side = sideShort(r.side);
+        out.push({
+            time: time as Time,
+            position: 'aboveBar',
+            color: REFUSED_COLOR,
+            shape: 'circle',
+            text: compact ? `✕${side}` : ['REFUSED', side].filter(Boolean).join(' '),
+        });
+    }
+
+    return out.sort((a, b) => (a.time as number) - (b.time as number));
+}
 
 export function useChartMarkers(
     candleSeries: MutableRefObject<ISeriesApi<'Candlestick'> | null>,
@@ -9,58 +80,19 @@ export function useChartMarkers(
     selectedTF: number,
 ) {
     const signals = useSignalStore(s => s.signals);
+    const refused = useRefusedStore(s => s.entries);
     const lastFingerprint = useRef<string>('');
 
     useEffect(() => {
         if (!candleSeries.current || !selectedToken) return;
 
-        // Filter signals that match the current token
-        const matchingSig = signals.filter(s => {
-            const full = s.exchange ? `${s.exchange}:${s.token}` : s.token;
-            return full === selectedToken || s.token === selectedToken;
-        });
-
-        // Build fingerprint
-        const fp = `${selectedTF}::` + matchingSig.map(s => `${s.id}:${s.action}`).join('|');
-
+        const fp = `${selectedToken}::${selectedTF}::`
+            + signals.map(s => `${s.id}:${s.action}`).join('|')
+            + '::' + refused.map(r => r.ts).join('|');
         if (fp === lastFingerprint.current) return;
         lastFingerprint.current = fp;
 
-        if (matchingSig.length === 0) {
-            candleSeries.current.setMarkers([]);
-            return;
-        }
-
-        const tfSec = selectedTF || 60;
-        const compactText = typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches;
-
-        // Convert Signals to markers
-        const sigMarkers: SeriesMarker<Time>[] = matchingSig
-            .map(s => {
-                const ts = s.candle_ts || s.created_at;
-                if (!ts) return null;
-                const rawSec = Math.floor(new Date(ts).getTime() / 1000) + IST_OFFSET;
-                const timeSec = Math.floor(rawSec / tfSec) * tfSec;
-                const isBuy = s.action.toUpperCase() === 'BUY';
-                const side = s.side ? s.side.toUpperCase() : '';
-                const sideShort = side === 'CALL' ? 'C' : side === 'PUT' ? 'P' : '';
-                const markerLabel = compactText
-                    ? (sideShort ? `${isBuy ? '▲' : '▼'}${sideShort}` : (isBuy ? '▲' : '▼'))
-                    : [isBuy ? 'BUY' : 'EXIT', sideShort].filter(Boolean).join(' ');
-
-                return {
-                    time: timeSec as Time,
-                    position: isBuy ? 'belowBar' : 'aboveBar',
-                    color: isBuy ? '#3ecf8e' : '#f0616d',
-                    shape: isBuy ? 'arrowUp' : 'arrowDown',
-                    text: markerLabel || (isBuy ? 'BUY' : 'EXIT'),
-                } as SeriesMarker<Time>;
-            })
-            .filter((m): m is SeriesMarker<Time> => m !== null);
-
-        const allMarkers = sigMarkers.sort((a, b) => (a.time as number) - (b.time as number));
-
-        candleSeries.current.setMarkers(allMarkers);
-    }, [signals, selectedToken, selectedTF, candleSeries]);
+        const compact = typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches;
+        candleSeries.current.setMarkers(buildChartMarkers(signals, refused, selectedToken, selectedTF || 60, compact));
+    }, [signals, refused, selectedToken, selectedTF, candleSeries]);
 }
-
