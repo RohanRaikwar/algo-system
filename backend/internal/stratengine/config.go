@@ -90,6 +90,11 @@ type Config struct {
 	PickMaxSpreadPct float64       // (ask−bid)/mid × 100 ceiling
 	PickMaxQuoteAge  time.Duration // bid/ask older than this is not tradable
 	PickMaxChainAge  time.Duration // greeks snapshot older than this refuses selection
+	// RANGE's picker intent has no theta/gamma cap by default (0 = off);
+	// unlike SR, RANGE's strike rule already targets a delta band, so a
+	// cap is opt-in via these envs.
+	RangePickMaxThetaPct float64
+	RangePickMaxGamma    float64
 
 	PaperSlippageBps      int64 // paper fills cross the spread: LTP ± max(LTP×bps/10000, min)
 	PaperSlippageMinPaise int64
@@ -157,6 +162,8 @@ func LoadConfig() Config {
 		PickMaxSpreadPct:      getEnvFloat("STRAT_PICK_MAX_SPREAD_PCT", 2),
 		PickMaxQuoteAge:       getEnvDuration("STRAT_PICK_MAX_QUOTE_AGE", 3*time.Second),
 		PickMaxChainAge:       getEnvDuration("STRAT_PICK_MAX_CHAIN_AGE", 2*time.Minute),
+		RangePickMaxThetaPct:  getEnvFloat("STRAT_RANGE_PICK_MAX_THETA_PCT", 0),
+		RangePickMaxGamma:     getEnvFloat("STRAT_RANGE_PICK_MAX_GAMMA", 0),
 		PaperSlippageBps:      config.GetEnvInt64("STRAT_PAPER_SLIPPAGE_BPS", 50),
 		PaperSlippageMinPaise: config.GetEnvInt64("STRAT_PAPER_SLIPPAGE_MIN_PAISE", 50),
 		WarmupDays:            config.GetEnvInt("STRAT_RANGE_WARMUP_DAYS", 5),

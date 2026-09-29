@@ -35,7 +35,7 @@ func (svc *Service) pickerConfig() optionpicker.Config {
 	return optionpicker.Config{
 		Rules: optionpicker.Rules{
 			MaxSpreadPct: svc.cfg.PickMaxSpreadPct, MaxQuoteAge: svc.cfg.PickMaxQuoteAge, MaxChainAge: svc.cfg.PickMaxChainAge,
-			MaxThetaPct: svc.cfg.SRMaxThetaPct, MaxGamma: svc.cfg.SRMaxGamma, GammaDTE: svc.cfg.SRGammaDTE,
+			GammaDTE: svc.cfg.SRGammaDTE,
 			MaxBuyIV: svc.cfg.RangeMaxBuyIV, MinSellIV: svc.cfg.RangeMinSellIV,
 			MinLiquidity: float64(svc.cfg.RangeMinLiquidity), CostMultiple: svc.cfg.RangeCostMultiple, RatePct: 6.5,
 		},
@@ -118,7 +118,8 @@ func (svc *Service) intentFor(sig strategy.Signal) (optionpicker.SingleIntent, b
 	switch {
 	case svc.isSRSignal(&sig):
 		return optionpicker.SingleIntent{Strategy: sig.StrategyName, Option: opt,
-			DeltaMin: svc.cfg.SRDeltaMin, DeltaMax: svc.cfg.SRDeltaMax, MinDTE: svc.cfg.SRMinDTE, TargetMove: sig.TargetMove}, true
+			DeltaMin: svc.cfg.SRDeltaMin, DeltaMax: svc.cfg.SRDeltaMax, MinDTE: svc.cfg.SRMinDTE, TargetMove: sig.TargetMove,
+			MaxThetaPct: svc.cfg.SRMaxThetaPct, MaxGamma: svc.cfg.SRMaxGamma}, true
 	case svc.nifty50RangeStrategy != nil && sig.StrategyName == svc.nifty50RangeStrategy.Name():
 		// The range strategy's strike rule (ATM, or OTM in a wide range)
 		// sets the delta band, as in the delta guard.
@@ -141,7 +142,8 @@ func (svc *Service) intentFor(sig strategy.Signal) (optionpicker.SingleIntent, b
 			}
 		}
 		lo, hi := deltaBand(otm)
-		return optionpicker.SingleIntent{Strategy: sig.StrategyName, Option: opt, DeltaMin: lo, DeltaMax: hi, MinDTE: 1, TargetMove: sig.TargetMove}, true
+		return optionpicker.SingleIntent{Strategy: sig.StrategyName, Option: opt, DeltaMin: lo, DeltaMax: hi, MinDTE: 1, TargetMove: sig.TargetMove,
+			MaxThetaPct: svc.cfg.RangePickMaxThetaPct, MaxGamma: svc.cfg.RangePickMaxGamma}, true
 	}
 	return optionpicker.SingleIntent{}, false
 }

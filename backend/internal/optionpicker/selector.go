@@ -92,9 +92,9 @@ func buyCheck(p Pick, in SingleIntent, r Rules) string {
 	switch {
 	case d < in.DeltaMin || d > in.DeltaMax:
 		return "delta"
-	case r.MaxThetaPct > 0 && math.Abs(p.Theta)*100 > premium*r.MaxThetaPct:
+	case in.MaxThetaPct > 0 && math.Abs(p.Theta)*100 > premium*in.MaxThetaPct:
 		return "theta"
-	case r.MaxGamma > 0 && p.DTE <= r.GammaDTE && p.Gamma > r.MaxGamma:
+	case in.MaxGamma > 0 && p.DTE <= r.GammaDTE && p.Gamma > in.MaxGamma:
 		return "gamma"
 	case r.MaxBuyIV > 0 && p.IV > r.MaxBuyIV:
 		return "iv"

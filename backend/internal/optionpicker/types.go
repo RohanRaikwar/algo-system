@@ -30,18 +30,19 @@ func (q Quote) Mid() int64 {
 }
 
 // Rules are the selection limits. Zero disables a rule unless noted.
+// MaxThetaPct and MaxGamma are not here: the theta/gamma decay a strategy
+// will tolerate is a property of that strategy's intent (SR and RANGE want
+// different caps), not a global picker limit, so they live on SingleIntent.
 type Rules struct {
 	MaxSpreadPct float64       // (ask−bid)/mid × 100
 	MaxQuoteAge  time.Duration // required (> 0)
 	MaxChainAge  time.Duration // required (> 0)
-	MaxThetaPct  float64       // bought: |theta|/day ≤ % of premium
-	MaxGamma     float64       // bought, within GammaDTE days
-	GammaDTE     int
-	MaxBuyIV     float64 // percent
-	MinSellIV    float64 // percent, average of sold legs
-	MinLiquidity float64 // max(live OI, chain liquidity)
-	CostMultiple int64   // bought: |delta| × TargetMove ≥ k × (ask − bid)
-	RatePct      float64 // risk-free rate for greeks, e.g. 6.5
+	GammaDTE     int           // window (days to expiry) an intent's MaxGamma applies within
+	MaxBuyIV     float64       // percent
+	MinSellIV    float64       // percent, average of sold legs
+	MinLiquidity float64       // max(live OI, chain liquidity)
+	CostMultiple int64         // bought: |delta| × TargetMove ≥ k × (ask − bid)
+	RatePct      float64       // risk-free rate for greeks, e.g. 6.5
 }
 
 // SingleIntent asks for one bought option.
@@ -50,7 +51,9 @@ type SingleIntent struct {
 	Option             string // "CE" / "PE"
 	DeltaMin, DeltaMax float64
 	MinDTE             int
-	TargetMove         int64 // index paise to target; 0 = no cost rule
+	TargetMove         int64   // index paise to target; 0 = no cost rule
+	MaxThetaPct        float64 // |theta|/day ≤ this % of premium, 0 = off
+	MaxGamma           float64 // gamma cap within Rules.GammaDTE days, 0 = off
 }
 
 // CondorIntent asks for a short iron condor anchored at the range edges.

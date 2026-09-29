@@ -15,9 +15,9 @@ var (
 	now    = time.Date(2026, 9, 30, 11, 30, 0, 0, ist)
 	exp1   = time.Date(2026, 10, 6, 0, 0, 0, 0, ist)
 	exp2   = time.Date(2026, 10, 13, 0, 0, 0, 0, ist)
-	rules  = Rules{MaxSpreadPct: 2, MaxQuoteAge: 3 * time.Second, MaxChainAge: 2 * time.Minute, MaxThetaPct: 25, MaxGamma: 0.005, GammaDTE: 1, MaxBuyIV: 25, MinLiquidity: 5000, CostMultiple: 3, RatePct: 6.5}
+	rules  = Rules{MaxSpreadPct: 2, MaxQuoteAge: 3 * time.Second, MaxChainAge: 2 * time.Minute, GammaDTE: 1, MaxBuyIV: 25, MinLiquidity: 5000, CostMultiple: 3, RatePct: 6.5}
 	spot   = int64(2270000) // 22700.00
-	callIn = SingleIntent{Strategy: "T", Option: "CE", DeltaMin: 0.45, DeltaMax: 0.60, MinDTE: 1}
+	callIn = SingleIntent{Strategy: "T", Option: "CE", DeltaMin: 0.45, DeltaMax: 0.60, MinDTE: 1, MaxThetaPct: 25, MaxGamma: 0.005}
 )
 
 func ctr(strike int64, opt string, exp time.Time) Contract {
@@ -163,6 +163,22 @@ func TestSelectSingleIVAndLiquidityAndCost(t *testing.T) {
 	in.TargetMove = 100 // 1 point × 0.5 = 50 paise < 3 × 20 = 60 → every candidate fails cost
 	if _, rej, err := SelectSingle(ladder("CE", exp1), in, rules, env(quotes(nil))); err == nil || rej["cost"] == 0 {
 		t.Fatalf("cost rule not applied: %v", rej)
+	}
+}
+
+// A contract whose theta exceeds the intent's cap is rejected with key
+// "theta". The cap lives on SingleIntent (not Rules): SR and RANGE want
+// different theta tolerances.
+func TestSelectSingleRejectsTheta(t *testing.T) {
+	in := callIn
+	in.MaxThetaPct = 5 // real BS theta here (~15.4/day on a ~150 premium) far exceeds 5%
+	if _, rej, err := SelectSingle(ladder("CE", exp1), in, rules, env(quotes(nil))); err == nil || rej["theta"] == 0 {
+		t.Fatalf("high-theta contract accepted: rej=%v err=%v", rej, err)
+	}
+	// MaxThetaPct 0 (off) must not reject on theta.
+	in.MaxThetaPct = 0
+	if _, rej, err := SelectSingle(ladder("CE", exp1), in, rules, env(quotes(nil))); err != nil || rej["theta"] != 0 {
+		t.Fatalf("theta cap off still rejected: rej=%v err=%v", rej, err)
 	}
 }
 
