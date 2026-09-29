@@ -54,6 +54,12 @@ describe('collectIssues', () => {
         expect(collectIssues(lagging, false)).toEqual([]);
     });
 
+    it('ignores a one-sample candle lag spike; flags lag sustained for 3 samples', () => {
+        const spike = base({ pipeline: { candle_lag_sec: 2.41, market_open: true } as PipelineSnapshot });
+        expect(collectIssues(spike, true, [1.41, 1.41, 2.41])).toEqual([]);
+        expect(collectIssues(spike, true, [2.2, 2.3, 2.41]).map(i => i.key)).toEqual(['lag']);
+    });
+
     it('flags a silent feed during market hours', () => {
         const open = base({ pipeline: { candle_lag_sec: 1, market_open: true } as PipelineSnapshot });
         expect(collectIssues(open, false).map(i => i.key)).toEqual(['feed']);
