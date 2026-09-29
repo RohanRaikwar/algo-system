@@ -50,6 +50,11 @@ type IngestConfig struct {
 	// Tokens to subscribe, grouped by exchange type and mode.
 	SubscribeMode int
 	TokenList     []smartconnect.TokenListEntry
+
+	// Extra subscriptions per mode (dynamic tokens remembered for this
+	// session, e.g. options in SnapQuote). Stored like TokenList so every
+	// (re)connect sends them.
+	Extra map[int][]smartconnect.TokenListEntry
 }
 
 // Ingest connects to Angel One WebSocket and pushes normalized ticks into tickCh.
@@ -113,6 +118,11 @@ func (ing *Ingest) Start(ctx context.Context, tickCh chan<- model.Tick) error {
 // wire installs the socket callbacks.
 func (ing *Ingest) wire(tickCh chan<- model.Tick) {
 	ing.ws.AddSubscription(ing.cfg.SubscribeMode, ing.cfg.TokenList)
+	for mode, list := range ing.cfg.Extra {
+		if len(list) > 0 {
+			ing.ws.AddSubscription(mode, list)
+		}
+	}
 
 	ing.ws.OnOpen = func() {
 		if ing.OnConnState != nil {
