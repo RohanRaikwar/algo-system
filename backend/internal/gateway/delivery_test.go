@@ -77,7 +77,7 @@ func TestFullStatePendingSupersededByQueuedFrame(t *testing.T) {
 // already hold that seq, or the response is needlessly incomplete.
 func TestReplayBufferHoldsCurrentSeq(t *testing.T) {
 	h := newTestHub()
-	const ch = "pub:tick:NSE:1"
+	const ch = "pub:candle:60s:NSE:1"
 	const n = 20000
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -140,5 +140,26 @@ func TestAttachLiveStateIncludesRecentSignals(t *testing.T) {
 	}
 	if _, err := json.Marshal(snap); err != nil {
 		t.Fatalf("snapshot must stay marshalable: %v", err)
+	}
+}
+
+// Ticks keep no replay buffer (clients never backfill them); stream channels do.
+func TestTicksKeepNoReplayBuffer(t *testing.T) {
+	h := newTestHub()
+	h.broadcast("pub:tick:NFO:40712", []byte(`{"price":1}`))
+	h.broadcast("pub:ind:EMA_9:60s:NSE:99926000", []byte(`{"value":1}`))
+	h.mu.RLock()
+	_, tickBuf := h.replayBufs["pub:tick:NFO:40712"]
+	_, indBuf := h.replayBufs["pub:ind:EMA_9:60s:NSE:99926000"]
+	tickSeq := h.channelSeqs["pub:tick:NFO:40712"]
+	h.mu.RUnlock()
+	if tickBuf || !indBuf {
+		t.Fatalf("tick buffer %v (want none), indicator buffer %v (want one)", tickBuf, indBuf)
+	}
+	if tickSeq != 1 {
+		t.Fatalf("tick channel_seq %d, want 1", tickSeq)
+	}
+	if got := h.GetReplayRange("pub:tick:NFO:40712", 1, 1); len(got) != 0 {
+		t.Fatalf("tick replay %d entries", len(got))
 	}
 }

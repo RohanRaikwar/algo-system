@@ -49,10 +49,16 @@ func (b *Broadcaster) Broadcast(channel string, data []byte) {
 
 	// Replay buffer for gap backfill (500 envelopes per channel). Fetched in the
 	// same critical section as the seq so an idle sweep cannot slip between them.
-	rb, exists := b.hub.replayBufs[channel]
-	if !exists {
-		rb = NewReplayBuffer(500)
-		b.hub.replayBufs[channel] = rb
+	// Ticks get none: clients never backfill them (the next tick supersedes a
+	// missed one), and one buffer per streamed option cost ~200 KB each.
+	var rb *ReplayBuffer
+	if hasReplay(channel) {
+		var exists bool
+		rb, exists = b.hub.replayBufs[channel]
+		if !exists {
+			rb = NewReplayBuffer(500)
+			b.hub.replayBufs[channel] = rb
+		}
 	}
 
 	// Hand-craft envelope JSON
@@ -73,7 +79,9 @@ func (b *Broadcaster) Broadcast(channel string, data []byte) {
 
 	// Pushed inside the critical section so a reader that sees channelSeq
 	// (e.g. /api/missed current_seq) also finds it in the buffer.
-	rb.Push(channelSeq, buf)
+	if rb != nil {
+		rb.Push(channelSeq, buf)
+	}
 	b.hub.mu.Unlock()
 
 	// Fan out to subscribed clients. Full-state channels keep only the newest
@@ -148,4 +156,9 @@ func extractTickTS(data []byte) time.Time {
 		return time.Time{}
 	}
 	return ts
+}
+
+// hasReplay reports whether a channel keeps a replay buffer for /api/missed.
+func hasReplay(channel string) bool {
+	return !strings.HasPrefix(channel, "pub:tick:")
 }
