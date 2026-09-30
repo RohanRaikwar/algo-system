@@ -92,7 +92,8 @@ export function parseChannel(ch: string) {
 }
 
 // Constants
-export const CHART_MAX = 1000;
+// Candles kept per TF once scrolled-back history is merged in.
+export const CHART_MAX = 5000;
 export const FETCH_SIZE = 500;
 export const CANDLE_MAX = 1000;
 export const RECONNECT_BASE = 1000;

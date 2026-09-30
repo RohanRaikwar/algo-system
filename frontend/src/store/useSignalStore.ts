@@ -51,6 +51,14 @@ function liveToRecord(sig: SignalPayload): SignalRecord {
     };
 }
 
+/**
+ * Identity of a signal, as the journal's UNIQUE key plus the leg: REST and
+ * WS spell the timestamp differently, so it is compared as an instant.
+ */
+export function signalKey(r: SignalRecord): string {
+    return [r.strategy, r.action, r.side || '', r.exchange, r.token, Date.parse(r.candle_ts), r.leg || '', r.strike || ''].join('|');
+}
+
 export const useSignalStore = create<SignalState>((set) => ({
     signals: [],
     unreadCount: 0,
@@ -58,6 +66,10 @@ export const useSignalStore = create<SignalState>((set) => ({
 
     addLiveSignal: (sig) => set((s) => {
         const record = liveToRecord(sig);
+        // Reconnect replay, gap backfill and SNAPSHOT recovery can each
+        // redeliver a signal already held; a repeat would double its marker.
+        const key = signalKey(record);
+        if (s.signals.some(x => signalKey(x) === key)) return s;
         const next = [record, ...s.signals].slice(0, MAX_SIGNALS);
         return { signals: next, unreadCount: s.unreadCount + 1 };
     }),
