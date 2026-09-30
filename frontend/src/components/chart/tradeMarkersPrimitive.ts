@@ -17,6 +17,8 @@ export interface TradeMarker {
     kind: TradeMarkerKind;
     label: string; // e.g. "BUY CALL"; empty in compact mode
     side: string; // "C" | "P" | ""
+    lines: string[]; // card detail rows; empty in compact mode
+    pnl?: number; // paise, exits paired with an entry; tints the P&L row
 }
 
 export const MARKER_COLORS: Record<TradeMarkerKind, string> = {
@@ -26,19 +28,118 @@ export const MARKER_COLORS: Record<TradeMarkerKind, string> = {
 };
 
 const FONT = "600 10px 'Inter', sans-serif";
-const PILL_H = 18;
+const DETAIL_FONT = "500 10px 'Inter', sans-serif";
+const BG = '#151b25'; // chart background
+const DETAIL_COLOR = '#c9d1dc';
+const HEADER_H = 18;
+const LINE_H = 14;
 const PAD_X = 6;
+const PAD_Y = 3; // below the last detail row
 const ICON = 10;
 const GAP = 4; // icon to text
-const STEM = 7; // bar extreme to pill
-const STACK = 3; // gap between stacked pills on one bar
+const GAP_Y = 14; // clearance between candles and a card
+const STACK = 4; // clearance between cards
+const EDGE = 2; // pane edge inset
+const SIDE_PENALTY = 60; // px cost of flipping a card to its non-preferred side
+
+export interface Rect { left: number; top: number; w: number; h: number }
+
+/** One card to place: its anchor on the bar extreme and its size. */
+export interface CardRequest { x: number; y: number; above: boolean; w: number; h: number }
+
+/** Candle column in pixels: x centre and wick top/bottom. */
+export interface BarBox { x: number; top: number; bottom: number }
+
+function overlaps(a: Rect, b: Rect, pad: number): boolean {
+    return a.left < b.left + b.w + pad && b.left < a.left + a.w + pad
+        && a.top < b.top + b.h + pad && b.top < a.top + a.h + pad;
+}
+
+/**
+ * Places callout cards in time order so each clears the candles under its
+ * horizontal span and every card placed before it. A card tries its preferred
+ * side centred on the anchor, then shifted left/right, then the other side,
+ * and takes the position closest to its anchor that fits in the pane.
+ */
+export function layoutCards(reqs: CardRequest[], bars: BarBox[], paneW: number, paneH: number): { rect: Rect; above: boolean }[] {
+    const placed: Rect[] = [];
+    const out: { rect: Rect; above: boolean }[] = [];
+
+    const tryAt = (r: CardRequest, left: number, above: boolean): Rect => {
+        // Span covers the card and the anchor bar, since the leader runs back to it.
+        const x0 = Math.min(left - STACK, r.x);
+        const x1 = Math.max(left + r.w + STACK, r.x);
+        let top: number;
+        if (above) {
+            let hi = r.y;
+            for (const b of bars) if (b.x >= x0 && b.x <= x1 && b.top < hi) hi = b.top;
+            top = hi - GAP_Y - r.h;
+        } else {
+            let lo = r.y;
+            for (const b of bars) if (b.x >= x0 && b.x <= x1 && b.bottom > lo) lo = b.bottom;
+            top = lo + GAP_Y;
+        }
+        const rect = { left, top, w: r.w, h: r.h };
+        // Push outward past earlier cards until clear; each push strictly moves away.
+        for (let moved = true; moved;) {
+            moved = false;
+            for (const p of placed) {
+                if (!overlaps(rect, p, STACK)) continue;
+                rect.top = above ? p.top - STACK - rect.h : p.top + p.h + STACK;
+                moved = true;
+            }
+        }
+        return rect;
+    };
+
+    for (const r of reqs) {
+        const clampLeft = (l: number) => Math.min(Math.max(l, EDGE), Math.max(EDGE, paneW - r.w - EDGE));
+        const lefts = [...new Set([r.x - r.w / 2, r.x - r.w - GAP_Y, r.x + GAP_Y].map(l => Math.round(clampLeft(l))))];
+        let best: { rect: Rect; above: boolean; score: number } | null = null;
+        for (const above of [r.above, !r.above]) {
+            for (const left of lefts) {
+                const rect = tryAt(r, left, above);
+                const fits = rect.top >= EDGE && rect.top + rect.h <= paneH - EDGE;
+                const dy = above ? r.y - (rect.top + rect.h) : rect.top - r.y;
+                const cx = rect.left + rect.w / 2;
+                const score = dy + 0.5 * Math.abs(cx - r.x) + (above === r.above ? 0 : SIDE_PENALTY) + (fits ? 0 : 1e6);
+                if (!best || score < best.score) best = { rect, above, score };
+            }
+        }
+        const rect = best!.rect;
+        rect.top = Math.min(Math.max(rect.top, EDGE), Math.max(EDGE, paneH - rect.h - EDGE));
+        placed.push(rect);
+        out.push({ rect, above: best!.above });
+    }
+    return out;
+}
 
 interface Placed {
-    x: number;
-    y: number; // bar extreme (high for above, low for below)
+    x: number; // anchor: bar centre
+    y: number; // anchor: bar high (card above) or low (card below)
     above: boolean;
-    slot: number;
+    rect: Rect;
     m: TradeMarker;
+}
+
+let measureCtx: CanvasRenderingContext2D | null | undefined;
+
+/** Text width in px for a font; falls back to an estimate without a canvas (tests). */
+function textWidth(text: string, font: string): number {
+    if (measureCtx === undefined) {
+        measureCtx = typeof document !== 'undefined' ? document.createElement('canvas').getContext('2d') : null;
+    }
+    if (!measureCtx) return text.length * 6;
+    measureCtx.font = font;
+    return measureCtx.measureText(text).width;
+}
+
+export function cardSize(m: TradeMarker): { w: number; h: number } {
+    const text = m.label || m.side;
+    let w = PAD_X * 2 + ICON + (text ? GAP + textWidth(text, FONT) : 0);
+    for (const line of m.lines) w = Math.max(w, PAD_X * 2 + textWidth(line, DETAIL_FONT));
+    const h = HEADER_H + (m.lines.length ? m.lines.length * LINE_H + PAD_Y : 0);
+    return { w: Math.ceil(w), h };
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -93,56 +194,84 @@ class Renderer implements ISeriesPrimitivePaneRenderer {
     draw(target: Parameters<ISeriesPrimitivePaneRenderer['draw']>[0]) {
         target.useMediaCoordinateSpace(({ context: ctx }) => {
             ctx.save();
-            ctx.font = FONT;
             ctx.textBaseline = 'middle';
-            for (const p of this.placed) this.drawOne(ctx, p);
+            // Leaders first so no card is crossed by another card's line.
+            for (const p of this.placed) this.drawLeader(ctx, p);
+            for (const p of this.placed) this.drawCard(ctx, p);
             ctx.restore();
         });
     }
 
-    private drawOne(ctx: CanvasRenderingContext2D, { x, y, above, slot, m }: Placed) {
+    private drawLeader(ctx: CanvasRenderingContext2D, { x, y, above, rect, m }: Placed) {
         const color = MARKER_COLORS[m.kind];
-        const text = m.label || m.side;
-        const textW = text ? ctx.measureText(text).width : 0;
-        const w = PAD_X * 2 + ICON + (text ? GAP + textW : 0);
-        const offset = STEM + slot * (PILL_H + STACK);
-        const top = above ? y - offset - PILL_H : y + offset;
-        const left = Math.round(x - w / 2);
-        const refused = m.kind === 'refused';
+        const ax = Math.round(x) + 0.5;
+        const ay = above ? y - 2 : y + 2;
+        // Attach on the card edge facing the bar, as close to the bar's x as the card allows.
+        const cx = Math.round(Math.min(Math.max(x, rect.left + 6), rect.left + rect.w - 6)) + 0.5;
+        const cy = above ? rect.top + rect.h : rect.top;
+        const midY = Math.round((ay + cy) / 2) + 0.5;
 
-        // Stem from bar extreme to the first pill.
-        if (slot === 0) {
-            ctx.strokeStyle = color;
-            ctx.globalAlpha = 0.6;
-            ctx.lineWidth = 1;
-            ctx.setLineDash(refused ? [2, 2] : []);
-            ctx.beginPath();
-            ctx.moveTo(Math.round(x) + 0.5, above ? y - 1 : y + 1);
-            ctx.lineTo(Math.round(x) + 0.5, above ? top + PILL_H : top);
-            ctx.stroke();
-            ctx.setLineDash([]);
-            ctx.globalAlpha = 1;
-        }
-
-        roundRect(ctx, left + 0.5, top + 0.5, w - 1, PILL_H - 1, 4);
-        if (refused) {
-            ctx.fillStyle = '#151b25'; // chart background
-            ctx.fill();
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 1;
-            ctx.stroke();
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = 0.7;
+        ctx.lineWidth = 1;
+        ctx.setLineDash(m.kind === 'refused' ? [2, 2] : []);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        if (Math.abs(cx - ax) < 1) {
+            ctx.lineTo(ax, ay);
         } else {
-            ctx.fillStyle = color;
-            ctx.fill();
+            ctx.lineTo(cx, midY);
+            ctx.lineTo(ax, midY);
+            ctx.lineTo(ax, ay);
         }
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(ax, ay, 2, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    private drawCard(ctx: CanvasRenderingContext2D, { rect, m }: Placed) {
+        const color = MARKER_COLORS[m.kind];
+        const refused = m.kind === 'refused';
+        const { left, top, w, h } = rect;
+        const text = m.label || m.side;
+
+        roundRect(ctx, left + 0.5, top + 0.5, w - 1, h - 1, 4);
+        ctx.fillStyle = BG;
+        ctx.fill();
+        if (!refused) {
+            // Solid header band, clipped to the card's rounded outline.
+            ctx.save();
+            ctx.clip();
+            ctx.fillStyle = color;
+            ctx.fillRect(left, top, w, HEADER_H);
+            ctx.restore();
+        }
+        roundRect(ctx, left + 0.5, top + 0.5, w - 1, h - 1, 4);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.stroke();
 
         const fg = refused ? color : '#0b0e14';
         ctx.strokeStyle = fg;
-        drawIcon(ctx, m.kind, left + PAD_X + ICON / 2, top + PILL_H / 2);
+        drawIcon(ctx, m.kind, left + PAD_X + ICON / 2, top + HEADER_H / 2);
+        ctx.font = FONT;
         if (text) {
             ctx.fillStyle = fg;
-            ctx.fillText(text, left + PAD_X + ICON + GAP, top + PILL_H / 2 + 0.5);
+            ctx.fillText(text, left + PAD_X + ICON + GAP, top + HEADER_H / 2 + 0.5);
         }
+
+        ctx.font = DETAIL_FONT;
+        m.lines.forEach((line, i) => {
+            const isPnL = m.pnl !== undefined && line.startsWith('P&L');
+            ctx.fillStyle = isPnL
+                ? (m.pnl! > 0 ? MARKER_COLORS.entry : m.pnl! < 0 ? MARKER_COLORS.exit : DETAIL_COLOR)
+                : DETAIL_COLOR;
+            ctx.fillText(line, left + PAD_X, top + HEADER_H + i * LINE_H + LINE_H / 2 + 1);
+        });
     }
 }
 
@@ -153,8 +282,9 @@ class PaneView implements ISeriesPrimitivePaneView {
 }
 
 /**
- * Trade markers drawn as labelled badges: entries below the bar, exits and
- * refused entries above, stacked when several share a bar.
+ * Trade markers drawn as callout cards joined to their bar by a leader line:
+ * entries below price, exits and refused entries above, each placed clear of
+ * nearby candles and earlier cards (see layoutCards).
  */
 export class TradeMarkersPrimitive implements ISeriesPrimitive<Time> {
     private chart: IChartApi | null = null;
@@ -183,24 +313,51 @@ export class TradeMarkersPrimitive implements ISeriesPrimitive<Time> {
 
     updateAllViews() {
         const placed: Placed[] = [];
-        if (this.chart && this.series) {
-            const ts = this.chart.timeScale();
-            const slots = new Map<string, number>();
+        const chart = this.chart;
+        const series = this.series;
+        if (chart && series && this.markers.length) {
+            const ts = chart.timeScale();
+            const range = ts.getVisibleLogicalRange();
+            const bars: BarBox[] = [];
+            if (range) {
+                for (let i = Math.max(0, Math.floor(range.from)); i <= Math.ceil(range.to); i++) {
+                    const bar = series.dataByIndex(i);
+                    if (!bar || !('high' in bar)) continue;
+                    const x = ts.logicalToCoordinate(i as Logical);
+                    const top = series.priceToCoordinate(bar.high);
+                    const bottom = series.priceToCoordinate(bar.low);
+                    if (x === null || top === null || bottom === null) continue;
+                    bars.push({ x, top, bottom });
+                }
+            }
+
+            const reqs: CardRequest[] = [];
+            const anchors: TradeMarker[] = [];
             for (const m of this.markers) {
                 const x = ts.timeToCoordinate(m.time as Time);
                 if (x === null) continue;
                 const logical = ts.coordinateToLogical(x);
                 if (logical === null) continue;
-                const bar = this.series.dataByIndex(Math.round(logical));
+                const bar = series.dataByIndex(Math.round(logical));
                 if (!bar || !('high' in bar) || bar.time !== m.time) continue;
                 const above = m.kind !== 'entry';
-                const y = this.series.priceToCoordinate(above ? bar.high : bar.low);
+                const y = series.priceToCoordinate(above ? bar.high : bar.low);
                 if (y === null) continue;
-                const key = `${m.time}:${above ? 'a' : 'b'}`;
-                const slot = slots.get(key) ?? 0;
-                slots.set(key, slot + 1);
-                placed.push({ x, y, above, slot, m });
+                reqs.push({ x, y, above, ...cardSize(m) });
+                anchors.push(m);
             }
+
+            const pane = chart.paneSize();
+            layoutCards(reqs, bars, ts.width() || pane.width, pane.height).forEach(({ rect, above }, i) => {
+                const r = reqs[i];
+                // Anchor follows the side the card landed on.
+                const bar = series.dataByIndex(Math.round(ts.coordinateToLogical(r.x) ?? 0));
+                let y = r.y;
+                if (above !== r.above && bar && 'high' in bar) {
+                    y = series.priceToCoordinate(above ? bar.high : bar.low) ?? r.y;
+                }
+                placed.push({ x: r.x, y, above, rect, m: anchors[i] });
+            });
         }
         this.view.placed = placed;
     }
@@ -219,7 +376,9 @@ export class TradeMarkersPrimitive implements ISeriesPrimitive<Time> {
             if (bar.high > hi) hi = bar.high;
         }
         if (lo > hi) return null;
-        const margin = STEM + 2 * PILL_H + STACK;
+        let tallest = 0;
+        for (const m of this.markers) tallest = Math.max(tallest, cardSize(m).h);
+        const margin = GAP_Y + tallest + STACK;
         return { priceRange: { minValue: lo, maxValue: hi }, margins: { above: margin, below: margin } };
     }
 }

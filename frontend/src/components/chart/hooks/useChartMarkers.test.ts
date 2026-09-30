@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildChartMarkers } from './useChartMarkers';
+import { layoutCards, type CardRequest } from '../tradeMarkersPrimitive';
 import { oldestCandleMs } from './useChartLazyLoad';
 import { useSignalStore } from '../../../store/useSignalStore';
 import type { SignalPayload } from '../../../types/signal';
@@ -34,6 +35,59 @@ describe('buildChartMarkers', () => {
     it('skips other instruments and uses compact text on phones', () => {
         expect(buildChartMarkers([], [refused], 'NFO:40712', 60, false)).toHaveLength(0);
         expect(buildChartMarkers([], [refused], '99926000', 60, true)[0]).toMatchObject({ label: '', side: 'P' });
+    });
+});
+
+describe('card lines', () => {
+    const buy = { ...entry, side: 'PUT', price: 12050, qty: 75, strike: 22700 } as SignalRecord;
+    const exit = {
+        ...buy, id: 2, action: 'EXIT', price: 13575,
+        candle_ts: '2026-09-29T06:10:00Z', created_at: '2026-09-29T06:10:00Z',
+    } as SignalRecord;
+
+    it('shows premium, strike, qty on entries and P&L on the paired exit', () => {
+        // Store order is newest-first; pairing must still run oldest-first.
+        const [b, e] = buildChartMarkers([exit, buy], [], 'NSE:99926000', 60, false);
+        expect(b.lines).toEqual(['@ ₹120.50  22700P', 'qty 75']);
+        expect(e.lines).toEqual(['@ ₹135.75', 'P&L +₹1,143.75']);
+        expect(e.pnl).toBe((13575 - 12050) * 75);
+    });
+
+    it('puts both reasons on refused cards and drops lines in compact mode', () => {
+        expect(buildChartMarkers([], [refused], 'NSE:99926000', 60, false)[0].lines)
+            .toEqual(['SR PULLBACK PUT', 'SR strike: no greeks']);
+        const compact = buildChartMarkers([exit, buy], [refused], 'NSE:99926000', 60, true);
+        expect(compact.every(m => m.lines.length === 0)).toBe(true);
+    });
+});
+
+describe('layoutCards', () => {
+    const hit = (a: { left: number; top: number; w: number; h: number }, b: typeof a) =>
+        a.left < b.left + b.w && b.left < a.left + a.w && a.top < b.top + b.h && b.top < a.top + a.h;
+
+    it('clears candles under the card span, not only its own bar', () => {
+        const bars = [80, 100, 120, 140].map(x => ({ x, top: x === 100 ? 300 : 200, bottom: 580 }));
+        const [{ rect, above }] = layoutCards([{ x: 100, y: 300, above: true, w: 60, h: 40 }], bars, 800, 600);
+        expect(above).toBe(true);
+        for (const b of bars) {
+            if (b.x >= rect.left && b.x <= rect.left + rect.w) expect(rect.top + rect.h).toBeLessThan(b.top);
+        }
+        expect(rect.top + rect.h).toBeLessThan(200);
+    });
+
+    it('keeps cards on one bar apart', () => {
+        const req: CardRequest = { x: 400, y: 300, above: true, w: 80, h: 46 };
+        const out = layoutCards([req, req, req], [{ x: 400, top: 300, bottom: 330 }], 800, 600);
+        for (let i = 0; i < out.length; i++) {
+            for (let j = i + 1; j < out.length; j++) expect(hit(out[i].rect, out[j].rect)).toBe(false);
+        }
+    });
+
+    it('flips side when the preferred side has no room', () => {
+        const [{ rect, above }] = layoutCards([{ x: 400, y: 30, above: true, w: 80, h: 46 }],
+            [{ x: 400, top: 30, bottom: 60 }], 800, 600);
+        expect(above).toBe(false);
+        expect(rect.top).toBeGreaterThan(60);
     });
 });
 
