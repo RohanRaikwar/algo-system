@@ -49,10 +49,16 @@ func (b *Broadcaster) Broadcast(channel string, data []byte) {
 
 	// Replay buffer for gap backfill (500 envelopes per channel). Fetched in the
 	// same critical section as the seq so an idle sweep cannot slip between them.
-	rb, exists := b.hub.replayBufs[channel]
-	if !exists {
-		rb = NewReplayBuffer(500)
-		b.hub.replayBufs[channel] = rb
+	// Ticks get none, and candle/indicator channels only while a chart
+	// subscribes to them (see keepReplayLocked).
+	var rb *ReplayBuffer
+	if b.hub.keepReplayLocked(channel, now) {
+		var exists bool
+		rb, exists = b.hub.replayBufs[channel]
+		if !exists {
+			rb = NewReplayBuffer(500)
+			b.hub.replayBufs[channel] = rb
+		}
 	}
 
 	// Hand-craft envelope JSON
@@ -73,7 +79,9 @@ func (b *Broadcaster) Broadcast(channel string, data []byte) {
 
 	// Pushed inside the critical section so a reader that sees channelSeq
 	// (e.g. /api/missed current_seq) also finds it in the buffer.
-	rb.Push(channelSeq, buf)
+	if rb != nil {
+		rb.Push(channelSeq, buf)
+	}
 	b.hub.mu.Unlock()
 
 	// Fan out to subscribed clients. Full-state channels keep only the newest
@@ -148,4 +156,43 @@ func extractTickTS(data []byte) time.Time {
 		return time.Time{}
 	}
 	return ts
+}
+
+// replayGrace keeps a candle/indicator buffer this long after its last
+// subscriber left, so a chart that reconnects can still backfill its gap.
+const replayGrace = 2 * time.Minute
+
+// keepReplayLocked reports whether channel keeps a replay buffer for
+// /api/missed, and drops the buffer of one nobody needs. Caller holds h.mu.
+//   - pub:tick:* never: clients never backfill ticks, the next tick
+//     supersedes a missed one.
+//   - candle / indicator channels only while a client has subscribed to
+//     them (symbol + TF + indicator), or within replayGrace after: each full
+//     buffer is ~200 KB, and the chart asks for one symbol and TF, not every
+//     TF of every streamed token. A new subscription starts from the
+//     subscribe snapshot, so it needs no older buffer.
+//   - everything else (signals, orders, analyst, full state) always.
+func (h *Hub) keepReplayLocked(channel string, now time.Time) bool {
+	if strings.HasPrefix(channel, "pub:tick:") {
+		return false
+	}
+	parsed := parseChannel(channel)
+	if parsed == nil || (parsed.chType != "candle" && parsed.chType != "indicator") {
+		return true
+	}
+	for c := range h.clients {
+		if c.subscribedTo(parsed) {
+			if h.replayWantedAt == nil {
+				h.replayWantedAt = make(map[string]time.Time)
+			}
+			h.replayWantedAt[channel] = now
+			return true
+		}
+	}
+	if at, ok := h.replayWantedAt[channel]; ok && now.Sub(at) < replayGrace {
+		return true
+	}
+	delete(h.replayWantedAt, channel)
+	delete(h.replayBufs, channel)
+	return false
 }

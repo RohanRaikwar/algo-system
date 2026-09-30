@@ -109,7 +109,7 @@ func TestRegisterClientSendsHelloFirst(t *testing.T) {
 
 func TestMissedResponseCompleteness(t *testing.T) {
 	h := newTestHub()
-	ch := "pub:tick:NSE:1"
+	ch := "pub:signal"
 	for i := 0; i < 600; i++ { // replay buffer holds 500
 		h.broadcast(ch, []byte(`{"price":1}`))
 	}

@@ -16,7 +16,8 @@ import (
 //  The strategy asks for ATM; the contract bought is picked here from
 //  the nearest expiry at least SRMinDTE days out by greeks:
 //    |delta| in [SRDeltaMin, SRDeltaMax]   (directional exposure)
-//    |theta| ≤ SRMaxThetaPct % of premium  (no decay trap)
+//    |theta| over the expected hold ≤ SRThetaMaxGainPct % of the
+//      expected gain |delta| × target move  (no decay trap)
 //    gamma ≤ SRMaxGamma within SRGammaDTE days of expiry (no gamma whipsaw)
 //    liquidity ≥ RangeMinLiquidity
 //    IV ≤ RangeMaxBuyIV                    (premium not too expensive)
@@ -29,12 +30,17 @@ var istSR = time.FixedZone("IST", 5*3600+30*60)
 
 type srGreekLimits struct {
 	DeltaMin, DeltaMax float64
-	MaxThetaPct        float64
-	MaxGamma           float64
-	GammaDTE           int
-	MinLiquidity       float64
-	MaxBuyIV           float64 // %, 0 = off
-	MinDTE             int     // skip expiries fewer days out (1 = never same day)
+	// Theta rule: |theta| × ThetaHoldMin/375 (one session) must stay within
+	// ThetaMaxGainPct % of |delta| × target. The target is TargetMove on
+	// an entry, ViewTargetMove (index paise) for the live view. 0 = off.
+	ThetaMaxGainPct float64
+	ThetaHoldMin    float64
+	ViewTargetMove  int64
+	MaxGamma        float64
+	GammaDTE        int
+	MinLiquidity    float64
+	MaxBuyIV        float64 // %, 0 = off
+	MinDTE          int     // skip expiries fewer days out (1 = never same day)
 	// Cost rule, only with a target (entry signals): |delta| × TargetMove
 	// (index paise) must cover CostMultiple × round-trip Slippage.
 	CostMultiple int64
@@ -45,7 +51,8 @@ type srGreekLimits struct {
 func (svc *Service) srGreekLimits() srGreekLimits {
 	lim := srGreekLimits{
 		DeltaMin: svc.cfg.SRDeltaMin, DeltaMax: svc.cfg.SRDeltaMax,
-		MaxThetaPct: svc.cfg.SRMaxThetaPct, MaxGamma: svc.cfg.SRMaxGamma,
+		ThetaMaxGainPct: svc.cfg.SRThetaMaxGainPct, ThetaHoldMin: svc.cfg.PickHoldMinutes,
+		ViewTargetMove: svc.cfg.SRViewTargetMove, MaxGamma: svc.cfg.SRMaxGamma,
 		GammaDTE: svc.cfg.SRGammaDTE, MinLiquidity: float64(svc.cfg.RangeMinLiquidity),
 		MaxBuyIV: svc.cfg.RangeMaxBuyIV, MinDTE: svc.cfg.SRMinDTE,
 		CostMultiple: svc.cfg.RangeCostMultiple,
@@ -187,7 +194,7 @@ func evalSRContracts(chain []orderexec.OptionContract, opt string, now time.Time
 		case p <= 0:
 			ev.Rejects.Premium++
 			continue
-		case lim.MaxThetaPct > 0 && math.Abs(c.Theta)*100 > p*lim.MaxThetaPct:
+		case !srThetaOK(lim, d, c.Theta):
 			ev.Rejects.Theta++
 			continue
 		case lim.MaxGamma > 0 && ev.DTE <= lim.GammaDTE && c.Gamma > lim.MaxGamma:
@@ -213,6 +220,27 @@ func evalSRContracts(chain []orderexec.OptionContract, opt string, now time.Time
 		}
 	}
 	return ev, nil
+}
+
+// sessionMinutes is one NSE session (09:15-15:30), the day theta is spread over.
+const sessionMinutes = 375
+
+// srThetaOK: premium lost to theta over the expected hold stays within
+// ThetaMaxGainPct % of the expected premium gain |delta| × target. A flat
+// cap on theta per day would refuse every ATM weekly a few days before
+// expiry (ATM decay ≈ 1/(2·DTE) of premium a day) although an intraday
+// hold pays only a fraction of it.
+func srThetaOK(lim srGreekLimits, absDelta, theta float64) bool {
+	target := lim.TargetMove
+	if target <= 0 {
+		target = lim.ViewTargetMove
+	}
+	if lim.ThetaMaxGainPct <= 0 || lim.ThetaHoldMin <= 0 || target <= 0 {
+		return true
+	}
+	decay := math.Abs(theta) * lim.ThetaHoldMin / sessionMinutes // rupees
+	gain := absDelta * float64(target) / 100                     // rupees
+	return decay*100 <= gain*lim.ThetaMaxGainPct
 }
 
 // srCostOK: expected premium gain |delta| × target move covers the

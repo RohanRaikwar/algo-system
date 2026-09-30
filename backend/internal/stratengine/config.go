@@ -80,10 +80,15 @@ type Config struct {
 	SRMaxDayLossPts int64   // stop entries after this many index paise lost today, 0 = off
 	SRDeltaMin      float64 // bought strike |delta| band, from the live chain
 	SRDeltaMax      float64
-	SRMaxThetaPct   float64 // |theta| per day ≤ this % of premium, 0 = off
-	SRMaxGamma      float64 // gamma cap within SRGammaDTE days of expiry, 0 = off
-	SRGammaDTE      int
-	SRMinDTE        int // buy the nearest expiry at least this many days out (2 = Monday skips Tuesday)
+	SRMaxThetaPct   float64 // option picker's SR intent only: |theta| per day ≤ this % of premium, 0 = off
+	// SR strike selection: theta over PickHoldMinutes ≤ this % of |delta| ×
+	// target move, 0 = off. SRViewTargetMove (index paise) is the target
+	// for the live strike view, which has no signal.
+	SRThetaMaxGainPct float64
+	SRViewTargetMove  int64
+	SRMaxGamma        float64 // gamma cap within SRGammaDTE days of expiry, 0 = off
+	SRGammaDTE        int
+	SRMinDTE          int // buy the nearest expiry at least this many days out (2 = Monday skips Tuesday)
 
 	// ── Global option picker (internal/optionpicker) ──
 	PickerMode       string        // off | shadow (log decisions only) | on (picker chooses the contract)
@@ -157,6 +162,8 @@ func LoadConfig() Config {
 		SRDeltaMin:            getEnvFloat("STRAT_SR_DELTA_MIN", 0.45),
 		SRDeltaMax:            getEnvFloat("STRAT_SR_DELTA_MAX", 0.60),
 		SRMaxThetaPct:         getEnvFloat("STRAT_SR_MAX_THETA_PCT", 8),
+		SRThetaMaxGainPct:     getEnvFloat("STRAT_SR_THETA_MAX_GAIN_PCT", 25),
+		SRViewTargetMove:      config.GetEnvInt64("STRAT_SR_VIEW_TARGET_PAISE", 3000),
 		SRMaxGamma:            getEnvFloat("STRAT_SR_MAX_GAMMA", 0.005),
 		SRGammaDTE:            config.GetEnvInt("STRAT_SR_GAMMA_DTE", 1),
 		SRMinDTE:              config.GetEnvInt("STRAT_SR_MIN_DTE", 2),

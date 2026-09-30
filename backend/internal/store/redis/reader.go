@@ -500,10 +500,22 @@ func (r *Reader) SubscribeFormingCandles(ctx context.Context, out chan<- model.T
 // This enables live indicator ProcessPeek without depending on the mdengine
 // publishing forming TF candles.
 //
+// tokens ("NSE:99926000") limits the peek to those instruments, the same
+// set indengine computes closed-candle indicators for; empty = every token.
+//
 // OPTIMIZED: uses manual JSON field extraction instead of json.Unmarshal
 // and string concat instead of fmt.Sprintf for state keys.
-func (r *Reader) Subscribe1sForPeek(ctx context.Context, tfs []int, out chan<- model.TFCandle) error {
-	pubsub := r.client.PSubscribe(ctx, "pub:candle:1s:*")
+func (r *Reader) Subscribe1sForPeek(ctx context.Context, tfs []int, tokens []string, out chan<- model.TFCandle) error {
+	var pubsub *goredis.PubSub
+	if len(tokens) > 0 {
+		channels := make([]string, len(tokens))
+		for i, tk := range tokens {
+			channels[i] = "pub:candle:1s:" + tk
+		}
+		pubsub = r.client.Subscribe(ctx, channels...)
+	} else {
+		pubsub = r.client.PSubscribe(ctx, "pub:candle:1s:*")
+	}
 	defer pubsub.Close()
 
 	// Local forming-candle state: key = "tf:exchange:token", value = forming candle

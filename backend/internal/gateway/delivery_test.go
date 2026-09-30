@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 )
 
 func envelopeSeq(t *testing.T, raw []byte) (string, int64) {
@@ -77,7 +78,7 @@ func TestFullStatePendingSupersededByQueuedFrame(t *testing.T) {
 // already hold that seq, or the response is needlessly incomplete.
 func TestReplayBufferHoldsCurrentSeq(t *testing.T) {
 	h := newTestHub()
-	const ch = "pub:tick:NSE:1"
+	const ch = "pub:signal"
 	const n = 20000
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -140,5 +141,52 @@ func TestAttachLiveStateIncludesRecentSignals(t *testing.T) {
 	}
 	if _, err := json.Marshal(snap); err != nil {
 		t.Fatalf("snapshot must stay marshalable: %v", err)
+	}
+}
+
+// Ticks keep no replay buffer; candle/indicator channels keep one only
+// while a client subscribes to them, plus replayGrace after it leaves.
+func TestReplayOnlyForSubscribedChannels(t *testing.T) {
+	h := newTestHub()
+	const tick, ind5, ind60, opt = "pub:tick:NFO:40712", "pub:ind:EMA_9:300s:NSE:99926000",
+		"pub:ind:EMA_9:60s:NSE:99926000", "pub:ind:EMA_9:300s:NFO:40712"
+	c := &Client{send: make(chan []byte, 64), hub: h, subs: map[string]*ClientSubscription{
+		"NSE:99926000:300": {Symbol: "NSE:99926000", TF: 300, IndEntries: []IndEntry{{"EMA_9", 300}}},
+	}}
+	h.mu.Lock()
+	h.clients[c] = true
+	h.mu.Unlock()
+	has := func(ch string) bool {
+		h.mu.RLock()
+		defer h.mu.RUnlock()
+		_, ok := h.replayBufs[ch]
+		return ok
+	}
+	for _, ch := range []string{tick, ind5, ind60, opt, "pub:signal"} {
+		h.broadcast(ch, []byte(`{"v":1}`))
+	}
+	if has(tick) || !has(ind5) || has(ind60) || has(opt) || !has("pub:signal") {
+		t.Fatalf("buffers: tick=%v ind5m=%v ind1m=%v option=%v signal=%v, want only ind5m and signal",
+			has(tick), has(ind5), has(ind60), has(opt), has("pub:signal"))
+	}
+	if h.channelSeqs[tick] != 1 || h.channelSeqs[ind60] != 1 {
+		t.Fatal("unbuffered channels must still count seq")
+	}
+
+	// Chart disconnects: the buffer survives replayGrace for its backfill…
+	h.mu.Lock()
+	delete(h.clients, c)
+	h.mu.Unlock()
+	h.broadcast(ind5, []byte(`{"v":2}`))
+	if got := h.GetReplayRange(ind5, 1, 2); len(got) != 2 {
+		t.Fatalf("within grace: %d buffered, want 2", len(got))
+	}
+	// …then goes.
+	h.mu.Lock()
+	h.replayWantedAt[ind5] = time.Now().Add(-replayGrace - time.Second)
+	h.mu.Unlock()
+	h.broadcast(ind5, []byte(`{"v":3}`))
+	if has(ind5) {
+		t.Fatal("buffer kept after grace with no subscriber")
 	}
 }

@@ -407,7 +407,21 @@ func (c *Client) matchesChannel(channel string) bool {
 	if parsed.chType == "tick" {
 		return true
 	}
+	return c.subsMatchLocked(parsed)
+}
 
+// subscribedTo reports whether an explicit subscription (symbol + TF +
+// indicator) covers a candle or indicator channel. Unlike matchesChannel, a
+// client with no subscriptions (legacy mode) covers nothing.
+func (c *Client) subscribedTo(parsed *parsedChannel) bool {
+	c.subMu.RLock()
+	defer c.subMu.RUnlock()
+	return len(c.subs) > 0 && c.subsMatchLocked(parsed)
+}
+
+// subsMatchLocked matches a candle/indicator channel against c.subs.
+// Caller holds c.subMu.
+func (c *Client) subsMatchLocked(parsed *parsedChannel) bool {
 	symbol := parsed.exchange + ":" + parsed.token
 	for _, sub := range c.subs {
 		if sub.Symbol != symbol {

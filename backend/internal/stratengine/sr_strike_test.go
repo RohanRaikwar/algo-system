@@ -19,7 +19,7 @@ func srContract(strike int64, opt string, delta, gamma, theta, premium float64, 
 
 func chainPremium(c orderexec.OptionContract) float64 { return c.Premium }
 
-var srLimits = srGreekLimits{DeltaMin: 0.45, DeltaMax: 0.60, MaxThetaPct: 8, MaxGamma: 0.005, GammaDTE: 1, MinLiquidity: 5000}
+var srLimits = srGreekLimits{DeltaMin: 0.45, DeltaMax: 0.60, ThetaMaxGainPct: 25, ThetaHoldMin: 60, ViewTargetMove: 3000, MaxGamma: 0.005, GammaDTE: 1, MinLiquidity: 5000}
 
 func TestSRStrikePicksDeltaBandMiddle(t *testing.T) {
 	now := time.Date(2026, 9, 30, 10, 0, 0, 0, istSR) // expiry 06 Oct, 6 days out
@@ -43,15 +43,44 @@ func TestSRStrikePicksDeltaBandMiddle(t *testing.T) {
 	}
 }
 
-func TestSRStrikeRejectsThetaTrap(t *testing.T) {
+// An ATM weekly 5-6 days out decays ~8-10% of premium a day; over a 60-min
+// hold that is small next to delta × a 30-pt move, so it is bought.
+func TestSRStrikeAllowsNormalATMDecay(t *testing.T) {
+	now := time.Date(2026, 9, 30, 10, 0, 0, 0, istSR)
+	chain := []orderexec.OptionContract{srContract(22750, "CE", 0.569, 0.0011, -14.02, 170, testExpiry)} // 8.2% a day
+	c, err := selectSRContract(chain, "CE", now, srLimits, chainPremium)
+	if err != nil || c.Strike != 22750 {
+		t.Fatalf("strike %d err %v, want 22750", c.Strike, err)
+	}
+}
+
+// Near expiry theta over the hold eats more than 25% of the expected gain:
+// 40 × 60/375 = 6.4 > 25% × 0.52 × 30 = 3.9, so the next strike is bought.
+func TestSRStrikeRejectsThetaThatEatsTheGain(t *testing.T) {
 	now := time.Date(2026, 9, 30, 10, 0, 0, 0, istSR)
 	chain := []orderexec.OptionContract{
-		srContract(24200, "CE", 0.53, 0.001, -15, 150, testExpiry), // 10% a day
-		srContract(24250, "CE", 0.47, 0.001, -8, 120, testExpiry),  // 6.7%
+		srContract(24200, "CE", 0.52, 0.001, -40, 60, testExpiry),
+		srContract(24250, "CE", 0.47, 0.001, -10, 45, testExpiry), // 1.6 ≤ 3.5
 	}
-	c, err := selectSRContract(chain, "CE", now, srLimits, chainPremium)
-	if err != nil || c.Strike != 24250 {
-		t.Fatalf("strike %d err %v, want 24250", c.Strike, err)
+	ev, err := evalSRContracts(chain, "CE", now, srLimits, chainPremium)
+	if err != nil || !ev.Found || ev.Best.Strike != 24250 || ev.Rejects.Theta != 1 {
+		t.Fatalf("ev=%+v err=%v, want 24250 with 1 theta reject", ev, err)
+	}
+}
+
+// An entry's own target replaces the view's nominal 30 pts.
+func TestSRStrikeThetaUsesSignalTarget(t *testing.T) {
+	now := time.Date(2026, 9, 30, 10, 0, 0, 0, istSR)
+	chain := []orderexec.OptionContract{srContract(24200, "CE", 0.52, 0.001, -40, 60, testExpiry)}
+	lim := srLimits
+	lim.TargetMove = 10000 // 100 pts: 25% × 52 = 13 ≥ 6.4
+	if _, err := selectSRContract(chain, "CE", now, lim, chainPremium); err != nil {
+		t.Fatalf("100-pt target refused: %v", err)
+	}
+	lim.ThetaMaxGainPct = 0 // off
+	lim.TargetMove = 0
+	if _, err := selectSRContract(chain, "CE", now, lim, chainPremium); err != nil {
+		t.Fatalf("rule off but refused: %v", err)
 	}
 }
 
@@ -103,7 +132,7 @@ func TestSREntryResolvesGreeksPick(t *testing.T) {
 	c2 := srContract(24050, "CE", 0.52, 0.001, -3, 0, testExpiry)
 	g := &fakeGreeks{chain: []orderexec.OptionContract{c1, c2}}
 	svc := deltaSvc(g, 2400000, "CE24000", "CE24050")
-	svc.cfg.SRDeltaMin, svc.cfg.SRDeltaMax, svc.cfg.SRMaxThetaPct = 0.45, 0.60, 8
+	svc.cfg.SRDeltaMin, svc.cfg.SRDeltaMax, svc.cfg.SRThetaMaxGainPct = 0.45, 0.60, 25
 	svc.srStrategy = strategy.NewNifty50SR(65, strategy.DefaultNifty50SRConfig())
 
 	sig := buyCall(24000)

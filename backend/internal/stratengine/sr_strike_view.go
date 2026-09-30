@@ -25,15 +25,17 @@ const (
 )
 
 type srParamsView struct {
-	DeltaMin     float64 `json:"delta_min"`
-	DeltaMax     float64 `json:"delta_max"`
-	MaxThetaPct  float64 `json:"max_theta_pct"` // 0 = off
-	MaxGamma     float64 `json:"max_gamma"`     // 0 = off
-	GammaDTE     int     `json:"gamma_dte"`
-	MinLiquidity float64 `json:"min_liquidity"` // 0 = off
-	MaxBuyIV     float64 `json:"max_buy_iv"`    // %, 0 = off
-	MinDTE       int     `json:"min_dte"`
-	CostMultiple int64   `json:"cost_multiple"` // 0 = off
+	DeltaMin        float64 `json:"delta_min"`
+	DeltaMax        float64 `json:"delta_max"`
+	ThetaMaxGainPct float64 `json:"theta_max_gain_pct"` // 0 = off
+	ThetaHoldMin    float64 `json:"theta_hold_min"`
+	ViewTargetPts   float64 `json:"view_target_pts"`
+	MaxGamma        float64 `json:"max_gamma"` // 0 = off
+	GammaDTE        int     `json:"gamma_dte"`
+	MinLiquidity    float64 `json:"min_liquidity"` // 0 = off
+	MaxBuyIV        float64 `json:"max_buy_iv"`    // %, 0 = off
+	MinDTE          int     `json:"min_dte"`
+	CostMultiple    int64   `json:"cost_multiple"` // 0 = off
 }
 
 // srContractView is one contract with its greeks. Premium is rupees, IV is %.
@@ -112,7 +114,8 @@ type strikeSelState struct {
 func (svc *Service) srParamsView() srParamsView {
 	l := svc.srGreekLimits()
 	return srParamsView{
-		DeltaMin: l.DeltaMin, DeltaMax: l.DeltaMax, MaxThetaPct: l.MaxThetaPct,
+		DeltaMin: l.DeltaMin, DeltaMax: l.DeltaMax,
+		ThetaMaxGainPct: l.ThetaMaxGainPct, ThetaHoldMin: l.ThetaHoldMin, ViewTargetPts: float64(l.ViewTargetMove) / 100,
 		MaxGamma: l.MaxGamma, GammaDTE: l.GammaDTE, MinLiquidity: l.MinLiquidity,
 		MaxBuyIV: l.MaxBuyIV, MinDTE: l.MinDTE, CostMultiple: l.CostMultiple,
 	}
