@@ -21,6 +21,7 @@ import type {
 import type { LiveOrdersPayload, SignalPayload } from '../types/signal';
 import { useRangeStore, parseRangeView } from '../store/useRangeStore';
 import { useSRStore, parseSRView } from '../store/useSRStore';
+import { useOptionLTPStore } from '../store/useOptionLTPStore';
 import { useRefusedStore, parseRefusedView } from '../store/useRefusedStore';
 import { useStrikeSelStore, parseStrikeSelView } from '../store/useStrikeSelStore';
 import { listPaneSubs } from '../services/paneSubscriptions';
@@ -445,6 +446,7 @@ export function useWebSocket() {
                 const tickToken = (tickPayload.token as string) || '';
                 const tickPrice = (tickPayload.price as number) || (tickPayload.close as number) || 0;
                 if (tickToken && tickPrice > 0) {
+                    if (parsed.type === 'tick') useOptionLTPStore.getState().setLTP(tickToken, tickPrice);
                     const strikeState = useStrikeStore.getState();
                     if (strikeState.strike?.call?.token === tickToken) {
                         strikeState.setCallLTP(tickPrice);

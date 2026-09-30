@@ -40,3 +40,16 @@ describe('SR status', () => {
         expect(parseSRView('not json')).toBeNull();
     });
 });
+
+describe('live premium', () => {
+    it('uses the tick when present, else the snapshot', async () => {
+        const { livePremium, useOptionLTPStore } = await import('../../../store/useOptionLTPStore');
+        expect(livePremium(17725, 176.2)).toEqual({ rupees: 177.25, live: true });
+        expect(livePremium(undefined, 176.2)).toEqual({ rupees: 176.2, live: false });
+        useOptionLTPStore.getState().setLTP('40712', 17725);
+        const before = useOptionLTPStore.getState().ltp;
+        useOptionLTPStore.getState().setLTP('40712', 17725);
+        expect(useOptionLTPStore.getState().ltp).toBe(before); // same price: no new state
+        expect(useOptionLTPStore.getState().ltp['40712']).toBe(17725);
+    });
+});

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useStrikeSelStore } from '../../store/useStrikeSelStore';
 import { SRStatusCard } from './SRStatusCard';
+import { useOptionLTPStore, livePremium } from '../../store/useOptionLTPStore';
 import { fetchStrikeSel } from '../../services/api';
 import type { SRContract, SRRejects, SRSide, StrikeSelView, PickerDecision, PickerView } from '../../types/strikesel';
 import { Target, TrendingUp, TrendingDown, Clock, SlidersHorizontal, History } from 'lucide-react';
@@ -49,12 +50,16 @@ export function paramRows(p: StrikeSelView['params']): Array<[string, string]> {
     ];
 }
 
-function ContractRows({ c }: { c: SRContract }) {
+/** Contract details. live: premium follows the token's ticks (a "now" pick);
+ *  otherwise it is the premium when the contract was picked. */
+function ContractRows({ c, live = false }: { c: SRContract; live?: boolean }) {
+    const tick = useOptionLTPStore(s => (live && c.token ? s.ltp[c.token] : undefined));
+    const prem = livePremium(tick, c.premium);
     const rows: Array<[string, string, string?]> = [
         ['Symbol', c.symbol || `${c.strike}${c.option}`, 'mono'],
         ['Token', c.token || '—', 'mono'],
         ['Expiry', fmtExpiry(c.expiry, c.dte)],
-        ['Premium', fmtRupees(c.premium), 'ltp live'],
+        ['Premium', fmtRupees(prem.rupees), prem.live ? 'ltp live' : 'ltp'],
         ['Delta', num(c.delta, 3)],
         ['Gamma', num(c.gamma, 5)],
         ['Theta', `${num(c.theta, 2)} /day`],
@@ -234,7 +239,7 @@ function SideCard({ title, kind, side, chainError }: { title: string; kind: 'cal
             </div>
             <div className="fno-inst-body">
                 {side?.pick ? (
-                    <ContractRows c={side.pick} />
+                    <ContractRows c={side.pick} live />
                 ) : (
                     <div className="fno-inst-row">
                         <span className="fno-na">
