@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { buildChartMarkers } from './useChartMarkers';
+import { buildChartMarkers, levelsLine, reasonLines } from './useChartMarkers';
 import { layoutCards, type CardRequest } from '../tradeMarkersPrimitive';
 import { oldestCandleMs } from './useChartLazyLoad';
-import { useSignalStore } from '../../../store/useSignalStore';
+import { mergeSignalLists, useSignalStore } from '../../../store/useSignalStore';
 import type { SignalPayload } from '../../../types/signal';
 import type { CandleRaw } from '../../../store/useCandleStore';
 import { parseRefusedView } from '../../../store/useRefusedStore';
@@ -48,16 +48,51 @@ describe('card lines', () => {
     it('shows premium, strike, qty on entries and P&L on the paired exit', () => {
         // Store order is newest-first; pairing must still run oldest-first.
         const [b, e] = buildChartMarkers([exit, buy], [], 'NSE:99926000', 60, false);
-        expect(b.lines).toEqual(['@ ₹120.50  22700P', 'qty 75']);
-        expect(e.lines).toEqual(['@ ₹135.75', 'P&L +₹1,143.75']);
+        expect(b.lines).toEqual(['NIFTY50_SR · 10:40:00', '@ ₹120.50  22700P', 'qty 75']);
+        expect(e.lines).toEqual(['NIFTY50_SR · 11:40:00', '@ ₹135.75', 'P&L +₹1,143.75']);
         expect(e.pnl).toBe((13575 - 12050) * 75);
     });
 
     it('puts both reasons on refused cards and drops lines in compact mode', () => {
         expect(buildChartMarkers([], [refused], 'NSE:99926000', 60, false)[0].lines)
-            .toEqual(['SR PULLBACK PUT', 'SR strike: no greeks']);
+            .toEqual(['NIFTY50_SR · 10:46:01 · 22600P', 'SR PULLBACK PUT', 'Blocked: SR strike: no greeks']);
         const compact = buildChartMarkers([exit, buy], [refused], 'NSE:99926000', 60, true);
         expect(compact.every(m => m.lines.length === 0)).toBe(true);
+    });
+});
+
+describe('levelsLine', () => {
+    it('reads paise levels from the reason as rupees', () => {
+        const reason = 'SR FADE PUT regime=RANGE level=2273620 stop=2277540 target=2266332 vwap=2272499';
+        expect(levelsLine(reason)).toBe('LVL 22736.20  SL 22775.40  TGT 22663.32');
+        expect(levelsLine('EMA cross up')).toBe('');
+    });
+});
+
+describe('reasonLines', () => {
+    it('wraps the full reason to at most four rows', () => {
+        const reason = '[LONG_PE 22700] SR FADE PUT regime=RANGE level=2273620 stop=2277540 target=2266332 vwap=2272499 ema=2274505/2275132 rsi5=45.1 adx=18.5 vwap=Y ema=Y rsi=n confirm=wick session=midday trend=down';
+        const rows = reasonLines(reason);
+        expect(rows).toHaveLength(4);
+        expect(rows[0]).toBe('SR FADE PUT regime=RANGE level=2273620');
+        expect(rows.every(r => r.length <= 40)).toBe(true);
+        expect(rows[3].endsWith('…')).toBe(true);
+        expect(rows.join(' ')).not.toMatch(/LONG_PE/);
+        expect(reasonLines('EMA cross up')).toEqual(['EMA cross up']);
+        expect(reasonLines('')).toEqual([]);
+    });
+});
+
+describe('mergeSignalLists', () => {
+    it('keeps live signals REST lacks, dedupes shared ones, newest first', () => {
+        const older = { ...entry, id: 7 } as SignalRecord;
+        const liveCopy = { ...entry, id: 999, candle_ts: '2026-09-29T05:10:00.000Z' } as SignalRecord;
+        const liveOnly = {
+            ...entry, id: 1000, action: 'EXIT',
+            candle_ts: '2026-09-29T06:00:00Z', created_at: '2026-09-29T06:00:00Z',
+        } as SignalRecord;
+        const merged = mergeSignalLists([liveOnly, liveCopy], [older]);
+        expect(merged.map(s => s.id)).toEqual([1000, 7]);
     });
 });
 

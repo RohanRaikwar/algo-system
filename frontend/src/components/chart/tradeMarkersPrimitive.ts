@@ -39,7 +39,9 @@ const ICON = 10;
 const GAP = 4; // icon to text
 const GAP_Y = 14; // clearance between candles and a card
 const STACK = 4; // clearance between cards
-const EDGE = 2; // pane edge inset
+const EDGE = 2; // pane edge inset (left/right)
+const TOP_INSET = 30; // keeps cards off the OHLC legend row
+const BOTTOM_INSET = 28; // keeps cards off the TradingView attribution logo
 const SIDE_PENALTY = 60; // px cost of flipping a card to its non-preferred side
 
 export interface Rect { left: number; top: number; w: number; h: number }
@@ -99,7 +101,7 @@ export function layoutCards(reqs: CardRequest[], bars: BarBox[], paneW: number, 
         for (const above of [r.above, !r.above]) {
             for (const left of lefts) {
                 const rect = tryAt(r, left, above);
-                const fits = rect.top >= EDGE && rect.top + rect.h <= paneH - EDGE;
+                const fits = rect.top >= TOP_INSET && rect.top + rect.h <= paneH - BOTTOM_INSET;
                 const dy = above ? r.y - (rect.top + rect.h) : rect.top - r.y;
                 const cx = rect.left + rect.w / 2;
                 const score = dy + 0.5 * Math.abs(cx - r.x) + (above === r.above ? 0 : SIDE_PENALTY) + (fits ? 0 : 1e6);
@@ -107,7 +109,7 @@ export function layoutCards(reqs: CardRequest[], bars: BarBox[], paneW: number, 
             }
         }
         const rect = best!.rect;
-        rect.top = Math.min(Math.max(rect.top, EDGE), Math.max(EDGE, paneH - rect.h - EDGE));
+        rect.top = Math.min(Math.max(rect.top, TOP_INSET), Math.max(TOP_INSET, paneH - rect.h - BOTTOM_INSET));
         placed.push(rect);
         out.push({ rect, above: best!.above });
     }
@@ -331,11 +333,15 @@ export class TradeMarkersPrimitive implements ISeriesPrimitive<Time> {
                 }
             }
 
+            const pane = chart.paneSize();
+            const paneW = ts.width() || pane.width;
             const reqs: CardRequest[] = [];
             const anchors: TradeMarker[] = [];
             for (const m of this.markers) {
+                // Off-screen bars still get coordinates; skip them or the
+                // edge clamp piles their cards on the pane border.
                 const x = ts.timeToCoordinate(m.time as Time);
-                if (x === null) continue;
+                if (x === null || x < 0 || x > paneW) continue;
                 const logical = ts.coordinateToLogical(x);
                 if (logical === null) continue;
                 const bar = series.dataByIndex(Math.round(logical));
@@ -347,8 +353,7 @@ export class TradeMarkersPrimitive implements ISeriesPrimitive<Time> {
                 anchors.push(m);
             }
 
-            const pane = chart.paneSize();
-            layoutCards(reqs, bars, ts.width() || pane.width, pane.height).forEach(({ rect, above }, i) => {
+            layoutCards(reqs, bars, paneW, pane.height).forEach(({ rect, above }, i) => {
                 const r = reqs[i];
                 // Anchor follows the side the card landed on.
                 const bar = series.dataByIndex(Math.round(ts.coordinateToLogical(r.x) ?? 0));
@@ -379,6 +384,6 @@ export class TradeMarkersPrimitive implements ISeriesPrimitive<Time> {
         let tallest = 0;
         for (const m of this.markers) tallest = Math.max(tallest, cardSize(m).h);
         const margin = GAP_Y + tallest + STACK;
-        return { priceRange: { minValue: lo, maxValue: hi }, margins: { above: margin, below: margin } };
+        return { priceRange: { minValue: lo, maxValue: hi }, margins: { above: margin + TOP_INSET, below: margin + BOTTOM_INSET } };
     }
 }

@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { SlidersHorizontal } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { useCandleStore } from '../../store/useCandleStore';
-import { tfLabel, entryKey, getEntryColor, IST_OFFSET } from '../../utils/helpers';
+import { tfLabel, entryKey, getEntryColor } from '../../utils/helpers';
 import { useChartInit } from './hooks/useChartInit';
 import { useCandleSeries } from './hooks/useCandleSeries';
 import { useIndicatorLines } from './hooks/useIndicatorLines';
@@ -96,7 +96,7 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
     const { chartApi, candleSeries, indLineSeries, chartContainer } = useChartInit();
     useCandleSeries(candleSeries, selectedTF, selectedToken);
     useIndicatorLines(chartApi, indLineSeries, activeEntries, selectedTF, selectedToken);
-    const { ohlcData, indValues, crosshairTime, isPinned } = useChartInteraction(chartApi, candleSeries, indLineSeries, chartContainer);
+    const { ohlcData, indValues } = useChartInteraction(chartApi, candleSeries, indLineSeries, chartContainer);
     // The main chart owns the global subscription; a pane holds its own.
     useChartSubscription(compact ? 0 : selectedTF, compact ? null : selectedToken, activeEntries);
     usePaneSubscription(compact ? selectedToken : null, selectedTF);
@@ -181,12 +181,7 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
                     ohlcData={ohlcData}
                     indValues={indValues}
                     activeEntries={activeEntries}
-                    crosshairTime={crosshairTime}
-                    isPinned={isPinned}
                     latestCandle={latestCandle}
-                    latestCandleTimeSec={latestCandle ? Math.floor(new Date(latestCandle.ts).getTime() / 1000) + IST_OFFSET : null}
-                    selectedTF={selectedTF}
-                    selectedToken={selectedToken}
                 />
             </div>
         </section>
