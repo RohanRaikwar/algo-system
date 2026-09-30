@@ -75,9 +75,12 @@ type Trade struct {
 	FNOEntryPrice int64 `json:"fno_entry_price,omitempty"`
 	FNOExitPrice  int64 `json:"fno_exit_price,omitempty"`
 
-	Strike   int64 `json:"strike,omitempty"` // option strike traded (points)
-	SameDay  bool  `json:"same_day_expiry,omitempty"`
-	modelMid int64 // modeled entry premium before slippage (premium SL reference)
+	Strike  int64 `json:"strike,omitempty"` // option strike traded (points)
+	SameDay bool  `json:"same_day_expiry,omitempty"`
+	// TargetMove is the signal's index move to target (paise), for the
+	// strike-choice comparison's expected-return rank.
+	TargetMove int64 `json:"target_move,omitempty"`
+	modelMid   int64 // modeled entry premium before slippage (premium SL reference)
 }
 
 // PnLPaise returns the trade P&L in paise.
@@ -177,6 +180,8 @@ type Engine struct {
 	putPrices  map[int64]int64
 
 	vix map[int64]int64 // India VIX close (paise) by minute, for modeled IV
+
+	skipped int // entries refused by the option model's entry gate
 }
 
 type candleSource string
@@ -627,6 +632,11 @@ func (e *Engine) lookupFNOPrice(side strategy.PositionSide, tsUnix int64) int64 
 // ── Strategy Replay ───────────────────────────────────────────────────
 
 // backtestStrategy is implemented by both EMA1MCombined and EMAMTFCombined.
+// entryCanceller is a strategy that can undo an entry the engine refused.
+type entryCanceller interface {
+	CancelEntry(side strategy.PositionSide, reason string)
+}
+
 type backtestStrategy interface {
 	Name() string
 	OnTFCandle(candle model.TFCandle) *strategy.Signal
@@ -783,6 +793,14 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 
 		switch sig.Action {
 		case strategy.ActionBuy:
+			if ok, why := e.entryAllowed(sig, candle); !ok {
+				e.skipped++
+				if c, isCanceller := strat.(entryCanceller); isCanceller {
+					c.CancelEntry(sig.Side, why)
+				}
+				log.Printf("[backtest] ⛔ ENTRY SKIPPED %s @ %s: %s", sig.Side, candle.TS.In(istLoc).Format("01-02 15:04"), why)
+				continue
+			}
 			if openTrade != nil {
 				// Close existing trade first
 				openTrade.ExitTime = candle.TS.In(istLoc)
@@ -801,6 +819,7 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 				FNOEntryPrice: e.lookupFNOPrice(sig.Side, candle.TS.Unix()),
 			}
 			openTrade.SameDay = sig.SameDayExpiry
+			openTrade.TargetMove = sig.TargetMove
 			e.modelEntry(openTrade, sig.Strike, candle.TS)
 			e.armModelTicks(strat, openTrade)
 			log.Printf("[backtest] 🟢 ENTRY %s @ %s index=%d fno=%d reason=%s",
@@ -1221,13 +1240,52 @@ func (e *Engine) loadVIX(db *sql.DB) {
 	}
 }
 
+// entryAllowed applies the option model's entry gate to a BUY signal.
+func (e *Engine) entryAllowed(sig *strategy.Signal, candle model.TFCandle) (bool, string) {
+	m := e.cfg.Option
+	if !m.Enabled || (m.MinEntryPremium <= 0 && m.MinEntryDTE <= 0) || sig.SameDayExpiry {
+		return true, ""
+	}
+	expiry := weeklyExpiry(candle.TS)
+	if m.MinEntryDTE > 0 {
+		if dte := daysTo(candle.TS, expiry); dte < m.MinEntryDTE {
+			return false, fmt.Sprintf("expiry %d day(s) out < %d", dte, m.MinEntryDTE)
+		}
+	}
+	if m.MinEntryPremium > 0 {
+		strike := sig.Strike
+		if strike <= 0 {
+			strike = m.atmStrike(candle.Close)
+		}
+		if p := m.premiumTo(sig.Side, strike, candle.Close, candle.TS, e.vixAt(candle.TS), expiry); p < m.MinEntryPremium {
+			return false, fmt.Sprintf("premium ₹%.2f < ₹%.2f", float64(p)/100, float64(m.MinEntryPremium)/100)
+		}
+	}
+	return true, ""
+}
+
+// Skipped is how many entries the entry gate refused in the last run.
+func (e *Engine) Skipped() int { return e.skipped }
+
 // expiryFor is the contract's expiry: today for same-day (gamma) trades,
 // else the nearest weekly after today, as the live picker trades.
 func (e *Engine) expiryFor(t *Trade, ts time.Time) time.Time {
 	if t.SameDay {
 		return sameDayExpiry(t.EntryTime)
 	}
-	return weeklyExpiry(ts)
+	exp := weeklyExpiry(ts)
+	if n := e.cfg.Option.ExpiryMinDTE; n > 0 && daysTo(t.EntryTime, exp) < n {
+		exp = exp.AddDate(0, 0, 7)
+	}
+	return exp
+}
+
+// daysTo counts IST calendar days from from's date to to's date.
+func daysTo(from, to time.Time) int {
+	a, b := from.In(istLoc), to.In(istLoc)
+	d0 := time.Date(a.Year(), a.Month(), a.Day(), 0, 0, 0, 0, istLoc)
+	d1 := time.Date(b.Year(), b.Month(), b.Day(), 0, 0, 0, 0, istLoc)
+	return int(d1.Sub(d0).Hours() / 24)
 }
 
 // modelMidAt is the modeled premium (no slippage) of t's contract at c.

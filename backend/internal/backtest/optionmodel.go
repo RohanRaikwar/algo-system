@@ -30,6 +30,16 @@ type OptionModel struct {
 	SlippageBps    int64   // paper slippage, as the live executor
 	SlippageMinPsa int64
 	StrikeStep     int64 // 50
+	// Entry gate (0 = off): refuse an entry whose option premium at the
+	// signal strike is below MinEntryPremium (paise), or whose expiry is
+	// fewer than MinEntryDTE calendar days away. A refused entry is
+	// cancelled back to the strategy, as the live engine does.
+	MinEntryPremium int64
+	MinEntryDTE     int
+	// ExpiryMinDTE (0 = off) buys the next weekly expiry when the nearest
+	// is fewer than this many days away, as live NIFTY50_SR does with
+	// STRAT_SR_MIN_DTE (Monday buys next week instead of Tuesday's).
+	ExpiryMinDTE int
 }
 
 // weeklyExpiry returns the NIFTY weekly expiry (Tuesday 15:30 IST) the live

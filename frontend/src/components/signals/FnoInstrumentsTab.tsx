@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useStrikeSelStore } from '../../store/useStrikeSelStore';
+import { SRStatusCard } from './SRStatusCard';
 import { fetchStrikeSel } from '../../services/api';
 import type { SRContract, SRRejects, SRSide, StrikeSelView, PickerDecision, PickerView } from '../../types/strikesel';
 import { Target, TrendingUp, TrendingDown, Clock, SlidersHorizontal, History } from 'lucide-react';
@@ -265,6 +266,7 @@ export function FnoInstrumentsTab() {
     if (!view) {
         return (
             <div className="fno-instruments-wrap">
+                <SRStatusCard />
                 <div className="fno-pending">
                     <Target size={48} strokeWidth={1.5} />
                     <p>Waiting for the greeks strike selection…</p>
@@ -278,6 +280,7 @@ export function FnoInstrumentsTab() {
 
     return (
         <div className="fno-instruments-wrap">
+            <SRStatusCard />
             {view.picker && <PickerCard p={view.picker} />}
             <div className="fno-atm-card">
                 <div className="fno-atm-header">

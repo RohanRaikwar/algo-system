@@ -26,6 +26,7 @@ export interface WSEnvelope {
     orders?: unknown;
     pnl?: unknown;
     range?: unknown; // NIFTY50_RANGE view (pub:range)
+    sr?: unknown; // NIFTY50_SR view (pub:sr)
     refused?: unknown; // today's blocked entries (pub:refused)
     strikesel?: unknown; // NIFTY50_SR strike selection (pub:strikesel)
     liveSeqs?: Record<string, number>;

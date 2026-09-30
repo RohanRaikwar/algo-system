@@ -24,6 +24,13 @@ type Nifty50SR struct {
 	vol minuteVolume
 
 	rejects map[string]int
+
+	// Today's refusals for the dashboard (RejectStats keeps the run total).
+	dayRejects   map[string]int
+	lastReject   string
+	lastRejectTS time.Time // bucket start of the candle that was refused
+	rejectDay    string
+	barTS        time.Time // candle being evaluated
 }
 
 func NewNifty50SR(qty int64, cfg Nifty50SRConfig) *Nifty50SR {
@@ -181,6 +188,10 @@ func (s *Nifty50SR) OnTFCandle(candle model.TFCandle) *Signal {
 	st.LastClose = candle.Close
 
 	day := candle.TS.In(ist).Format("2006-01-02")
+	s.barTS = candle.TS
+	if s.rejectDay != day {
+		s.rejectDay, s.dayRejects, s.lastReject, s.lastRejectTS = day, nil, "", time.Time{}
+	}
 	if st.TradeDay != day {
 		st.TradeDay, st.TradesToday, st.ConsecLosses, st.DayPnLPts = day, 0, 0, 0
 		st.PendingSide = SideNone
@@ -731,6 +742,11 @@ func (s *Nifty50SR) reject(reason string) {
 		s.rejects = make(map[string]int)
 	}
 	s.rejects[reason]++
+	if s.dayRejects == nil {
+		s.dayRejects = make(map[string]int)
+	}
+	s.dayRejects[reason]++
+	s.lastReject, s.lastRejectTS = reason, s.barTS
 }
 
 // RejectStats returns how often each filter refused a candidate entry bar.

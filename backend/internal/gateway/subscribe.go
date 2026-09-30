@@ -67,6 +67,7 @@ type SnapshotResponse struct {
 	Orders    *json.RawMessage `json:"orders,omitempty"`
 	PnL       *json.RawMessage `json:"pnl,omitempty"`
 	Range     *json.RawMessage `json:"range,omitempty"`     // NIFTY50_RANGE dashboard view (pub:range)
+	SR        *json.RawMessage `json:"sr,omitempty"`        // NIFTY50_SR dashboard view (pub:sr)
 	Refused   *json.RawMessage `json:"refused,omitempty"`   // today's blocked entries (pub:refused)
 	StrikeSel *json.RawMessage `json:"strikesel,omitempty"` // NIFTY50_SR strike selection (pub:strikesel)
 	LiveSeqs  map[string]int64 `json:"liveSeqs,omitempty"`

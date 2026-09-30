@@ -77,6 +77,7 @@ Channels the gateway forwards to the browser are listed in `dynamicPubSubPattern
 | `pub:pnl` | stratengine |
 | `pub:strike` | stratengine |
 | `pub:range` | stratengine |
+| `pub:sr` | stratengine |
 | `pub:refused` | stratengine |
 | `pub:strikesel` | stratengine |
 

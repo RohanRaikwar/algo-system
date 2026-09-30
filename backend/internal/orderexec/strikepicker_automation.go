@@ -874,6 +874,7 @@ func (sp *StrikePicker) nextWeeklyExpiryDay(now time.Time) time.Time {
 }
 
 func (sp *StrikePicker) loadOptionGreekExpiry(expiry time.Time) ([]OptionContract, error) {
+	optionGreekSpacer.wait()
 	res, err := sp.sc.OptionGreek(map[string]any{
 		"name":       "NIFTY",
 		"expirydate": strings.ToUpper(expiry.In(istZone).Format("02Jan2006")),
