@@ -121,16 +121,15 @@ export const useCandleStore = create<CandleStore>((set) => ({
     })),
 
     mergeCandles: (tf, newCandles) => set((s) => {
-        const arr = [...(s.candles[tf] || [])];
-        for (const c of newCandles) {
-            const idx = arr.findIndex(x => x.ts === c.ts && x.token === c.token);
-            if (idx >= 0) {
-                arr[idx] = c;
-            } else {
-                arr.push(c);
-            }
-        }
-        if (arr.length > CHART_MAX) arr.splice(0, arr.length - CHART_MAX);
+        // Keyed by instant: REST ts ("…:00Z") and live buckets ("…:00.000Z")
+        // spell the same candle differently.
+        const key = (c: CandleRaw) => `${c.token}|${Date.parse(c.ts)}`;
+        const byKey = new Map<string, CandleRaw>();
+        for (const c of newCandles) byKey.set(key(c), c);
+        for (const c of s.candles[tf] || []) byKey.set(key(c), c); // live data wins
+        // Newest first, as upsertCandle/aggregateToTF unshift; trim the oldest.
+        const arr = Array.from(byKey.values()).sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts));
+        if (arr.length > CHART_MAX) arr.length = CHART_MAX;
         return { candles: { ...s.candles, [tf]: arr } };
     }),
 

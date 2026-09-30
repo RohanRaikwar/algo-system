@@ -1,12 +1,11 @@
 import { useEffect, useRef, type MutableRefObject } from 'react';
-import type { ISeriesApi, SeriesMarker, Time } from 'lightweight-charts';
+import type { ISeriesApi } from 'lightweight-charts';
 import { useSignalStore } from '../../../store/useSignalStore';
 import { useRefusedStore } from '../../../store/useRefusedStore';
 import { IST_OFFSET } from '../../../utils/helpers';
 import type { SignalRecord } from '../../../types/signal';
 import type { RefusedEntry } from '../../../types/refused';
-
-export const REFUSED_COLOR = '#8a94a6';
+import { TradeMarkersPrimitive, type TradeMarker } from '../tradeMarkersPrimitive';
 
 function matchesToken(token: string, exchange: string, selectedToken: string): boolean {
     const full = exchange ? `${exchange}:${token}` : token;
@@ -26,9 +25,19 @@ function sideShort(side: string | undefined): string {
     return s === 'CALL' ? 'C' : s === 'PUT' ? 'P' : '';
 }
 
+function sideLong(side: string | undefined): string {
+    const s = (side || '').toUpperCase();
+    return s === 'CALL' || s === 'PUT' ? s : '';
+}
+
+function label(verb: string, side: string | undefined, compact: boolean): string {
+    return compact ? '' : [verb, sideLong(side)].filter(Boolean).join(' ');
+}
+
 /**
- * Chart markers for the selected instrument: entries (green, below the bar),
- * exits (red, above) and refused entries (grey circle, above), sorted by time.
+ * Chart markers for the selected instrument: entries (below the bar), exits
+ * and refused entries (above), sorted by time. Compact mode drops the label
+ * and keeps the icon plus C/P.
  */
 export function buildChartMarkers(
     signals: SignalRecord[],
@@ -36,24 +45,19 @@ export function buildChartMarkers(
     selectedToken: string,
     tfSec: number,
     compact: boolean,
-): SeriesMarker<Time>[] {
-    const out: SeriesMarker<Time>[] = [];
+): TradeMarker[] {
+    const out: TradeMarker[] = [];
 
     for (const s of signals) {
         if (!matchesToken(s.token, s.exchange, selectedToken)) continue;
         const time = bucketTime(s.candle_ts || s.created_at, tfSec);
         if (time === null) continue;
         const isBuy = s.action.toUpperCase() === 'BUY';
-        const side = sideShort(s.side);
-        const text = compact
-            ? `${isBuy ? '▲' : '▼'}${side}`
-            : [isBuy ? 'BUY' : 'EXIT', side].filter(Boolean).join(' ');
         out.push({
-            time: time as Time,
-            position: isBuy ? 'belowBar' : 'aboveBar',
-            color: isBuy ? '#3ecf8e' : '#f0616d',
-            shape: isBuy ? 'arrowUp' : 'arrowDown',
-            text,
+            time,
+            kind: isBuy ? 'entry' : 'exit',
+            label: label(isBuy ? 'BUY' : 'EXIT', s.side, compact),
+            side: sideShort(s.side),
         });
     }
 
@@ -61,17 +65,10 @@ export function buildChartMarkers(
         if (!matchesToken(r.token, r.exchange, selectedToken)) continue;
         const time = bucketTime(r.ts, tfSec);
         if (time === null) continue;
-        const side = sideShort(r.side);
-        out.push({
-            time: time as Time,
-            position: 'aboveBar',
-            color: REFUSED_COLOR,
-            shape: 'circle',
-            text: compact ? `✕${side}` : ['REFUSED', side].filter(Boolean).join(' '),
-        });
+        out.push({ time, kind: 'refused', label: label('REFUSED', r.side, compact), side: sideShort(r.side) });
     }
 
-    return out.sort((a, b) => (a.time as number) - (b.time as number));
+    return out.sort((a, b) => a.time - b.time);
 }
 
 export function useChartMarkers(
@@ -82,9 +79,15 @@ export function useChartMarkers(
     const signals = useSignalStore(s => s.signals);
     const refused = useRefusedStore(s => s.entries);
     const lastFingerprint = useRef<string>('');
+    const primitive = useRef<TradeMarkersPrimitive | null>(null);
 
     useEffect(() => {
-        if (!candleSeries.current || !selectedToken) return;
+        const series = candleSeries.current;
+        if (!series || !selectedToken) return;
+        if (!primitive.current) {
+            primitive.current = new TradeMarkersPrimitive();
+            series.attachPrimitive(primitive.current);
+        }
 
         const fp = `${selectedToken}::${selectedTF}::`
             + signals.map(s => `${s.id}:${s.action}`).join('|')
@@ -93,6 +96,11 @@ export function useChartMarkers(
         lastFingerprint.current = fp;
 
         const compact = typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches;
-        candleSeries.current.setMarkers(buildChartMarkers(signals, refused, selectedToken, selectedTF || 60, compact));
+        primitive.current.setMarkers(buildChartMarkers(signals, refused, selectedToken, selectedTF || 60, compact));
     }, [signals, refused, selectedToken, selectedTF, candleSeries]);
+
+    useEffect(() => () => {
+        if (primitive.current) candleSeries.current?.detachPrimitive(primitive.current);
+        primitive.current = null;
+    }, [candleSeries]);
 }

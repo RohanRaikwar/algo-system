@@ -58,6 +58,42 @@ func (r *Reader) ReadTFCandles(exchange, token string, tf int, afterTS int64) ([
 	return candles, rows.Err()
 }
 
+// ReadTFCandlesBefore returns the latest limit candles of one instrument and
+// TF with ts < beforeTS, ordered by timestamp ascending. Paging back through
+// history uses it: a wall-clock window would come back empty across the
+// overnight and weekend gaps.
+func (r *Reader) ReadTFCandlesBefore(exchange, token string, tf int, beforeTS int64, limit int) ([]model.TFCandle, error) {
+	rows, err := r.db.Query(`
+		SELECT token, exchange, tf, ts, open, high, low, close, volume, count
+		FROM candles_tf
+		WHERE exchange = ? AND token = ? AND tf = ? AND ts < ?
+		ORDER BY ts DESC
+		LIMIT ?
+	`, exchange, token, tf, beforeTS, limit)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite query candles_tf before: %w", err)
+	}
+	defer rows.Close()
+
+	var candles []model.TFCandle
+	for rows.Next() {
+		var c model.TFCandle
+		var tsUnix int64
+		if err := rows.Scan(&c.Token, &c.Exchange, &c.TF, &tsUnix, &c.Open, &c.High, &c.Low, &c.Close, &c.Volume, &c.Count); err != nil {
+			return nil, fmt.Errorf("sqlite scan candles_tf: %w", err)
+		}
+		c.TS = time.Unix(tsUnix, 0).UTC()
+		candles = append(candles, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i, j := 0, len(candles)-1; i < j; i, j = i+1, j-1 {
+		candles[i], candles[j] = candles[j], candles[i]
+	}
+	return candles, nil
+}
+
 // ReadAllTFCandles reads all TF candles from SQLite for backfill, ordered by timestamp.
 func (r *Reader) ReadAllTFCandles(tf int, afterTS int64) ([]model.TFCandle, error) {
 	rows, err := r.db.Query(`

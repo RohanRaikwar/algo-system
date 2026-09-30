@@ -8,6 +8,17 @@ const FETCH_LIMIT = 150;
 const EDGE_THRESHOLD = 10; // trigger when within 10 bars of left edge
 const DEBOUNCE_MS = 400;
 
+/** Earliest candle time (ms) of one instrument; the store mixes instruments and order. */
+export function oldestCandleMs(candles: CandleRaw[], token: string): number | null {
+    let min = Infinity;
+    for (const c of candles) {
+        if ((c.exchange + ':' + c.token) !== token && c.token !== token) continue;
+        const ms = Date.parse(c.ts);
+        if (ms < min) min = ms;
+    }
+    return min === Infinity ? null : min;
+}
+
 /**
  * Detects when the user scrolls near the left edge of the chart and
  * fetches older candles from /api/candles, prepending them into the store.
@@ -33,12 +44,9 @@ export function useChartLazyLoad(
         const token = selectedToken;
         if (!token) return;
 
-        // Get the oldest candle's timestamp from the store
-        const candles = useCandleStore.getState().candles[tf];
-        if (!candles || candles.length === 0) return;
-
-        const oldestTS = candles[0].ts; // earliest candle
-        if (!oldestTS) return;
+        const oldestMs = oldestCandleMs(useCandleStore.getState().candles[tf] || [], token);
+        if (oldestMs === null) return;
+        const oldestTS = new Date(oldestMs).toISOString();
 
         loadingRef.current = true;
         try {
@@ -69,8 +77,9 @@ export function useChartLazyLoad(
             useCandleStore.getState().mergeCandles(tf, rawCandles);
             console.log(`[lazy-load] prepended ${rawCandles.length} candles for tf=${tf}`);
 
-            // If we got fewer than requested, we've hit the end
-            if (olderCandles.length < FETCH_LIMIT) {
+            // Fewer than requested, or nothing older than we had: history ends here.
+            const reached = oldestCandleMs(rawCandles, token);
+            if (olderCandles.length < FETCH_LIMIT || reached === null || reached >= oldestMs) {
                 noMoreDataRef.current = true;
             }
         } catch (err) {

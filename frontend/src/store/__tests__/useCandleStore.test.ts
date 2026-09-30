@@ -158,6 +158,22 @@ describe('useCandleStore', () => {
 
     // ── Candle Upsert ──
 
+    describe('mergeCandles', () => {
+        it('keeps newest first, dedupes by instant and trims only the oldest', () => {
+            // Live-built buckets are newest first; REST history spells ts without millis.
+            useCandleStore.setState({ candles: { 60: [
+                makeCandle('2026-09-30T04:01:00.000Z', 3),
+                makeCandle('2026-09-30T04:00:00.000Z', 2),
+            ] } });
+            useCandleStore.getState().mergeCandles(60, [
+                makeCandle('2026-09-29T09:59:00Z', 1),
+                makeCandle('2026-09-30T04:00:00Z', 99), // same candle as live one
+            ]);
+            const got = useCandleStore.getState().candles[60];
+            expect(got.map(c => c.open)).toEqual([3, 2, 1]); // live copy wins
+        });
+    });
+
     describe('upsertCandle', () => {
         it('inserts new candle and converts paise→rupees', () => {
             const candle = makeCandle('2026-02-25T10:00:00Z', 5000);

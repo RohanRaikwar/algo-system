@@ -236,12 +236,14 @@ func RegisterRoutes(mux *http.ServeMux, hub *Hub, rdb *goredis.Client, ctx conte
 
 		streamKey := fmt.Sprintf("candle:%ds:%s", tfVal, token)
 
+		// Stream IDs are write times, which trail the candle ts by about one TF,
+		// so the ID bound is loosened by a TF and the ts filter below is exact.
 		upperBound := "+"
+		var before time.Time
 		if beforeStr != "" {
 			if t, err := time.Parse(time.RFC3339Nano, beforeStr); err == nil {
-				upperBound = fmt.Sprintf("%d-0", t.UnixMilli()-1)
-			} else if t, err := time.Parse(time.RFC3339, beforeStr); err == nil {
-				upperBound = fmt.Sprintf("%d-0", t.UnixMilli()-1)
+				before = t
+				upperBound = fmt.Sprintf("%d-0", t.UnixMilli()+int64(tfVal)*1000)
 			}
 		}
 
@@ -267,27 +269,22 @@ func RegisterRoutes(mux *http.ServeMux, hub *Hub, rdb *goredis.Client, ctx conte
 				continue
 			}
 			c.TF = tfVal
-			if c.TS != "" {
-				candles = append(candles, c)
+			if c.TS == "" {
+				continue
 			}
+			if !before.IsZero() {
+				if ts, err := time.Parse(time.RFC3339Nano, c.TS); err != nil || !ts.Before(before) {
+					continue
+				}
+			}
+			candles = append(candles, c)
 		}
 
 		// SQLite backfill when Redis has fewer candles than requested
 		if len(candles) < limit && hub.CandleReader != nil {
 			parts := strings.SplitN(token, ":", 2)
 			if len(parts) == 2 {
-				// Determine afterTS from 'before' param. If no 'before', afterTS=0 → all data.
-				var afterTS int64
-				if beforeStr != "" {
-					if t, err := time.Parse(time.RFC3339Nano, beforeStr); err == nil {
-						afterTS = t.Unix() - int64(tfVal*limit) - 1
-					} else if t, err := time.Parse(time.RFC3339, beforeStr); err == nil {
-						afterTS = t.Unix() - int64(tfVal*limit) - 1
-					}
-				}
-				// afterTS = 0 means query all available data from SQLite
-
-				sqlCandles, sqlErr := hub.CandleReader.ReadTFCandles(parts[0], parts[1], tfVal, afterTS)
+				sqlCandles, sqlErr := readCandlesBefore(hub.CandleReader, parts[0], parts[1], tfVal, before, limit)
 				if sqlErr == nil && len(sqlCandles) > 0 {
 					// Dedup: collect existing timestamps
 					seen := make(map[string]bool, len(candles))
