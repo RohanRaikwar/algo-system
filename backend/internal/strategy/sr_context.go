@@ -89,7 +89,10 @@ type SRState struct {
 	EMAReady  bool
 	ORHigh    int64 // opening range, 0 until complete
 	ORLow     int64
-	Levels    []SRLevel // sorted by price
+	// PrevDayHigh/Low are the previous session's extremes, 0 until known.
+	PrevDayHigh int64
+	PrevDayLow  int64
+	Levels      []SRLevel // sorted by price
 }
 
 type srContext struct {
@@ -207,6 +210,7 @@ func (sc *srContext) refresh(price int64) {
 	if sc.orDone {
 		st.ORHigh, st.ORLow = sc.orHigh, sc.orLow
 	}
+	st.PrevDayHigh, st.PrevDayLow = sc.rc.prevDayHigh, sc.rc.prevDayLow
 	st.Levels = sc.levels()
 	st.Regime = sc.regime(st, price)
 	sc.state = st
@@ -240,34 +244,51 @@ func (sc *srContext) regime(st SRState, price int64) SRRegime {
 // levels merges swing clusters (highs and lows together: a broken
 // resistance is the next support), previous-day high/low and the
 // opening range. Levels closer than the cluster tolerance merge.
+// Each point counts once: the previous-day high/low is not part of the
+// swing clusters here (it used to be, and was then added a second time);
+// with UsePrevDayLevels it still absorbs a lone swing touch at its price.
 func (sc *srContext) levels() []SRLevel {
 	cfg := sc.cfg.Range
-	highs, lows := sc.rc.swingPoints()
+	tol := cfg.LevelTolerancePts
+	highs, lows := sc.rc.swingOnly()
 	var out []SRLevel
-	for _, c := range clusterLevels(append(highs, lows...), cfg.LevelTolerancePts) {
+	var weak []levelCluster // swing clusters below MinTouches
+	for _, c := range clusterLevels(append(highs, lows...), tol) {
 		if c.touches >= cfg.MinTouches {
 			out = append(out, SRLevel{Price: c.level, Touches: c.touches, Source: SRLevelSwing})
+		} else {
+			weak = append(weak, c)
 		}
 	}
-	add := func(p int64, src string) {
+	add := func(p int64, src string, absorbWeak bool) {
 		if p <= 0 {
 			return
 		}
 		for i := range out {
-			if absInt64(out[i].Price-p) <= cfg.LevelTolerancePts {
+			if absInt64(out[i].Price-p) <= tol {
 				out[i].Touches++
 				return
 			}
 		}
-		out = append(out, SRLevel{Price: p, Touches: 1, Source: src})
+		touches := 1
+		if absorbWeak {
+			for i, c := range weak {
+				if absInt64(c.level-p) <= tol {
+					touches += c.touches
+					weak = append(weak[:i], weak[i+1:]...)
+					break
+				}
+			}
+		}
+		out = append(out, SRLevel{Price: p, Touches: touches, Source: src})
 	}
 	if sc.rc.prevDayHigh > 0 {
-		add(sc.rc.prevDayHigh, SRLevelPrevDay)
-		add(sc.rc.prevDayLow, SRLevelPrevDay)
+		add(sc.rc.prevDayHigh, SRLevelPrevDay, cfg.UsePrevDayLevels)
+		add(sc.rc.prevDayLow, SRLevelPrevDay, cfg.UsePrevDayLevels)
 	}
 	if sc.orDone {
-		add(sc.orHigh, SRLevelOpening)
-		add(sc.orLow, SRLevelOpening)
+		add(sc.orHigh, SRLevelOpening, false)
+		add(sc.orLow, SRLevelOpening, false)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Price < out[j].Price })
 	return out

@@ -461,6 +461,16 @@ func clusterLevels(points []int64, tol int64) []levelCluster {
 // swingPoints returns the swing highs and lows (15m, optional 1h) plus the
 // previous-day high/low that support/resistance are clustered from.
 func (rc *rangeContext) swingPoints() (highs, lows []int64) {
+	highs, lows = rc.swingOnly()
+	if rc.cfg.UsePrevDayLevels && rc.prevDayHigh > 0 {
+		highs = append(highs, rc.prevDayHigh)
+		lows = append(lows, rc.prevDayLow)
+	}
+	return highs, lows
+}
+
+// swingOnly returns the 15m (and optional 1h) swing highs and lows alone.
+func (rc *rangeContext) swingOnly() (highs, lows []int64) {
 	bars := rc.bars15
 	if n := rc.cfg.LevelLookbackBars; len(bars) > n {
 		bars = bars[len(bars)-n:]
@@ -508,10 +518,6 @@ func (rc *rangeContext) swingPoints() (highs, lows []int64) {
 				lows = append(lows, h[i].Low)
 			}
 		}
-	}
-	if rc.cfg.UsePrevDayLevels && rc.prevDayHigh > 0 {
-		highs = append(highs, rc.prevDayHigh)
-		lows = append(lows, rc.prevDayLow)
 	}
 	return highs, lows
 }
