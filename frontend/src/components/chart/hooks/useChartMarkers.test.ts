@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildChartMarkers, levelsLine, reasonLines } from './useChartMarkers';
-import { layoutCards, type CardRequest } from '../tradeMarkersPrimitive';
+import { autoscaleMargins, cardSize, layoutCards, type CardRequest, type TradeMarker } from '../tradeMarkersPrimitive';
 import { oldestCandleMs } from './useChartLazyLoad';
 import { mergeSignalLists, useSignalStore } from '../../../store/useSignalStore';
 import type { SignalPayload } from '../../../types/signal';
@@ -164,5 +164,30 @@ describe('oldestCandleMs', () => {
         const arr = [c('2026-09-30T04:01:00Z', '99926000'), c('2026-09-28T04:00:00Z', '40712'), c('2026-09-29T04:00:00Z', '99926000')];
         expect(oldestCandleMs(arr, 'NSE:99926000')).toBe(Date.parse('2026-09-29T04:00:00Z'));
         expect(oldestCandleMs(arr, 'NSE:1')).toBeNull();
+    });
+});
+
+describe('autoscaleMargins', () => {
+    const tall: TradeMarker = { time: 60, kind: 'refused', label: 'REFUSED CALL', side: 'C', lines: Array.from({ length: 10 }, (_, i) => `row ${i}`) };
+    const short: TradeMarker = { time: 120, kind: 'entry', label: 'BUY CALL', side: 'C', lines: ['qty 65'] };
+
+    it('reserves each side only for the cards that land on it', () => {
+        const { above, below } = autoscaleMargins([tall, short], 2000);
+        // refused/exit cards sit above the bar, entries below.
+        expect(above).toBeGreaterThan(cardSize(tall).h);
+        expect(below).toBeGreaterThan(cardSize(short).h);
+        expect(below).toBeLessThan(cardSize(tall).h);
+    });
+
+    it('caps each side so candles keep most of the pane', () => {
+        const paneH = 600;
+        const { above, below } = autoscaleMargins([tall, tall, short], paneH);
+        expect(above).toBeLessThanOrEqual(paneH * 0.18);
+        expect(below).toBeLessThanOrEqual(paneH * 0.18);
+        expect(above + below).toBeLessThan(paneH / 2);
+    });
+
+    it('reserves nothing without markers', () => {
+        expect(autoscaleMargins([], 600)).toEqual({ above: 0, below: 0 });
     });
 });
