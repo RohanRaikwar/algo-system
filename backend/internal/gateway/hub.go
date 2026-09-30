@@ -439,6 +439,7 @@ var liveStateChannels = []struct{ channel, key string }{
 	{"pub:orders", "orders:live"},
 	{"pub:pnl", "pnl:summary"},
 	{"pub:range", "range:state"},
+	{"pub:sr", "sr:state"},
 	{"pub:refused", "refused:state"},
 	{"pub:strikesel", "strikesel:state"},
 }
@@ -490,6 +491,8 @@ func (h *Hub) attachLiveState(snap *SnapshotResponse, fallback func(key string) 
 			snap.PnL = &raw
 		case "pub:range":
 			snap.Range = &raw
+		case "pub:sr":
+			snap.SR = &raw
 		case "pub:refused":
 			snap.Refused = &raw
 		case "pub:strikesel":
@@ -509,7 +512,7 @@ const (
 // channels whose latest value must survive long quiet periods.
 func isStickyChannel(ch string) bool {
 	switch ch {
-	case "pub:orders", "pub:pnl", "pub:signal", "pub:strike", "pub:range", "pub:refused", "pub:strikesel":
+	case "pub:orders", "pub:pnl", "pub:signal", "pub:strike", "pub:range", "pub:sr", "pub:refused", "pub:strikesel":
 		return true
 	}
 	return strings.HasPrefix(ch, "pub:analyst:")

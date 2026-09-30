@@ -70,6 +70,7 @@ type Service struct {
 	futures     futureResolver // test hook; nil = instrument master
 
 	rangePublishHook func(payload string) // test hook for publishRangeState
+	srPublishHook    func(payload string) // test hook for publishSRState
 
 	refused            refusedLog           // today's blocked entries (refused.go)
 	refusedPublishHook func(payload string) // test hook for recordRefusedEntry
@@ -390,6 +391,11 @@ func (svc *Service) Run(ctx context.Context) error {
 	// ── Range strategy dashboard state (pub:range) ──
 	if svc.cfg.RangeEnabled {
 		go svc.rangeStateLoop(ctx)
+	}
+
+	// ── NIFTY50_SR strategy dashboard state (pub:sr) ──
+	if svc.cfg.SREnabled {
+		go svc.srStateLoop(ctx)
 	}
 
 	// ── NIFTY50_SR strike selection view (pub:strikesel) ──

@@ -17,6 +17,7 @@ var dynamicPubSubPatterns = []string{
 	"pub:signal",
 	"pub:pnl",
 	"pub:range",
+	"pub:sr",
 	"pub:refused",
 	"pub:strikesel",
 }

@@ -20,6 +20,7 @@ import type {
 } from '../types/ws';
 import type { LiveOrdersPayload, SignalPayload } from '../types/signal';
 import { useRangeStore, parseRangeView } from '../store/useRangeStore';
+import { useSRStore, parseSRView } from '../store/useSRStore';
 import { useRefusedStore, parseRefusedView } from '../store/useRefusedStore';
 import { useStrikeSelStore, parseStrikeSelView } from '../store/useStrikeSelStore';
 import { listPaneSubs } from '../services/paneSubscriptions';
@@ -369,6 +370,13 @@ export function useWebSocket() {
                 return;
             }
 
+            // ── SR strategy view (pub:sr channel, full state) ──
+            if (envelope.channel === 'pub:sr' && envelope.data) {
+                const view = parseSRView(envelope.data);
+                if (view) useSRStore.getState().setView(view);
+                return;
+            }
+
             // ── Refused entries (pub:refused channel, full state) ──
             if (envelope.channel === 'pub:refused' && envelope.data) {
                 const view = parseRefusedView(envelope.data);
@@ -627,6 +635,9 @@ export function useWebSocket() {
                     } else if (u.channel === 'pub:range') {
                         const view = parseRangeView(u.data);
                         if (view) useRangeStore.getState().setView(view);
+                    } else if (u.channel === 'pub:sr') {
+                        const view = parseSRView(u.data);
+                        if (view) useSRStore.getState().setView(view);
                     } else if (u.channel === 'pub:refused') {
                         const view = parseRefusedView(u.data);
                         if (view) useRefusedStore.getState().setView(view);
