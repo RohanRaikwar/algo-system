@@ -49,10 +49,10 @@ func (b *Broadcaster) Broadcast(channel string, data []byte) {
 
 	// Replay buffer for gap backfill (500 envelopes per channel). Fetched in the
 	// same critical section as the seq so an idle sweep cannot slip between them.
-	// Ticks get none: clients never backfill them (the next tick supersedes a
-	// missed one), and one buffer per streamed option cost ~200 KB each.
+	// Ticks get none, and candle/indicator channels only while a chart
+	// subscribes to them (see keepReplayLocked).
 	var rb *ReplayBuffer
-	if hasReplay(channel) {
+	if b.hub.keepReplayLocked(channel, now) {
 		var exists bool
 		rb, exists = b.hub.replayBufs[channel]
 		if !exists {
@@ -158,7 +158,41 @@ func extractTickTS(data []byte) time.Time {
 	return ts
 }
 
-// hasReplay reports whether a channel keeps a replay buffer for /api/missed.
-func hasReplay(channel string) bool {
-	return !strings.HasPrefix(channel, "pub:tick:")
+// replayGrace keeps a candle/indicator buffer this long after its last
+// subscriber left, so a chart that reconnects can still backfill its gap.
+const replayGrace = 2 * time.Minute
+
+// keepReplayLocked reports whether channel keeps a replay buffer for
+// /api/missed, and drops the buffer of one nobody needs. Caller holds h.mu.
+//   - pub:tick:* never: clients never backfill ticks, the next tick
+//     supersedes a missed one.
+//   - candle / indicator channels only while a client has subscribed to
+//     them (symbol + TF + indicator), or within replayGrace after: each full
+//     buffer is ~200 KB, and the chart asks for one symbol and TF, not every
+//     TF of every streamed token. A new subscription starts from the
+//     subscribe snapshot, so it needs no older buffer.
+//   - everything else (signals, orders, analyst, full state) always.
+func (h *Hub) keepReplayLocked(channel string, now time.Time) bool {
+	if strings.HasPrefix(channel, "pub:tick:") {
+		return false
+	}
+	parsed := parseChannel(channel)
+	if parsed == nil || (parsed.chType != "candle" && parsed.chType != "indicator") {
+		return true
+	}
+	for c := range h.clients {
+		if c.subscribedTo(parsed) {
+			if h.replayWantedAt == nil {
+				h.replayWantedAt = make(map[string]time.Time)
+			}
+			h.replayWantedAt[channel] = now
+			return true
+		}
+	}
+	if at, ok := h.replayWantedAt[channel]; ok && now.Sub(at) < replayGrace {
+		return true
+	}
+	delete(h.replayWantedAt, channel)
+	delete(h.replayBufs, channel)
+	return false
 }

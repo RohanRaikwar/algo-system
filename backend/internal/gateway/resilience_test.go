@@ -61,7 +61,7 @@ func TestBroadcastIncludesEpoch(t *testing.T) {
 	h := newTestHub()
 	c := addTestClient(h, 8)
 
-	h.broadcast("pub:candle:60s:NSE:1", []byte(`{"price":1}`))
+	h.broadcast("pub:tick:NSE:1", []byte(`{"price":1}`))
 	m := recvJSON(t, c)
 
 	if m["epoch"] != h.Epoch() || h.Epoch() == "" {
@@ -90,13 +90,13 @@ func TestBumpEpochNotifiesClients(t *testing.T) {
 
 func TestRegisterClientSendsHelloFirst(t *testing.T) {
 	h := newTestHub()
-	h.broadcast("pub:candle:60s:NSE:1", []byte(`{"price":1}`))
+	h.broadcast("pub:tick:NSE:1", []byte(`{"price":1}`))
 	c := &Client{send: make(chan []byte, 8), hub: h, subs: map[string]*ClientSubscription{}}
 
 	if n := h.registerClient(c); n != 1 {
 		t.Fatalf("client count: got %d, want 1", n)
 	}
-	h.broadcast("pub:candle:60s:NSE:1", []byte(`{"price":2}`))
+	h.broadcast("pub:tick:NSE:1", []byte(`{"price":2}`))
 
 	m := recvJSON(t, c)
 	if m["type"] != "hello" || m["epoch"] != h.Epoch() || m["reason"] != "connect" {
@@ -109,7 +109,7 @@ func TestRegisterClientSendsHelloFirst(t *testing.T) {
 
 func TestMissedResponseCompleteness(t *testing.T) {
 	h := newTestHub()
-	ch := "pub:candle:60s:NSE:1"
+	ch := "pub:signal"
 	for i := 0; i < 600; i++ { // replay buffer holds 500
 		h.broadcast(ch, []byte(`{"price":1}`))
 	}

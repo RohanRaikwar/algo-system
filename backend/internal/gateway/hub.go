@@ -72,6 +72,9 @@ type Hub struct {
 
 	// Per-channel replay buffers for gap backfill
 	replayBufs map[string]*ReplayBuffer
+	// replayWantedAt: last time a client subscribed to a candle/indicator
+	// channel (keepReplayLocked). Lazily created.
+	replayWantedAt map[string]time.Time
 
 	activeConfig ActiveConfig
 
@@ -538,6 +541,7 @@ func (h *Hub) sweepIdleChannels(now time.Time, idle time.Duration) int {
 		delete(h.latest, ch)
 		delete(h.channelSeqs, ch)
 		delete(h.replayBufs, ch)
+		delete(h.replayWantedAt, ch)
 		n++
 	}
 	return n
