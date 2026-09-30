@@ -43,6 +43,11 @@ const EDGE = 2; // pane edge inset (left/right)
 const TOP_INSET = 30; // keeps cards off the OHLC legend row
 const BOTTOM_INSET = 28; // keeps cards off the TradingView attribution logo
 const SIDE_PENALTY = 60; // px cost of flipping a card to its non-preferred side
+// Autoscale headroom per side is capped at this share of the pane. Without a
+// cap, one tall card (a 10-row REFUSED) reserved ~200px above AND below the
+// candles and squashed them into a thin strip; layoutCards already clamps every
+// card inside the pane, so the reservation is only a nicety, not a guarantee.
+const MAX_MARGIN_FRAC = 0.18;
 
 export interface Rect { left: number; top: number; w: number; h: number }
 
@@ -134,6 +139,25 @@ function textWidth(text: string, font: string): number {
     if (!measureCtx) return text.length * 6;
     measureCtx.font = font;
     return measureCtx.measureText(text).width;
+}
+
+/**
+ * Pixel headroom the price scale should reserve above/below the candles so
+ * marker cards have room, sized per side: refused/exit cards hang above their
+ * bar, entries below. Each side is capped at MAX_MARGIN_FRAC of the pane.
+ */
+export function autoscaleMargins(markers: readonly TradeMarker[], paneH: number): { above: number; below: number } {
+    let tallestAbove = 0;
+    let tallestBelow = 0;
+    for (const m of markers) {
+        const h = cardSize(m).h;
+        if (m.kind === 'entry') tallestBelow = Math.max(tallestBelow, h);
+        else tallestAbove = Math.max(tallestAbove, h);
+    }
+    const cap = paneH > 0 ? paneH * MAX_MARGIN_FRAC : Infinity;
+    const reserve = (tallest: number, inset: number) =>
+        tallest === 0 ? 0 : Math.min(cap, GAP_Y + tallest + STACK + inset);
+    return { above: reserve(tallestAbove, TOP_INSET), below: reserve(tallestBelow, BOTTOM_INSET) };
 }
 
 export function cardSize(m: TradeMarker): { w: number; h: number } {
@@ -369,21 +393,25 @@ export class TradeMarkersPrimitive implements ISeriesPrimitive<Time> {
 
     paneViews() { return this.views; }
 
-    /** Pixel headroom so badges on the highest/lowest bar stay on screen. */
+    /** Pixel headroom so cards on the highest/lowest bar stay on screen. */
     autoscaleInfo(from: Logical, to: Logical): AutoscaleInfo | null {
         if (this.markers.length === 0 || !this.series) return null;
         let lo = Infinity;
         let hi = -Infinity;
+        const visibleTimes = new Set<number>();
         for (let i = Math.max(0, Math.floor(from)); i <= Math.ceil(to); i++) {
             const bar = this.series.dataByIndex(i);
             if (!bar || !('high' in bar)) continue;
             if (bar.low < lo) lo = bar.low;
             if (bar.high > hi) hi = bar.high;
+            visibleTimes.add(bar.time as number);
         }
         if (lo > hi) return null;
-        let tallest = 0;
-        for (const m of this.markers) tallest = Math.max(tallest, cardSize(m).h);
-        const margin = GAP_Y + tallest + STACK;
-        return { priceRange: { minValue: lo, maxValue: hi }, margins: { above: margin + TOP_INSET, below: margin + BOTTOM_INSET } };
+        // Only cards that can actually render in this range count — an
+        // off-screen tall card must not squeeze the candles on screen.
+        const visible = this.markers.filter(m => visibleTimes.has(m.time));
+        if (visible.length === 0) return null;
+        const paneH = this.chart?.paneSize().height ?? 0;
+        return { priceRange: { minValue: lo, maxValue: hi }, margins: autoscaleMargins(visible, paneH) };
     }
 }
