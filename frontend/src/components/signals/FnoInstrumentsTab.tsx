@@ -41,7 +41,9 @@ export function rejectSummary(r: SRRejects): string {
 export function paramRows(p: StrikeSelView['params']): Array<[string, string]> {
     return [
         ['Delta band', `${num(p.delta_min, 2)} – ${num(p.delta_max, 2)} (closest to ${num((p.delta_min + p.delta_max) / 2, 3)} wins)`],
-        ['Max theta', p.max_theta_pct > 0 ? `${num(p.max_theta_pct, 1)}% of premium per day` : 'off'],
+        ['Theta rule', p.theta_max_gain_pct > 0
+            ? `decay over ${p.theta_hold_min ?? 60}m ≤ ${num(p.theta_max_gain_pct, 0)}% of delta × target (view: ${p.view_target_pts ?? 30} pts)`
+            : 'off'],
         ['Gamma cap', p.max_gamma > 0 ? `${p.max_gamma} within ${p.gamma_dte}d of expiry` : 'off'],
         ['Min liquidity', p.min_liquidity > 0 ? p.min_liquidity.toLocaleString('en-IN') : 'off'],
         ['Max IV', p.max_buy_iv ? `${num(p.max_buy_iv, 1)}%` : 'off'],

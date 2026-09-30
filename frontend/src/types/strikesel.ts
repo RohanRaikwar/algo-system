@@ -88,7 +88,9 @@ export interface StrikeSelView {
     params: {
         delta_min: number;
         delta_max: number;
-        max_theta_pct: number;
+        theta_max_gain_pct: number; // theta over theta_hold_min ≤ this % of delta × target
+        theta_hold_min?: number;
+        view_target_pts?: number; // target used for the live view (no signal)
         max_gamma: number;
         gamma_dte: number;
         min_liquidity: number;
