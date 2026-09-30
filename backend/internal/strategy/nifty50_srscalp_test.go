@@ -1,3 +1,7 @@
+//go:build srscalp
+
+// Parked: Nifty50SRScalp is not implemented yet. Run with -tags srscalp once it lands.
+
 package strategy
 
 import (
