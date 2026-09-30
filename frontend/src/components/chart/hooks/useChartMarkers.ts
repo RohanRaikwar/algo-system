@@ -44,6 +44,32 @@ function clip(text: string, max = 30): string {
 }
 
 const IST_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' });
+const IST_CLOCK = new Intl.DateTimeFormat('en-GB', {
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Asia/Kolkata',
+});
+
+/** "NIFTY50_SR · 14:08:01" plus any extra parts. */
+function metaLine(strategy: string, ts: string, ...extra: string[]): string {
+    const d = new Date(ts);
+    const clock = Number.isNaN(d.getTime()) ? '' : IST_CLOCK.format(d);
+    return [strategy, clock, ...extra].filter(Boolean).join(' · ');
+}
+
+// Price levels the strategy writes into its reason as paise ints, e.g. "level=2273620".
+const LEVEL_KEYS: Array<[string, string]> = [['level', 'LVL'], ['stop', 'SL'], ['target', 'TGT']];
+
+/** "LVL 22736.20  SL 22775.40  TGT 22663.32" from the reason; empty when none. */
+export function levelsLine(reason: string | undefined): string {
+    if (!reason) return '';
+    const parts: string[] = [];
+    for (const [key, short] of LEVEL_KEYS) {
+        const m = reason.match(new RegExp(`\\b${key}\\s*[=:]\\s*(\\d+)\\b`, 'i'));
+        if (!m) continue;
+        const paise = parseInt(m[1], 10);
+        parts.push(`${short} ${Math.floor(paise / 100)}.${String(paise % 100).padStart(2, '0')}`);
+    }
+    return parts.join('  ');
+}
 
 function signalTs(s: SignalRecord): string {
     return s.candle_ts || s.created_at;
@@ -53,14 +79,41 @@ function signalStrike(s: SignalRecord): number {
     return s.strike ?? legInfo(s)?.strike ?? 0;
 }
 
+/**
+ * Full signal reason, word-wrapped like the old hover card showed it: up to
+ * four rows of ~40 chars (about 140 chars). The leading leg tag is dropped
+ * since the strike row already shows it.
+ */
+export function reasonLines(reason: string | undefined, width = 40, rows = 4): string[] {
+    if (!reason) return [];
+    const text = reason.replace(/^\[[^\]]*\]\s*/, '');
+    const wrapped: string[] = [];
+    let line = '';
+    for (const word of text.split(/\s+/).filter(Boolean)) {
+        if (line && line.length + 1 + word.length > width) {
+            wrapped.push(line);
+            line = word;
+        } else {
+            line = line ? `${line} ${word}` : word;
+        }
+    }
+    if (line) wrapped.push(line);
+    const out = wrapped.slice(0, rows).map(l => clip(l, width));
+    if (wrapped.length > rows) out[rows - 1] = `${out[rows - 1].slice(0, width - 2)} …`;
+    return out;
+}
+
 function entryLines(s: SignalRecord): string[] {
-    const lines: string[] = [];
+    const lines: string[] = [metaLine(s.strategy, s.created_at || s.candle_ts)];
     const strike = signalStrike(s);
     const sideCh = sideShort(s.side);
     const head = [s.price && s.price > 0 ? `@ ${rupees(s.price)}` : '', strike > 0 ? `${strike}${sideCh}` : '']
         .filter(Boolean).join('  ');
     if (head) lines.push(head);
     if (s.qty && s.qty > 0) lines.push(`qty ${s.qty}`);
+    const levels = levelsLine(s.reason);
+    if (levels) lines.push(levels);
+    lines.push(...reasonLines(s.reason));
     return lines;
 }
 
@@ -71,7 +124,8 @@ function label(verb: string, side: string | undefined, compact: boolean): string
 /**
  * Chart markers for the selected instrument: entries (below the bar), exits
  * and refused entries (above), sorted by time. Each carries detail lines for
- * its callout card (premium, strike, qty, P&L, refuse reason). Compact mode
+ * its callout card (strategy and time, premium, strike, qty, levels, P&L,
+ * reason). Compact mode
  * drops label and lines and keeps the icon plus C/P.
  */
 export function buildChartMarkers(
@@ -110,7 +164,7 @@ export function buildChartMarkers(
         } else {
             const entry = open.get(key);
             open.delete(key);
-            const lines: string[] = [];
+            const lines: string[] = [metaLine(s.strategy, s.created_at || s.candle_ts)];
             if (s.price && s.price > 0) {
                 lines.push(`@ ${rupees(s.price)}`);
                 if (entry && entry.day === day) {
@@ -119,6 +173,7 @@ export function buildChartMarkers(
                     lines.push(`P&L ${marker.pnl > 0 ? '+' : ''}${rupees(marker.pnl)}`);
                 }
             }
+            lines.push(...reasonLines(s.reason));
             if (!compact) marker.lines = lines;
         }
         out.push(marker);
@@ -128,7 +183,12 @@ export function buildChartMarkers(
         if (!matchesToken(r.token, r.exchange, selectedToken)) continue;
         const time = bucketTime(r.ts, tfSec);
         if (time === null) continue;
-        const lines = compact ? [] : [r.strategy_reason, r.reason].filter(Boolean).map(t => clip(t));
+        const strike = r.strike ? `${r.strike}${sideShort(r.side)}` : '';
+        const lines = compact ? [] : [
+            metaLine(r.strategy, r.ts, strike),
+            ...reasonLines(r.strategy_reason),
+            ...reasonLines(r.reason ? `Blocked: ${r.reason}` : ''),
+        ];
         out.push({ time, kind: 'refused', label: label('REFUSED', r.side, compact), side: sideShort(r.side), lines });
     }
 
@@ -154,7 +214,7 @@ export function useChartMarkers(
         }
 
         const fp = `${selectedToken}::${selectedTF}::`
-            + signals.map(s => `${s.id}:${s.action}:${s.price ?? ''}:${s.qty ?? ''}`).join('|')
+            + signals.map(s => `${s.id}:${s.action}:${s.price ?? ''}:${s.qty ?? ''}:${s.reason?.length ?? 0}`).join('|')
             + '::' + refused.map(r => r.ts).join('|');
         if (fp === lastFingerprint.current) return;
         lastFingerprint.current = fp;

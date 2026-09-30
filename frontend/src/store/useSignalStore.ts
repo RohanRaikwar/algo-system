@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { SignalPayload, SignalRecord } from '../types/signal';
 
-const MAX_SIGNALS = 200;
+const MAX_SIGNALS = 500; // matches the REST history preload
 
 interface SignalState {
     /** Signals from REST (historical) and WS (live) combined */
@@ -18,6 +18,9 @@ interface SignalState {
 
     /** Bulk-set signals from REST */
     setSignals: (sigs: SignalRecord[]) => void;
+
+    /** Merge REST history into the store, keeping live signals it lacks */
+    mergeSignals: (history: SignalRecord[]) => void;
 
     /** Clear unread counter (on page visit) */
     clearUnread: () => void;
@@ -59,6 +62,22 @@ export function signalKey(r: SignalRecord): string {
     return [r.strategy, r.action, r.side || '', r.exchange, r.token, Date.parse(r.candle_ts), r.leg || '', r.strike || ''].join('|');
 }
 
+function signalMs(r: SignalRecord): number {
+    const ms = Date.parse(r.created_at || r.candle_ts);
+    return Number.isNaN(ms) ? 0 : ms;
+}
+
+/**
+ * Union of held and REST signals, newest first. A REST record wins over a
+ * live copy of the same signal, since it carries the journal id.
+ */
+export function mergeSignalLists(held: SignalRecord[], history: SignalRecord[]): SignalRecord[] {
+    const byKey = new Map<string, SignalRecord>();
+    for (const r of held) byKey.set(signalKey(r), r);
+    for (const r of history) byKey.set(signalKey(r), r);
+    return [...byKey.values()].sort((a, b) => signalMs(b) - signalMs(a)).slice(0, MAX_SIGNALS);
+}
+
 export const useSignalStore = create<SignalState>((set) => ({
     signals: [],
     unreadCount: 0,
@@ -75,6 +94,8 @@ export const useSignalStore = create<SignalState>((set) => ({
     }),
 
     setSignals: (sigs) => set({ signals: sigs }),
+
+    mergeSignals: (history) => set((s) => ({ signals: mergeSignalLists(s.signals, history) })),
 
     clearUnread: () => set({ unreadCount: 0 }),
 

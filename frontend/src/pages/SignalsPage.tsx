@@ -75,7 +75,7 @@ interface SignalDateGroup {
 
 export function SignalsPage() {
     const signals = useSignalStore(s => s.signals);
-    const setSignals = useSignalStore(s => s.setSignals);
+    const mergeSignals = useSignalStore(s => s.mergeSignals);
     const clearUnread = useSignalStore(s => s.clearUnread);
     const audioEnabled = useSignalStore(s => s.audioEnabled);
     const toggleAudio = useSignalStore(s => s.toggleAudio);
@@ -96,12 +96,12 @@ export function SignalsPage() {
         clearUnread();
         setLoading(true);
         fetchSignals(500).then(data => {
-            setSignals(data);
-            setInitialCount(data.length);
+            mergeSignals(data);
+            setInitialCount(useSignalStore.getState().signals.length);
             setLoading(false);
         }).catch(() => setLoading(false));
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [clearUnread, setSignals]);
+    }, [clearUnread, mergeSignals]);
 
     // Clear unread on mount
     useEffect(() => {

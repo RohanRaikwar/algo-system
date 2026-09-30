@@ -3,6 +3,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAppStore } from './store/useAppStore';
 import { useWebSocket } from './hooks/useWebSocket';
+import { useSignalStore } from './store/useSignalStore';
+import { fetchSignals } from './services/api';
 import { useConfigQuery } from './hooks/useConfigQuery';
 import { Header } from './components/layout/Header';
 import { StatusBar } from './components/layout/StatusBar';
@@ -28,7 +30,11 @@ function AppShell() {
     // Connect WebSocket
     useWebSocket();
 
-    // Signal loading is handled by SignalsPage — no global preload needed.
+    // Preload signal history so chart markers show without visiting Signals.
+    const mergeSignals = useSignalStore(s => s.mergeSignals);
+    useEffect(() => {
+        fetchSignals(500).then(mergeSignals).catch(() => {});
+    }, [mergeSignals]);
 
     // Fetch config via React Query
     const { data: cfg, isLoading: cfgLoading, isError: cfgError } = useConfigQuery();
