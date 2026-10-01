@@ -63,6 +63,7 @@ body {
   background: var(--bg-primary);
   color: var(--text-primary);
   min-height: 100vh;
+  min-height: 100dvh; /* mobile: 100vh is the URL-bar-hidden height */
   overflow-x: hidden;
   line-height: 1.5;
 }

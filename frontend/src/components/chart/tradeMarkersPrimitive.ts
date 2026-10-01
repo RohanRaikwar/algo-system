@@ -48,10 +48,9 @@ const SIDE_PENALTY = 60; // px cost of flipping a card to its non-preferred side
 // candles and squashed them into a thin strip; layoutCards already clamps every
 // card inside the pane, so the reservation is only a nicety, not a guarantee.
 const MAX_MARGIN_FRAC = 0.18;
-// Below this bar spacing (zoomed far out) cards would bury the candles, so
-// each marker shrinks to a dot just beyond its bar.
-const DOT_BAR_SPACING = 6;
-const DOT_R = 3;
+// Below this bar spacing (zoomed far out) full cards would bury the candles,
+// so markers shrink to the compact badge phones use (icon + C/P).
+const COMPACT_BAR_SPACING = 6;
 
 export interface Rect { left: number; top: number; w: number; h: number }
 
@@ -164,6 +163,11 @@ export function autoscaleMargins(markers: readonly TradeMarker[], paneH: number)
     return { above: reserve(tallestAbove, TOP_INSET), below: reserve(tallestBelow, BOTTOM_INSET) };
 }
 
+/** The phone/zoomed-out badge: icon plus C/P, no label or detail rows. */
+export function compactMarker(m: TradeMarker): TradeMarker {
+    return { ...m, label: '', lines: [] };
+}
+
 export function cardSize(m: TradeMarker): { w: number; h: number } {
     const text = m.label || m.side;
     let w = PAD_X * 2 + ICON + (text ? GAP + textWidth(text, FONT) : 0);
@@ -219,17 +223,11 @@ function drawIcon(ctx: CanvasRenderingContext2D, kind: TradeMarkerKind, cx: numb
 }
 
 class Renderer implements ISeriesPrimitivePaneRenderer {
-    constructor(private readonly placed: Placed[], private readonly dots: Placed[] = []) {}
+    constructor(private readonly placed: Placed[]) {}
 
     draw(target: Parameters<ISeriesPrimitivePaneRenderer['draw']>[0]) {
         target.useMediaCoordinateSpace(({ context: ctx }) => {
             ctx.save();
-            for (const d of this.dots) {
-                ctx.fillStyle = MARKER_COLORS[d.m.kind];
-                ctx.beginPath();
-                ctx.arc(d.x, d.above ? d.y - DOT_R - 3 : d.y + DOT_R + 3, DOT_R, 0, Math.PI * 2);
-                ctx.fill();
-            }
             ctx.textBaseline = 'middle';
             // Leaders first so no card is crossed by another card's line.
             for (const p of this.placed) this.drawLeader(ctx, p);
@@ -313,9 +311,8 @@ class Renderer implements ISeriesPrimitivePaneRenderer {
 
 class PaneView implements ISeriesPrimitivePaneView {
     placed: Placed[] = [];
-    dots: Placed[] = [];
     zOrder() { return 'top' as const; }
-    renderer() { return new Renderer(this.placed, this.dots); }
+    renderer() { return new Renderer(this.placed); }
 }
 
 /**
@@ -350,11 +347,11 @@ export class TradeMarkersPrimitive implements ISeriesPrimitive<Time> {
 
     updateAllViews() {
         const placed: Placed[] = [];
-        const dots: Placed[] = [];
         const chart = this.chart;
         const series = this.series;
         if (chart && series && this.markers.length) {
             const ts = chart.timeScale();
+            const markers = ts.options().barSpacing < COMPACT_BAR_SPACING ? this.markers.map(compactMarker) : this.markers;
             const range = ts.getVisibleLogicalRange();
             const bars: BarBox[] = [];
             if (range) {
@@ -373,7 +370,7 @@ export class TradeMarkersPrimitive implements ISeriesPrimitive<Time> {
             const paneW = ts.width() || pane.width;
             const reqs: CardRequest[] = [];
             const anchors: TradeMarker[] = [];
-            for (const m of this.markers) {
+            for (const m of markers) {
                 // Off-screen bars still get coordinates; skip them or the
                 // edge clamp piles their cards on the pane border.
                 const x = ts.timeToCoordinate(m.time as Time);
@@ -389,12 +386,6 @@ export class TradeMarkersPrimitive implements ISeriesPrimitive<Time> {
                 anchors.push(m);
             }
 
-            if (ts.options().barSpacing < DOT_BAR_SPACING) {
-                const rect = { left: 0, top: 0, w: 0, h: 0 };
-                for (let i = 0; i < reqs.length; i++) dots.push({ x: reqs[i].x, y: reqs[i].y, above: reqs[i].above, rect, m: anchors[i] });
-                reqs.length = 0;
-            }
-
             layoutCards(reqs, bars, paneW, pane.height).forEach(({ rect, above }, i) => {
                 const r = reqs[i];
                 // Anchor follows the side the card landed on.
@@ -407,7 +398,6 @@ export class TradeMarkersPrimitive implements ISeriesPrimitive<Time> {
             });
         }
         this.view.placed = placed;
-        this.view.dots = dots;
     }
 
     paneViews() { return this.views; }
@@ -431,11 +421,7 @@ export class TradeMarkersPrimitive implements ISeriesPrimitive<Time> {
         const visible = this.markers.filter(m => visibleTimes.has(m.time));
         if (visible.length === 0) return null;
         const paneH = this.chart?.paneSize().height ?? 0;
-        if ((this.chart?.timeScale().options().barSpacing ?? Infinity) < DOT_BAR_SPACING) {
-            // Dots only: just room for one dot beyond the extreme bars.
-            const m = 2 * DOT_R + 6;
-            return { priceRange: { minValue: lo, maxValue: hi }, margins: { above: m + TOP_INSET, below: m } };
-        }
-        return { priceRange: { minValue: lo, maxValue: hi }, margins: autoscaleMargins(visible, paneH) };
+        const zoomedOut = (this.chart?.timeScale().options().barSpacing ?? Infinity) < COMPACT_BAR_SPACING;
+        return { priceRange: { minValue: lo, maxValue: hi }, margins: autoscaleMargins(zoomedOut ? visible.map(compactMarker) : visible, paneH) };
     }
 }

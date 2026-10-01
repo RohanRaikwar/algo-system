@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildChartMarkers, levelsLine, reasonLines } from './useChartMarkers';
-import { autoscaleMargins, cardSize, layoutCards, type CardRequest, type TradeMarker } from '../tradeMarkersPrimitive';
+import { autoscaleMargins, cardSize, compactMarker, layoutCards, type CardRequest, type TradeMarker } from '../tradeMarkersPrimitive';
 import { oldestCandleMs } from './useChartLazyLoad';
 import { mergeSignalLists, useSignalStore } from '../../../store/useSignalStore';
 import type { SignalPayload } from '../../../types/signal';
@@ -250,5 +250,16 @@ describe('traded option symbol', () => {
         expect(buildOpenOrders([buy])[0].fnoSymbol).toBe('FROM_JOURNAL');
         const live = { 'NIFTY50_SR|PUT': { strategy_name: 'NIFTY50_SR', side: 'PUT', fno_symbol: 'NIFTY06OCT2622500PE' } };
         expect(buildOpenOrders([buy], live)[0].fnoSymbol).toBe('NIFTY06OCT2622500PE');
+    });
+});
+
+describe('zoomed-out compact badge', () => {
+    it('keeps icon and side, drops label and detail rows', () => {
+        const full: TradeMarker = { time: 60, kind: 'exit', label: 'EXIT PUT', side: 'P', lines: ['NIFTY50_SR · 12:51:01', '@ ₹236.25'], pnl: 615225 };
+        const c = compactMarker(full);
+        expect(c).toMatchObject({ time: 60, kind: 'exit', side: 'P', label: '', lines: [] });
+        expect(cardSize(c).h).toBe(18);
+        expect(cardSize(full).h).toBeGreaterThan(cardSize(c).h);
+        expect(cardSize(c).w).toBeLessThan(cardSize(full).w);
     });
 });
