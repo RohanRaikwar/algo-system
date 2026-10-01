@@ -558,3 +558,20 @@ func TestRangeExitsBeforeClosingAuction(t *testing.T) {
 		t.Fatal("condor must exit by 15:00")
 	}
 }
+
+func TestRangeForceExitStaleKeepsTodaysPosition(t *testing.T) {
+	s, f := newWarmRange(t, rangeTestConfig())
+	quiet(t, runUntil(s, f, 10, 29))
+	rs, _ := s.RangeState("NSE:NIFTY")
+	if sig := s.OnTFCandle(tfc(day4(f, 10, 29), hammerAt(rs.Support))); sig == nil {
+		t.Fatal("setup entry failed")
+	}
+	today := f.day.Format("2006-01-02")
+	if sigs := s.ForceExitStale(today, "STALE"); len(sigs) != 0 {
+		t.Fatalf("same-day position must survive a restart, got %+v", sigs)
+	}
+	sigs := s.ForceExitStale(f.day.AddDate(0, 0, 1).Format("2006-01-02"), "STALE")
+	if len(sigs) != 1 || sigs[0].Side != SideCall || sigs[0].Action != ActionExit {
+		t.Fatalf("previous-day position must exit, got %+v", sigs)
+	}
+}

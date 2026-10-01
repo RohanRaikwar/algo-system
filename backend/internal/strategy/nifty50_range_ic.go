@@ -397,11 +397,23 @@ func (s *Nifty50RangeIC) exitSignal(key string, st *nifty50RangeICState, reason 
 }
 
 func (s *Nifty50RangeIC) ForceExitAll(reason string) []Signal {
+	return s.forceExit("", reason)
+}
+
+// ForceExitStale exits only condors opened on a day other than today (IST
+// "2006-01-02"), so a restart mid-session keeps today's condor open.
+func (s *Nifty50RangeIC) ForceExitStale(today, reason string) []Signal {
+	return s.forceExit(today, reason)
+}
+
+// forceExit exits every open condor, or with today set, only those not
+// opened today.
+func (s *Nifty50RangeIC) forceExit(today, reason string) []Signal {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []Signal
 	for key, st := range s.instruments {
-		if st.Open {
+		if st.Open && (today == "" || st.OpenedAt.In(ist).Format("2006-01-02") != today) {
 			out = append(out, *s.exitSignal(key, st, reason))
 		}
 	}
