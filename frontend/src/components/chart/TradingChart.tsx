@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { SlidersHorizontal } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { useCandleStore } from '../../store/useCandleStore';
-import { tfLabel, entryKey, getEntryColor } from '../../utils/helpers';
+import { tfLabel, entryKey, getEntryColor, tokenLabel, tokenCaption } from '../../utils/helpers';
 import { useChartInit } from './hooks/useChartInit';
 import { useCandleSeries } from './hooks/useCandleSeries';
 import { useIndicatorLines } from './hooks/useIndicatorLines';
@@ -112,18 +112,22 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
             <div className={styles.toolbar}>
                 <div className={styles.symbolGroup}>
                     {compact ? (
-                        <span className={styles.paneSymbol}>{selectedToken}</span>
+                        <span className={styles.paneSymbol}>{tokenLabel(selectedToken)}</span>
                     ) : (
-                    <select
-                        className={styles.symbolSelect}
-                        value={selectedToken || ''}
-                        onChange={(e) => setSelectedToken(e.target.value)}
-                        aria-label="Instrument"
-                    >
-                        {config.tokens.map((t) => (
-                            <option key={t} value={t}>{t}</option>
-                        ))}
-                    </select>
+                    <div className={styles.symbolStack}>
+                        <select
+                            className={styles.symbolSelect}
+                            value={selectedToken || ''}
+                            onChange={(e) => setSelectedToken(e.target.value)}
+                            aria-label="Instrument"
+                            title={selectedToken || undefined}
+                        >
+                            {config.tokens.map((t) => (
+                                <option key={t} value={t}>{tokenLabel(t)}</option>
+                            ))}
+                        </select>
+                        <span className={styles.symbolCaption} aria-hidden>{tokenCaption(selectedToken)}</span>
+                    </div>
                     )}
                     {quote && (
                         <div className={styles.quote}>
@@ -173,7 +177,7 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
 
                 {!hasCandles && (
                     <div className={styles.emptyState}>
-                        Waiting for market data for {selectedToken || 'this instrument'}…
+                        Waiting for market data for {tokenLabel(selectedToken) || 'this instrument'}…
                     </div>
                 )}
 

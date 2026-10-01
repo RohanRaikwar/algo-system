@@ -55,6 +55,24 @@ export function tfLabel(tf: number): string {
     return (tf / 3600) + 'h';
 }
 
+/** Friendly names for instrument keys ("EXCHANGE:TOKEN"). */
+export const TOKEN_LABEL: Record<string, string> = {
+    'NSE:99926000': 'NIFTY 50',
+};
+
+/** "NSE:99926000" → "NIFTY 50"; unknown keys show as-is. */
+export function tokenLabel(key: string | null | undefined): string {
+    if (!key) return '';
+    return TOKEN_LABEL[key] ?? key;
+}
+
+/** "NSE:99926000" → "NSE · 99926000"; empty when the key has no exchange. */
+export function tokenCaption(key: string | null | undefined): string {
+    if (!key) return '';
+    const i = key.indexOf(':');
+    return i > 0 ? `${key.slice(0, i)} · ${key.slice(i + 1)}` : '';
+}
+
 export function fmtTime(ts: string): string {
     const d = new Date(ts);
     return d.toLocaleTimeString('en-IN', { hour12: false });

@@ -191,3 +191,64 @@ describe('autoscaleMargins', () => {
         expect(autoscaleMargins([], 600)).toEqual({ above: 0, below: 0 });
     });
 });
+
+describe('signal dedupe across REST and WS', () => {
+    const rest = {
+        ...entry, id: 42, strategy: 'NIFTY50_RANGE', side: 'PUT', price: 11040, qty: 65,
+        candle_ts: '2026-10-01T06:45:01Z', created_at: '2026-10-01T06:45:01Z',
+    } as SignalRecord;
+
+    it('treats a live copy with fractional seconds as the journal record', () => {
+        const live = { ...rest, id: 999, candle_ts: '2026-10-01T06:45:01.734512Z', created_at: '2026-10-01T06:45:01.734512Z' };
+        const merged = mergeSignalLists([live], [rest]);
+        expect(merged).toHaveLength(1);
+        expect(merged[0].id).toBe(42);
+    });
+
+    it('matches a live leg field against the REST reason tag', () => {
+        const restLeg = { ...rest, reason: '[SHORT_CE 22600] condor open' };
+        const liveLeg = { ...rest, id: 7, leg: 'SHORT_CE', strike: 22600, short: true, reason: 'condor open' };
+        expect(mergeSignalLists([liveLeg], [restLeg])).toHaveLength(1);
+    });
+});
+
+describe('live P&L on open entries', () => {
+    const now = new Date().toISOString();
+    const buy = {
+        ...entry, strategy: 'NIFTY50_RANGE', side: 'PUT', price: 11040, qty: 65, candle_ts: now, created_at: now,
+    } as SignalRecord;
+    const live = { NIFTY50_RANGE: { strategy_name: 'NIFTY50_RANGE', side: 'PUT', entry_fno_price: 11040, current_fno_price: 11230 } };
+    const orders = { 'NIFTY50_RANGE|PUT': live.NIFTY50_RANGE };
+
+    it('adds a live P&L row and OPEN label while the position is open', () => {
+        const [m] = buildChartMarkers([buy], [], 'NSE:99926000', 60, false, orders);
+        expect(m.label).toBe('OPEN PUT');
+        expect(m.pnl).toBe((11230 - 11040) * 65);
+        expect(m.lines[m.lines.length - 1]).toBe('P&L +₹123.50 · LTP ₹112.30');
+    });
+
+    it('leaves closed and untracked entries alone', () => {
+        const exit = { ...buy, action: 'EXIT', price: 11500 } as SignalRecord;
+        const closed = buildChartMarkers([buy, exit], [], 'NSE:99926000', 60, false, orders);
+        expect(closed[0].label).toBe('BUY PUT');
+        const [untracked] = buildChartMarkers([buy], [], 'NSE:99926000', 60, false, {});
+        expect(untracked.label).toBe('BUY PUT');
+        expect(untracked.pnl).toBeUndefined();
+    });
+});
+
+describe('traded option symbol', () => {
+    it('names the contract on the entry card', () => {
+        const buy = { ...entry, side: 'PUT', price: 14160, fno_symbol: 'NIFTY06OCT2622500PE' } as SignalRecord;
+        const [m] = buildChartMarkers([buy], [], 'NSE:99926000', 60, false);
+        expect(m.lines[1]).toBe('@ ₹141.60  NIFTY06OCT2622500PE');
+    });
+
+    it('open orders prefer the live symbol, then the journal one', async () => {
+        const { buildOpenOrders } = await import('../../signals/signalAnalytics');
+        const buy = { ...entry, strategy: 'NIFTY50_SR', side: 'PUT', price: 14160, fno_symbol: 'FROM_JOURNAL' } as SignalRecord;
+        expect(buildOpenOrders([buy])[0].fnoSymbol).toBe('FROM_JOURNAL');
+        const live = { 'NIFTY50_SR|PUT': { strategy_name: 'NIFTY50_SR', side: 'PUT', fno_symbol: 'NIFTY06OCT2622500PE' } };
+        expect(buildOpenOrders([buy], live)[0].fnoSymbol).toBe('NIFTY06OCT2622500PE');
+    });
+});

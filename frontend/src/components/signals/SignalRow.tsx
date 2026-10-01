@@ -153,7 +153,9 @@ export function SignalRow({ signal, isNew, entryPrice, entryTime }: SignalRowPro
                     {badgeText}
                 </span>
             </td>
-            <td>{signal.exchange}:{signal.token}</td>
+            <td title={`${signal.exchange}:${signal.token}`}>
+                <span className={signal.fno_symbol ? 'mono' : undefined}>{signal.fno_symbol || `${signal.exchange}:${signal.token}`}</span>
+            </td>
             <td className="price-cell">
                 {formatPrice(signal.price)}
                 {hasPnL && (

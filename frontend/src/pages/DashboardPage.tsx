@@ -1,10 +1,33 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { TradingChart } from '../components/chart/TradingChart';
 import { RangePanel } from '../components/range/RangePanel';
+import { RangePeek } from '../components/range/RangePeek';
+import { RangeSheet, type SheetSnap } from '../components/range/RangeSheet';
+import { useMediaQuery, PHONE_QUERY, PHONE_LANDSCAPE_QUERY } from '../hooks/useMediaQuery';
 import { useAppStore } from '../store/useAppStore';
 import { loadLayout, saveLayout, LAYOUTS, type ChartLayout } from './dashboardLayout';
 import styles from './DashboardPage.module.css';
+
+const SHEET_ID = 'range-sheet';
+const SNAP_KEY = 'rangeSheetSnap';
+
+/** Last open snap point this session; half when none or storage is blocked. */
+function lastOpenSnap(): SheetSnap {
+    try {
+        return sessionStorage.getItem(SNAP_KEY) === 'full' ? 'full' : 'half';
+    } catch {
+        return 'half';
+    }
+}
+
+function rememberSnap(s: SheetSnap) {
+    try {
+        sessionStorage.setItem(SNAP_KEY, s);
+    } catch {
+        // blocked storage: next open just uses half
+    }
+}
 
 interface DashboardPageProps {
     onOpenIndicators?: () => void;
@@ -16,7 +39,22 @@ export function DashboardPage({ onOpenIndicators }: DashboardPageProps) {
 
     useEffect(() => saveLayout(layout), [layout]);
 
-    const panes = layout.panes.slice(0, layout.count - 1);
+    // Phones show one chart and the strategy as peek strip + sheet. The saved
+    // layout is left alone so desktop keeps its 2/4-chart choice.
+    const isPhone = useMediaQuery(PHONE_QUERY);
+    const isLandscape = useMediaQuery(PHONE_LANDSCAPE_QUERY);
+    const compactUI = isPhone || isLandscape;
+    const count = compactUI ? 1 : layout.count;
+    const [snap, setSnap] = useState<SheetSnap>('closed');
+    const peekRef = useRef<HTMLButtonElement>(null);
+    const openSheet = useCallback(() => setSnap(s => (s === 'closed' ? lastOpenSnap() : 'closed')), []);
+    const onSnap = useCallback((s: SheetSnap) => {
+        if (s !== 'closed') rememberSnap(s);
+        setSnap(s);
+    }, []);
+    useEffect(() => { if (!compactUI) setSnap('closed'); }, [compactUI]);
+
+    const panes = layout.panes.slice(0, count - 1);
     const setPaneTF = (i: number, tf: number) =>
         setLayout(l => ({ ...l, panes: l.panes.map((p, j) => (j === i ? tf : p)) }));
 
@@ -40,13 +78,20 @@ export function DashboardPage({ onOpenIndicators }: DashboardPageProps) {
                         ))}
                     </div>
                 </div>
-                <div className={`${styles.grid} ${styles[`grid${layout.count}`]}`}>
+                <div className={`${styles.grid} ${styles[`grid${count}`]}`}>
                     <TradingChart onOpenIndicators={onOpenIndicators} />
                     {panes.map((tf, i) => (
                         <TradingChart key={i} compact paneTF={tf} onPaneTFChange={t => setPaneTF(i, t)} />
                     ))}
                 </div>
-                <RangePanel />
+                {compactUI ? (
+                    <>
+                        <RangePeek ref={peekRef} open={snap !== 'closed'} sheetId={SHEET_ID} onOpen={openSheet} />
+                        <RangeSheet id={SHEET_ID} snap={snap} onSnap={onSnap} returnFocusRef={peekRef} />
+                    </>
+                ) : (
+                    <RangePanel />
+                )}
             </div>
         </ErrorBoundary>
     );

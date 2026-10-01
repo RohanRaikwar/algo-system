@@ -71,8 +71,8 @@ function LiveOrderRow({ order }: { order: OpenOrder }) {
             <td>
                 <span className={getSideBadge(order.side)}>{order.side}</span>
             </td>
-            <td>
-                {order.instrument}
+            <td title={order.instrument}>
+                <span className="mono">{order.fnoSymbol || order.instrument}</span>
                 {order.leg && (
                     <span className="signal-time-sub">
                         {order.leg.replace('_', ' ')}{order.strike ? ` ${order.strike}` : ''}

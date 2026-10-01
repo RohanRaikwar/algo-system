@@ -42,6 +42,7 @@ type DailyCompletedOrder struct {
 	Exchange    string `json:"exchange"`
 	Token       string `json:"token"`
 	Instrument  string `json:"instrument"`
+	FNOSymbol   string `json:"fno_symbol,omitempty"` // traded option, e.g. NIFTY06OCT2622500PE
 	Qty         int64  `json:"qty"`
 	EntryPrice  int64  `json:"entry_price"`
 	ExitPrice   int64  `json:"exit_price"`
@@ -94,6 +95,7 @@ type dailySignalRow struct {
 	Exchange  string
 	Price     int64
 	Qty       int64
+	FNOSymbol string
 	CandleTS  string
 	CreatedAt string
 	EventTime time.Time
@@ -111,6 +113,7 @@ type pairedTrade struct {
 	Side       string
 	Exchange   string
 	Token      string
+	FNOSymbol  string
 	Qty        int64
 	EntryPrice int64
 	ExitPrice  int64
@@ -201,31 +204,42 @@ func parseSignalTime(v string) (time.Time, bool) {
 }
 
 func queryDailySignalRows(db *sql.DB) (*sql.Rows, error) {
-	withQty := `
-		SELECT id, strategy, action, COALESCE(side,''), token, exchange, COALESCE(price,0),
-		       CASE WHEN qty IS NULL OR qty <= 0 THEN 1 ELSE qty END,
-		       COALESCE(candle_ts,''), COALESCE(created_at,'')
-		FROM signals
-		WHERE action IN ('BUY', 'EXIT')
-		ORDER BY created_at ASC, id ASC`
-	rows, err := db.Query(withQty)
-	if err == nil {
-		return rows, nil
+	// Newest schema first; older journals lack fno_symbol, then qty.
+	queries := []string{
+		`SELECT id, strategy, action, COALESCE(side,''), token, exchange, COALESCE(price,0),
+		        CASE WHEN qty IS NULL OR qty <= 0 THEN 1 ELSE qty END,
+		        COALESCE(fno_symbol,''),
+		        COALESCE(candle_ts,''), COALESCE(created_at,'')
+		 FROM signals
+		 WHERE action IN ('BUY', 'EXIT')
+		 ORDER BY created_at ASC, id ASC`,
+		`SELECT id, strategy, action, COALESCE(side,''), token, exchange, COALESCE(price,0),
+		        CASE WHEN qty IS NULL OR qty <= 0 THEN 1 ELSE qty END,
+		        '' AS fno_symbol,
+		        COALESCE(candle_ts,''), COALESCE(created_at,'')
+		 FROM signals
+		 WHERE action IN ('BUY', 'EXIT')
+		 ORDER BY created_at ASC, id ASC`,
+		`SELECT id, strategy, action, COALESCE(side,''), token, exchange, COALESCE(price,0),
+		        1 AS qty,
+		        '' AS fno_symbol,
+		        COALESCE(candle_ts,''), COALESCE(created_at,'')
+		 FROM signals
+		 WHERE action IN ('BUY', 'EXIT')
+		 ORDER BY created_at ASC, id ASC`,
 	}
-
-	// Legacy journals may not have qty yet.
-	if strings.Contains(strings.ToLower(err.Error()), "no such column") &&
-		strings.Contains(strings.ToLower(err.Error()), "qty") {
-		legacy := `
-			SELECT id, strategy, action, COALESCE(side,''), token, exchange, COALESCE(price,0),
-			       1 AS qty,
-			       COALESCE(candle_ts,''), COALESCE(created_at,'')
-			FROM signals
-			WHERE action IN ('BUY', 'EXIT')
-			ORDER BY created_at ASC, id ASC`
-		return db.Query(legacy)
+	var lastErr error
+	for _, q := range queries {
+		rows, err := db.Query(q)
+		if err == nil {
+			return rows, nil
+		}
+		if !strings.Contains(strings.ToLower(err.Error()), "no such column") {
+			return nil, err
+		}
+		lastErr = err
 	}
-	return nil, err
+	return nil, lastErr
 }
 
 func (svc *DailyAnalyticsService) loadSignalRows() ([]dailySignalRow, error) {
@@ -246,7 +260,7 @@ func (svc *DailyAnalyticsService) loadSignalRows() ([]dailySignalRow, error) {
 			var r dailySignalRow
 			if err := rows.Scan(
 				&r.ID, &r.Strategy, &r.Action, &r.Side, &r.Token, &r.Exchange,
-				&r.Price, &r.Qty, &r.CandleTS, &r.CreatedAt,
+				&r.Price, &r.Qty, &r.FNOSymbol, &r.CandleTS, &r.CreatedAt,
 			); err != nil {
 				continue
 			}
@@ -273,6 +287,13 @@ func (svc *DailyAnalyticsService) loadSignalRows() ([]dailySignalRow, error) {
 	})
 
 	return rowsOut, nil
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 func sameTradingDay(a, b time.Time, loc *time.Location) bool {
@@ -370,6 +391,7 @@ func pairCompletedTrades(rows []dailySignalRow) []pairedTrade {
 				Side:       entry.Side,
 				Exchange:   entry.Exchange,
 				Token:      entry.Token,
+				FNOSymbol:  firstNonEmpty(entry.FNOSymbol, row.FNOSymbol),
 				Qty:        qty,
 				EntryPrice: entry.Price,
 				ExitPrice:  row.Price,
@@ -512,6 +534,7 @@ func buildDailyOrderGroups(trades []pairedTrade, loc *time.Location, days int) [
 				Exchange:    tr.Exchange,
 				Token:       tr.Token,
 				Instrument:  tr.Exchange + ":" + tr.Token,
+				FNOSymbol:   tr.FNOSymbol,
 				Qty:         tr.Qty,
 				EntryPrice:  tr.EntryPrice,
 				ExitPrice:   tr.ExitPrice,

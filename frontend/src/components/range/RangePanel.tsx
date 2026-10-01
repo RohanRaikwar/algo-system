@@ -1,28 +1,8 @@
-import { useMemo } from 'react';
 import { useRangeStore } from '../../store/useRangeStore';
-import { useCandleStore } from '../../store/useCandleStore';
 import { RANGE_KIND_LABEL, type RangeEntryKind } from '../signals/rangeKind';
-import { hhmm, points, rupees, watching } from './rangeFormat';
+import { REGIME_LABEL, asOf, hhmm, pnlPaise, points, rupees, watching } from './rangeFormat';
+import { useLastNiftyPaise } from './useLastNiftyPaise';
 import styles from './RangePanel.module.css';
-
-const REGIME_LABEL = { RANGE: 'Range', TRENDING: 'Trending', WARMING: 'Warming up' } as const;
-const IST_TIME = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
-
-/** Last NIFTY close in paise, for distance-to-level readouts. */
-function useLastNiftyPaise(key: string | undefined): number | null {
-    const candles = useCandleStore(s => s.candles[60]);
-    return useMemo(() => {
-        if (!key || !candles?.length) return null;
-        let best: number | null = null;
-        let bestMs = -Infinity;
-        for (const c of candles) {
-            if (`${c.exchange}:${c.token}` !== key) continue;
-            const ms = new Date(c.ts).getTime();
-            if (ms > bestMs) { bestMs = ms; best = Math.round(c.close * 100); }
-        }
-        return best;
-    }, [candles, key]);
-}
 
 function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
     return (
@@ -53,8 +33,8 @@ export function RangePanel() {
     const watch = watching(v);
     const inPosition = v.side !== 'NONE';
     const kindLabel = v.kind ? RANGE_KIND_LABEL[v.kind as RangeEntryKind] ?? v.kind : '';
-    const pnlPts = inPosition && last && v.entry ? (v.side === 'CALL' ? last - v.entry : v.entry - last) : null;
-    const updated = v.ts ? IST_TIME.format(new Date(new Date(v.ts).getTime() + 60_000)) : '';
+    const pnlPts = pnlPaise(v, last);
+    const updated = asOf(v.ts);
 
     return (
         <section className={styles.panel} aria-label="Range strategy">

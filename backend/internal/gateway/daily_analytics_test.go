@@ -227,3 +227,25 @@ func TestPairCompletedTrades_FlushStaleBuysAtDayBoundary(t *testing.T) {
 	}
 }
 
+
+func TestPairCompletedTrades_CarriesFNOSymbol(t *testing.T) {
+	at := func(m int) time.Time { return time.Date(2026, 10, 1, 6, m, 0, 0, time.UTC) }
+	rows := []dailySignalRow{
+		{ID: 1, Strategy: "NIFTY50_SR", Action: "BUY", Side: "PUT", Exchange: "NSE", Token: "99926000",
+			Price: 14160, Qty: 65, FNOSymbol: "NIFTY06OCT2622500PE", EventTime: at(41)},
+		{ID: 2, Strategy: "NIFTY50_SR", Action: "EXIT", Side: "PUT", Exchange: "NSE", Token: "99926000",
+			Price: 15865, Qty: 65, EventTime: at(50)},
+		// Older journal rows: no symbol on the entry, the exit names it.
+		{ID: 3, Strategy: "NIFTY50_RANGE", Action: "BUY", Side: "CALL", Exchange: "NSE", Token: "99926000",
+			Price: 100, Qty: 1, EventTime: at(51)},
+		{ID: 4, Strategy: "NIFTY50_RANGE", Action: "EXIT", Side: "CALL", Exchange: "NSE", Token: "99926000",
+			Price: 110, Qty: 1, FNOSymbol: "NIFTY06OCT2622600CE", EventTime: at(55)},
+	}
+	trades := pairCompletedTrades(rows)
+	if len(trades) != 2 {
+		t.Fatalf("trades = %+v", trades)
+	}
+	if trades[1].FNOSymbol != "NIFTY06OCT2622500PE" || trades[0].FNOSymbol != "NIFTY06OCT2622600CE" {
+		t.Fatalf("symbols = %q, %q", trades[1].FNOSymbol, trades[0].FNOSymbol)
+	}
+}

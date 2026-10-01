@@ -199,7 +199,7 @@ export function EventPriceTab({ strategyFilter }: EventPriceTabProps) {
                                                         <td>
                                                             <span className={getSideBadge(o.side)}>{o.side}</span>
                                                         </td>
-                                                        <td>{o.instrument}</td>
+                                                        <td title={o.instrument}><span className={o.fno_symbol ? 'mono' : undefined}>{o.fno_symbol || o.instrument}</span></td>
                                                         <td className="price-cell">
                                                             {formatPricePaise(o.entry_price)}
                                                         </td>

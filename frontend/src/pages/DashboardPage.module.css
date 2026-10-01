@@ -1,4 +1,5 @@
 .page {
+    position: relative;
     display: flex;
     flex-direction: column;
     flex: 1 1 auto;
@@ -58,26 +59,25 @@
 .grid2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .grid4 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
 
-/* Phones: the strategy panel would squeeze the chart to a strip, so the page
-   scrolls instead and each chart pane keeps a usable height. */
+/* Phones: chart fills everything between the toolbar and the strategy peek
+   strip; nothing scrolls. One chart only, so the layout picker is hidden. */
 @media (max-width: 640px) {
-    .page {
-        overflow-y: auto;
-        overscroll-behavior: contain;
-    }
-
-    .grid {
-        flex: none;
+    .layoutBar {
+        display: none;
     }
 
     .grid1 {
-        grid-template-rows: max(340px, 58dvh);
+        grid-template-rows: minmax(0, 1fr);
+    }
+}
+
+/* Phone landscape: same single-chart layout; the strategy chip floats on it. */
+@media (max-width: 940px) and (max-height: 500px) and (orientation: landscape) {
+    .layoutBar {
+        display: none;
     }
 
-    .grid2,
-    .grid4 {
-        grid-template-columns: minmax(0, 1fr);
-        grid-template-rows: none;
-        grid-auto-rows: 320px;
+    .grid1 {
+        grid-template-rows: minmax(0, 1fr);
     }
 }
