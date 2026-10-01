@@ -4,7 +4,7 @@ import { useWSStore } from '../../store/useWSStore';
 import { fmtUptime } from '../../utils/helpers';
 import type { SystemMetrics } from '../../types/ws';
 import { Sparkline } from './Sparkline';
-import { SERVICE_LABELS, collectIssues, isStale } from './healthStatus';
+import { SERVICE_LABELS, collectIssues, isStale, isTicking } from './healthStatus';
 import styles from './Health.module.css';
 
 type Tone = 'ok' | 'warn' | 'bad' | 'idle';
@@ -120,7 +120,7 @@ export function SystemHealth() {
     const age = now - metricsAt;
     const stale = isStale(now, metricsAt, connected);
     const tickRate = history.length ? history[history.length - 1].tickRate : null;
-    const ticking = (tickRate ?? 0) > 0;
+    const ticking = isTicking(history.map(h => h.tickRate));
 
     const lagHistory = history.map(h => h.candleLag).filter((v): v is number => v !== null);
     const issues = stale ? [] : collectIssues(m, ticking, lagHistory);
@@ -229,6 +229,14 @@ export function SystemHealth() {
                                         <Row key={c.key} label={c.label} value={fmtCount(p[c.key] as number)} tone="warn" hint={c.hint} />
                                     ))}
                                     <div className={styles.divider} />
+                                    {p.feed_conns_wanted !== undefined && p.feed_conns_wanted > 0 && (
+                                        <Row
+                                            label="Feed sockets"
+                                            value={`${p.feed_conns_up ?? 0} / ${p.feed_conns_wanted}`}
+                                            tone={p.market_open && (p.feed_conns_up ?? 0) < p.feed_conns_wanted ? 'warn' : undefined}
+                                            hint="Parallel Angel One connections. Each covers stalls on the others' network path; fewer than configured means less protection."
+                                        />
+                                    )}
                                     <Row
                                         label="Candle lag"
                                         value={`${p.candle_lag_sec.toFixed(2)} s`}

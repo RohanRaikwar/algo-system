@@ -3,6 +3,7 @@ package mdengine
 import (
 	"context"
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/pquerna/otp/totp"
@@ -244,7 +245,10 @@ func (s *Service) runProductionSession(ctx context.Context) {
 			wsDeadline := closeTime.Add(detector.MaxGrace)
 			wsCtx, wsCancel := context.WithDeadline(ctx, wsDeadline)
 
-			ingest, err := ws.New(ws.IngestConfig{
+			// Parallel sockets on different Angel IPs: a stalled TCP path
+			// (loss burst, retransmit backoff) is covered by the others and
+			// redialled, instead of stalling the whole feed.
+			ingest, err := ws.NewGroup(ws.IngestConfig{
 				AuthToken:     authToken,
 				APIKey:        s.cfg.AngelAPIKey,
 				ClientCode:    s.cfg.AngelClientCode,
@@ -252,7 +256,7 @@ func (s *Service) runProductionSession(ctx context.Context) {
 				SubscribeMode: feedSubscribeMode,
 				TokenList:     s.sessionTokenList(),
 				Extra:         s.sessionExtraSubs(),
-			})
+			}, s.cfg.FeedConnections, markethours.IsMarketOpen)
 			if err != nil {
 				log.Printf("[mdengine] ws init failed: %v, retrying in 30s", err)
 				wsCancel()
@@ -270,7 +274,13 @@ func (s *Service) runProductionSession(ctx context.Context) {
 				s.prom.FeedSeqMissed.Add(float64(missed))
 			}
 			ingest.OnClockSkew = s.ctr.clockSkew.Inc
-			ingest.OnConnState = s.health.SetWSConnected // follows the socket, incl. reconnects
+			ingest.OnConnState = s.health.SetWSConnected // any socket up, incl. reconnects
+			ingest.OnConnsUp = func(up int) { s.prom.FeedConnsUp.Set(float64(up)) }
+			ingest.OnDuplicate = s.prom.FeedDuplicates.Inc
+			ingest.OnDelivered = func(conn int) { s.prom.FeedDelivered.WithLabelValues(strconv.Itoa(conn)).Inc() }
+			ingest.OnFailover = func(from, to int) { s.prom.FeedFailovers.Inc() }
+			ingest.OnRedial = func(conn int, reason string) { s.prom.FeedRedials.WithLabelValues(strconv.Itoa(conn)).Inc() }
+			s.prom.FeedConnsWanted.Set(float64(ingest.Size()))
 
 			// Close detection follows one instrument: interleaving every
 			// token's LTP (index and options) never looks stable, so the
@@ -289,8 +299,8 @@ func (s *Service) runProductionSession(ctx context.Context) {
 			if s.redisWriter != nil {
 				s.redisWriter.PublishMarketState("open")
 			}
-			log.Printf("[mdengine] 📡 WS connected — smart close after %s (hard max %s)",
-				closeTime.In(markethours.IST).Format("15:04:05"),
+			log.Printf("[mdengine] 📡 WS connecting %d feed socket(s) — smart close after %s (hard max %s)",
+				ingest.Size(), closeTime.In(markethours.IST).Format("15:04:05"),
 				wsDeadline.In(markethours.IST).Format("15:04:05"))
 
 			// Dynamic FNO token subscription: drain dynamicSubCh and subscribe on live WS

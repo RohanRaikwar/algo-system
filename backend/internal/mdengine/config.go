@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 
 	"trading-systemv1/config"
+	"trading-systemv1/internal/marketdata/ws"
 	smartconnect "trading-systemv1/pkg/smartconnect"
 )
 
@@ -29,6 +31,12 @@ type Config struct {
 	// CloseRefToken is the one instrument whose price the smart market-close
 	// detector watches (default NIFTY 50 index, 99926000).
 	CloseRefToken string
+
+	// FeedConnections is how many parallel Angel feed sockets to run (1..3,
+	// Angel's per-client-code limit). Each extra socket covers stalls on the
+	// others' TCP paths; every other process or tool streaming with the same
+	// client code uses one of the 3 slots too.
+	FeedConnections int
 
 	// ── Angel One (production only) ──
 	AngelAPIKey     string
@@ -55,6 +63,7 @@ func LoadConfig() Config {
 		CandleTokens:  parseCandleTokens(config.GetEnv("CANDLE_TOKENS", "")),
 		CloseRefToken: config.GetEnv("CLOSE_REF_TOKEN", "99926000"),
 	}
+	c.FeedConnections = parseFeedConnections(config.GetEnv("FEED_CONNECTIONS", "2"))
 
 	if stagingMode {
 		log.Println("[mdengine] *** STAGING MODE — using tickserver WS instead of Angel One ***")
@@ -93,4 +102,15 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("at least one timeframe must be enabled")
 	}
 	return nil
+}
+
+// parseFeedConnections reads FEED_CONNECTIONS, clamped to 1..ws.MaxFeedConns;
+// unparsable values fall back to 2.
+func parseFeedConnections(v string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil {
+		log.Printf("[mdengine] FEED_CONNECTIONS=%q invalid, using 2", v)
+		return 2
+	}
+	return min(max(n, 1), ws.MaxFeedConns)
 }

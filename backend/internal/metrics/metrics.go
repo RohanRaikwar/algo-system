@@ -68,6 +68,14 @@ type Metrics struct {
 	TFDuplicateCandles prometheus.Counter     // final TF candles whose stream ID already held a different payload
 	FeedStaleAlerts    prometheus.Counter     // stale-feed watchdog firings (no tick during market hours)
 
+	// Parallel feed sockets (ws.FeedGroup)
+	FeedConnsUp     prometheus.Gauge       // feed sockets currently open
+	FeedConnsWanted prometheus.Gauge       // feed sockets configured (FEED_CONNECTIONS)
+	FeedDuplicates  prometheus.Counter     // ticks dropped: their socket was not the primary
+	FeedDelivered   *prometheus.CounterVec // labels: conn — ticks passed per socket
+	FeedFailovers   prometheus.Counter     // primary moved off a silent socket
+	FeedRedials     *prometheus.CounterVec // labels: conn — stalled sockets redialled
+
 	// Market session state (ADR-006)
 	MarketState        prometheus.Gauge       // 0=closed, 1=open
 	SessionTransitions *prometheus.CounterVec // labels: type=open|close|ws_disconnect
@@ -225,6 +233,30 @@ func NewMetrics() *Metrics {
 			Name: "mdengine_feed_stale_alerts_total",
 			Help: "Stale-feed watchdog firings: no tick for the stale threshold during market hours (forces re-login only if the socket is also silent)",
 		}),
+		FeedConnsUp: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "mdengine_feed_conns_up",
+			Help: "Angel feed sockets currently open",
+		}),
+		FeedConnsWanted: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "mdengine_feed_conns_wanted",
+			Help: "Angel feed sockets configured (FEED_CONNECTIONS)",
+		}),
+		FeedDuplicates: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "mdengine_feed_dedup_dropped_total",
+			Help: "Ticks dropped because their socket was not the primary (copies from standby sockets)",
+		}),
+		FeedDelivered: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "mdengine_feed_delivered_total",
+			Help: "Ticks passed into the pipeline, by feed socket",
+		}, []string{"conn"}),
+		FeedFailovers: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "mdengine_feed_failovers_total",
+			Help: "Times the primary feed socket went silent and another socket took over",
+		}),
+		FeedRedials: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "mdengine_feed_redials_total",
+			Help: "Feed sockets redialled after going silent during market hours",
+		}, []string{"conn"}),
 		FeedSeqGaps: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "mdengine_feed_seq_gaps_total",
 			Help: "Per-token jumps in Angel sequence_number. Informational only: the counter is shared across all exchange instruments, so jumps are normal and do not mean lost ticks",
@@ -279,6 +311,12 @@ func NewMetrics() *Metrics {
 		m.TFEmitDrops,
 		m.TFDuplicateCandles,
 		m.FeedStaleAlerts,
+		m.FeedConnsUp,
+		m.FeedConnsWanted,
+		m.FeedDuplicates,
+		m.FeedDelivered,
+		m.FeedFailovers,
+		m.FeedRedials,
 		m.MarketState,
 		m.SessionTransitions,
 		m.OrderCBState,

@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
+
 	"trading-systemv1/internal/model"
 	smartconnect "trading-systemv1/pkg/smartconnect"
 )
@@ -73,10 +75,19 @@ type Ingest struct {
 
 	seq   *seqTracker
 	fatal chan error // socket gave up; ends Start
+
+	// accept, when set, drops copies of packets another socket in the same
+	// FeedGroup already delivered. nil: single socket, every tick passes.
+	accept func(tick *model.Tick, seq int64) bool
 }
 
 // New creates a new Ingest instance.
 func New(cfg IngestConfig) (*Ingest, error) {
+	return newIngest(cfg, nil)
+}
+
+// newIngest builds an Ingest whose socket dials with dialer (nil: default).
+func newIngest(cfg IngestConfig, dialer *websocket.Dialer) (*Ingest, error) {
 	ws, err := smartconnect.NewSmartWebSocketV3(
 		cfg.AuthToken,
 		cfg.APIKey,
@@ -91,6 +102,9 @@ func New(cfg IngestConfig) (*Ingest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ws ingest: create websocket: %w", err)
 	}
+	if dialer != nil {
+		ws.Dialer = dialer
+	}
 
 	return &Ingest{cfg: cfg, ws: ws, seq: newSeqTracker(), fatal: make(chan error, 1)}, nil
 }
@@ -102,7 +116,7 @@ func (ing *Ingest) Start(ctx context.Context, tickCh chan<- model.Tick) error {
 	ing.wire(tickCh)
 
 	if err := ing.ws.Connect(); err != nil {
-		return fmt.Errorf("%w: connect: %v", ErrFeedLost, err)
+		return fmt.Errorf("%w: connect: %w", ErrFeedLost, err)
 	}
 
 	select {
@@ -143,11 +157,9 @@ func (ing *Ingest) wire(tickCh chan<- model.Tick) {
 			log.Printf("[ws] parse error: %v", err)
 			return
 		}
-		if sanitizeEventTS(&tick) && ing.OnClockSkew != nil {
-			ing.OnClockSkew()
-		}
-
-		if seqNo := toInt64(msg["sequence_number"]); seqNo > 0 {
+		// Gap tracking follows this socket's own stream, before dedup.
+		seqNo := toInt64(msg["sequence_number"])
+		if seqNo > 0 {
 			if missed := ing.seq.observe(tick.Token, seqNo); missed > 0 {
 				if ing.OnSeqGap != nil {
 					ing.OnSeqGap(tick.Token, missed)
@@ -156,6 +168,12 @@ func (ing *Ingest) wire(tickCh chan<- model.Tick) {
 					log.Printf("[ws] sequence_number jump (exchange-wide counter, not tick loss): token=%s jump=%d seq=%d", tick.Token, missed, seqNo)
 				}
 			}
+		}
+		if ing.accept != nil && !ing.accept(&tick, seqNo) {
+			return // another socket delivered this packet first
+		}
+		if sanitizeEventTS(&tick) && ing.OnClockSkew != nil {
+			ing.OnClockSkew()
 		}
 
 		if ing.OnIngested != nil {
@@ -188,11 +206,20 @@ func (ing *Ingest) wire(tickCh chan<- model.Tick) {
 
 	ing.ws.OnError = func(code, msg string) {
 		log.Printf("[ws] error: code=%s msg=%s", code, msg)
-		if code == smartconnect.ErrCodeAuthRejected || code == smartconnect.ErrCodeRetryExhausted {
-			select {
-			case ing.fatal <- fmt.Errorf("%w: %s: %s", ErrFeedLost, code, msg):
-			default:
-			}
+		var err error
+		switch code {
+		case smartconnect.ErrCodeAuthRejected:
+			err = fmt.Errorf("%w: %w: %s", ErrFeedLost, smartconnect.ErrAuthRejected, msg)
+		case smartconnect.ErrCodeRetryExhausted:
+			err = fmt.Errorf("%w: %s: %s", ErrFeedLost, code, msg)
+		case smartconnect.ErrCodeConnLimit:
+			err = fmt.Errorf("%w: %w: %s", ErrFeedLost, smartconnect.ErrConnLimit, msg)
+		default:
+			return
+		}
+		select {
+		case ing.fatal <- err:
+		default:
 		}
 	}
 }
@@ -386,6 +413,12 @@ func (ing *Ingest) ForceReconnect(reason string) {
 	case ing.fatal <- fmt.Errorf("%w: forced reconnect: %s", ErrFeedLost, reason):
 	default: // a fatal error is already pending
 	}
+}
+
+// Redial drops the socket and reconnects at once on the same session (stored
+// subscriptions resent); for a socket that is open but silent.
+func (ing *Ingest) Redial(reason string) {
+	ing.ws.Redial(reason)
 }
 
 // LastFrameTime is when the socket last connected or received any frame

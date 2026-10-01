@@ -46,11 +46,16 @@ const (
 const (
 	ErrCodeAuthRejected   = "auth_rejected"   // handshake rejected (401/403): token/session is dead
 	ErrCodeRetryExhausted = "retry_exhausted" // reconnects kept failing for retryDuration
+	ErrCodeConnLimit      = "conn_limit"      // handshake rejected (429): client code already has its max sockets open
 )
 
 // ErrAuthRejected is returned by Connect when the server rejects the handshake
 // with 401/403.
 var ErrAuthRejected = errors.New("smartconnect: websocket auth rejected")
+
+// ErrConnLimit is returned by Connect when the server rejects the handshake
+// with 429: Angel allows 3 concurrent sockets per client code.
+var ErrConnLimit = errors.New("smartconnect: websocket connection limit reached")
 
 // Subscription action/ modes / exchanges
 const (
@@ -198,6 +203,9 @@ func (s *SmartWebSocketV3) Connect() error {
 			log.Printf("Dial failed, status: %s", resp.Status)
 			if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 				return fmt.Errorf("%w: %s", ErrAuthRejected, resp.Status)
+			}
+			if resp.StatusCode == http.StatusTooManyRequests {
+				return fmt.Errorf("%w: %s", ErrConnLimit, resp.Status)
 			}
 		}
 		return err
@@ -378,6 +386,22 @@ func (s *SmartWebSocketV3) AddSubscription(mode int, tokenList []TokenListEntry)
 	s.mu.Lock()
 	s.addSubscriptionLocked(mode, tokenList)
 	s.mu.Unlock()
+}
+
+// Subscriptions returns a copy of every stored subscription, by mode, so a
+// replacement socket can take over the same token set.
+func (s *SmartWebSocketV3) Subscriptions() map[int][]TokenListEntry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[int][]TokenListEntry, len(s.inputRequestMap))
+	for mode, mm := range s.inputRequestMap {
+		for ex, toks := range mm {
+			if len(toks) > 0 {
+				out[mode] = append(out[mode], TokenListEntry{ExchangeType: ex, Tokens: append([]string(nil), toks...)})
+			}
+		}
+	}
+	return out
 }
 
 // addSubscriptionLocked merges tokenList into inputRequestMap (deduped).
@@ -564,6 +588,23 @@ func (s *SmartWebSocketV3) readLoop(conn *websocket.Conn, gen uint64) {
 // or retryDuration of consecutive failures. Errors from a superseded
 // connection (stale gen) are ignored.
 func (s *SmartWebSocketV3) handleError(gen uint64, err error) {
+	s.reconnect(gen, err, false)
+}
+
+// Redial drops the current connection and reconnects at once (same session,
+// stored subscriptions resent). For a socket that is open but silent, where
+// waiting for the read deadline would stall the feed. No-op while a reconnect
+// is already running or after CloseConnection.
+func (s *SmartWebSocketV3) Redial(reason string) {
+	s.mu.Lock()
+	gen := s.gen
+	s.mu.Unlock()
+	go s.reconnect(gen, errors.New("redial: "+reason), true)
+}
+
+// reconnect is handleError's body. immediate skips the backoff before the
+// first attempt.
+func (s *SmartWebSocketV3) reconnect(gen uint64, err error, immediate bool) {
 	if !s.reconnecting.CompareAndSwap(false, true) {
 		return // another goroutine is already reconnecting
 	}
@@ -584,10 +625,14 @@ func (s *SmartWebSocketV3) handleError(gen uint64, err error) {
 
 	start := time.Now()
 	for attempt := 1; ; attempt++ {
+		delay := s.retryBackoff(attempt)
+		if immediate && attempt == 1 {
+			delay = 0
+		}
 		select {
 		case <-s.ctx.Done():
 			return
-		case <-time.After(s.retryBackoff(attempt)):
+		case <-time.After(delay):
 		}
 
 		cerr := s.Connect() // resubscribes; a failed resubscribe fails the attempt
@@ -598,6 +643,12 @@ func (s *SmartWebSocketV3) handleError(gen uint64, err error) {
 		if errors.Is(cerr, ErrAuthRejected) {
 			if s.OnError != nil {
 				s.OnError(ErrCodeAuthRejected, cerr.Error())
+			}
+			return
+		}
+		if errors.Is(cerr, ErrConnLimit) {
+			if s.OnError != nil {
+				s.OnError(ErrCodeConnLimit, cerr.Error())
 			}
 			return
 		}
@@ -624,6 +675,14 @@ func (s *SmartWebSocketV3) retryBackoff(attempt int) time.Duration {
 		d = maxRetryDelay
 	}
 	return d
+}
+
+// SetURL points the socket at another endpoint (tests, local feed relays).
+// Call before Connect.
+func (s *SmartWebSocketV3) SetURL(u string) {
+	s.mu.Lock()
+	s.url = u
+	s.mu.Unlock()
 }
 
 // markFrame records that the socket is alive (connected or received a frame).

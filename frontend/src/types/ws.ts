@@ -55,6 +55,8 @@ export interface PipelineSnapshot {
     ws_reconnects: number;
     feed_seq_gaps: number;
     feed_stale_alerts: number;
+    feed_conns_up?: number;     // Angel feed sockets open (absent from older mdengine builds)
+    feed_conns_wanted?: number; // Angel feed sockets configured
     candle_lag_sec: number;
     watermark_delay_sec: number;
     market_open: boolean;
