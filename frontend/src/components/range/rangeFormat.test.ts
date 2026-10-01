@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hhmm, points, rupees, watching } from './rangeFormat';
+import { asOf, hhmm, peekSummary, pnlPaise, points, rupees, watching } from './rangeFormat';
 import type { RangeView } from '../../types/range';
 
 const base: RangeView = {
@@ -26,5 +26,30 @@ describe('range panel formatting', () => {
         expect(watching({ ...base, regime: 'RANGE', support: 2280000, resistance: 2290000 }).text).toContain('22,800.00');
         expect(watching({ ...base, side: 'CALL' }).text).toContain('position');
         expect(watching({ ...base, regime: 'WARMING', flag: false }).text).toContain('Warming');
+    });
+
+    it('computes open-position P&L from the last price', () => {
+        expect(pnlPaise({ ...base, side: 'CALL', entry: 2280000 }, 2281240)).toBe(1240);
+        expect(pnlPaise({ ...base, side: 'PUT', entry: 2280000 }, 2281240)).toBe(-1240);
+        expect(pnlPaise(base, 2281240)).toBeNull();
+        expect(pnlPaise({ ...base, side: 'CALL', entry: 2280000 }, null)).toBeNull();
+    });
+
+    it('formats as-of time as the bar close in IST', () => {
+        expect(asOf('2026-10-01T06:28:00Z')).toBe('11:59');
+        expect(asOf('')).toBe('');
+    });
+
+    it('summarises state for the phone peek strip', () => {
+        const flat = peekSummary({ ...base, day_open: 2270000, day_trend: -640 }, null);
+        expect(flat.position).toEqual({ text: 'Flat', tone: 'muted' });
+        expect(flat.alert).toBeNull();
+        expect(flat.stats.map(s => s.value)).toEqual(['40.0', '40', '−6.4 pts']);
+
+        const long = peekSummary({ ...base, side: 'CALL', entry: 2280000 }, 2281240);
+        expect(long.position).toEqual({ text: 'CALL +12.4', tone: 'up' });
+
+        const armed = peekSummary({ ...base, pending_side: 'PUT', pending_kind: 'FLAG', pending_edge: 2281820 }, null);
+        expect(armed.alert).toContain('armed below');
     });
 });

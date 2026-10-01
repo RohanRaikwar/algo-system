@@ -297,7 +297,7 @@ export function DailyAnalyticsTab() {
                                                                         {order.side || '—'}
                                                                     </span>
                                                                 </td>
-                                                                <td>{order.instrument}</td>
+                                                                <td title={order.instrument}><span className={order.fno_symbol ? 'mono' : undefined}>{order.fno_symbol || order.instrument}</span></td>
                                                                 <td className="price-cell">{order.qty}</td>
                                                                 <td className="price-cell">{formatINR(order.entry_price)}</td>
                                                                 <td className="signal-time">{formatTime(order.entry_time)}</td>

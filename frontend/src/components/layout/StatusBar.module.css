@@ -42,3 +42,10 @@
         display: none;
     }
 }
+
+/* Phone landscape: height goes to the chart. */
+@media (max-width: 940px) and (max-height: 500px) and (orientation: landscape) {
+    .bar {
+        display: none;
+    }
+}

@@ -460,6 +460,8 @@ func RegisterRoutes(mux *http.ServeMux, hub *Hub, rdb *goredis.Client, ctx conte
 			Qty         int64  `json:"qty"`
 			LiveMode    bool   `json:"live_mode"`
 			ProfitCap   bool   `json:"profit_cap"`
+			FNOToken    string `json:"fno_token,omitempty"`
+			FNOSymbol   string `json:"fno_symbol,omitempty"`
 			CandleTS    string `json:"candle_ts"`
 			CreatedAt   string `json:"created_at"`
 		}
@@ -480,7 +482,7 @@ func RegisterRoutes(mux *http.ServeMux, hub *Hub, rdb *goredis.Client, ctx conte
 				var r signalRecord
 				var liveModeInt, profitCapInt int
 				if err := rows.Scan(&r.ID, &r.Strategy, &r.Action, &r.Side, &r.MarketState, &r.Token, &r.Exchange,
-					&r.Reason, &r.EMAValues, &r.Price, &r.Qty, &liveModeInt, &profitCapInt, &r.CandleTS, &r.CreatedAt); err != nil {
+					&r.Reason, &r.EMAValues, &r.Price, &r.Qty, &liveModeInt, &profitCapInt, &r.FNOToken, &r.FNOSymbol, &r.CandleTS, &r.CreatedAt); err != nil {
 					continue
 				}
 				r.LiveMode = liveModeInt == 1
@@ -637,11 +639,22 @@ func querySignalRowsForAPI(db *sql.DB, limit int, strategy string) (*sql.Rows, e
 	args = append(args, limit)
 
 	queries := []string{
-		// Latest schema: qty + market_state + live_mode + profit_cap.
+		// Latest schema: traded option token + symbol.
 		`SELECT id, strategy, action, COALESCE(side,''), COALESCE(market_state,''), token, exchange, reason,
 		        COALESCE(ema_values,''), COALESCE(price,0),
 		        CASE WHEN qty IS NULL OR qty <= 0 THEN 1 ELSE qty END,
 		        COALESCE(live_mode,0), COALESCE(profit_cap,0),
+		        COALESCE(fno_token,''), COALESCE(fno_symbol,''),
+		        candle_ts, created_at
+		 FROM signals` + whereClause + `
+		 ORDER BY id DESC
+		 LIMIT ?`,
+		// Schema before fno columns: qty + market_state + live_mode + profit_cap.
+		`SELECT id, strategy, action, COALESCE(side,''), COALESCE(market_state,''), token, exchange, reason,
+		        COALESCE(ema_values,''), COALESCE(price,0),
+		        CASE WHEN qty IS NULL OR qty <= 0 THEN 1 ELSE qty END,
+		        COALESCE(live_mode,0), COALESCE(profit_cap,0),
+		        '' AS fno_token, '' AS fno_symbol,
 		        candle_ts, created_at
 		 FROM signals` + whereClause + `
 		 ORDER BY id DESC
@@ -651,6 +664,7 @@ func querySignalRowsForAPI(db *sql.DB, limit int, strategy string) (*sql.Rows, e
 		        COALESCE(ema_values,''), COALESCE(price,0),
 		        CASE WHEN qty IS NULL OR qty <= 0 THEN 1 ELSE qty END,
 		        COALESCE(live_mode,0), COALESCE(profit_cap,0),
+		        '' AS fno_token, '' AS fno_symbol,
 		        candle_ts, created_at
 		 FROM signals` + whereClause + `
 		 ORDER BY id DESC
@@ -660,6 +674,7 @@ func querySignalRowsForAPI(db *sql.DB, limit int, strategy string) (*sql.Rows, e
 		        COALESCE(ema_values,''), COALESCE(price,0),
 		        1 AS qty,
 		        COALESCE(live_mode,0), COALESCE(profit_cap,0),
+		        '' AS fno_token, '' AS fno_symbol,
 		        candle_ts, created_at
 		 FROM signals` + whereClause + `
 		 ORDER BY id DESC
@@ -669,6 +684,7 @@ func querySignalRowsForAPI(db *sql.DB, limit int, strategy string) (*sql.Rows, e
 		        COALESCE(ema_values,''), COALESCE(price,0),
 		        1 AS qty,
 		        COALESCE(live_mode,0), COALESCE(profit_cap,0),
+		        '' AS fno_token, '' AS fno_symbol,
 		        candle_ts, created_at
 		 FROM signals` + whereClause + `
 		 ORDER BY id DESC

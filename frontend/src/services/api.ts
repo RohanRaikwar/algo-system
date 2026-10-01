@@ -129,6 +129,8 @@ export interface DailyCompletedOrder {
     exchange: string;
     token: string;
     instrument: string;
+    /** Traded option, e.g. NIFTY06OCT2622500PE; absent for older journal rows */
+    fno_symbol?: string;
     qty: number;
     entry_price: number;
     exit_price: number;

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { SignalPayload, SignalRecord } from '../types/signal';
+import { legInfo } from '../components/signals/signalAnalytics';
 
 const MAX_SIGNALS = 500; // matches the REST history preload
 
@@ -51,15 +52,21 @@ function liveToRecord(sig: SignalPayload): SignalRecord {
         leg: sig.leg,
         strike: sig.strike,
         short: sig.short,
+        fno_token: sig.fno_token,
+        fno_symbol: sig.fno_symbol,
     };
 }
 
 /**
- * Identity of a signal, as the journal's UNIQUE key plus the leg: REST and
- * WS spell the timestamp differently, so it is compared as an instant.
+ * Identity of a signal, as the journal's UNIQUE key plus the leg. The journal
+ * stores candle_ts in whole seconds (RFC3339) while the WS payload carries
+ * RFC3339Nano, so the instant is compared at second precision. REST records
+ * only carry the leg as a "[LEG STRIKE]" reason tag, so legInfo reads either.
  */
 export function signalKey(r: SignalRecord): string {
-    return [r.strategy, r.action, r.side || '', r.exchange, r.token, Date.parse(r.candle_ts), r.leg || '', r.strike || ''].join('|');
+    const sec = Math.floor(Date.parse(r.candle_ts) / 1000);
+    const li = legInfo(r);
+    return [r.strategy, r.action, r.side || '', r.exchange, r.token, sec, li?.leg ?? '', li?.strike || ''].join('|');
 }
 
 function signalMs(r: SignalRecord): number {

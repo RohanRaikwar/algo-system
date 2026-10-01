@@ -42,6 +42,9 @@ export interface SignalRecord {
     stoploss_price?: number;
     live_mode?: boolean;
     profit_cap?: boolean;
+    /** Traded option (journal + live WS); empty for older journal rows */
+    fno_token?: string;
+    fno_symbol?: string;
     /** Multi-leg fields (live WS only; REST history carries a "[LEG STRIKE]" reason tag) */
     leg?: string;
     strike?: number;
@@ -52,6 +55,7 @@ export interface LiveOrderStatePayload {
     strategy_name: string;
     side: string;
     fno_token?: string;
+    fno_symbol?: string;
     entry_fno_price?: number;
     current_fno_price?: number;
     best_fno_price?: number;

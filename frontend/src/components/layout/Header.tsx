@@ -57,6 +57,13 @@ export function Header() {
     const feedLabel = connected ? 'Live' : reconnectAttempts > 0 ? 'Reconnecting' : 'Connecting';
     const feedTone = connected ? styles.toneUp : reconnectAttempts > 0 ? styles.toneDown : styles.toneMuted;
 
+    // Phones: one pill. Text carries the market state, the dot the feed state.
+    const marketShort = open ? 'Open' : status?.isHoliday ? 'Holiday' : marketLabel === 'Weekend' ? 'Weekend' : 'Closed';
+    const compactLabel = !connected && reconnectAttempts === 0
+        ? 'Connecting…'
+        : open ? `${marketShort} · ${feedLabel}` : marketShort;
+    const compactTone = open ? styles.bgUp : status?.isHoliday ? styles.bgWarn : '';
+
     return (
         <header className={styles.header}>
             <div className={styles.brand}>
@@ -77,14 +84,22 @@ export function Header() {
             </nav>
 
             <div className={styles.status}>
-                <span className={`${styles.pill} ${marketTone}`} title={nextOpen || marketLabel}>
+                <span className={`${styles.pill} ${styles.widePill} ${marketTone}`} title={nextOpen || marketLabel}>
                     <span className={styles.dot} aria-hidden />
                     {marketLabel}
                     {nextOpen && <span className={styles.pillSub}>{nextOpen}</span>}
                 </span>
-                <span className={`${styles.pill} ${feedTone}`} title="Price feed connection">
+                <span className={`${styles.pill} ${styles.widePill} ${feedTone}`} title="Price feed connection">
                     <span className={`${styles.dot}${connected ? ` ${styles.dotLive}` : ''}`} aria-hidden />
                     {feedLabel}
+                </span>
+                <span
+                    className={`${styles.pill} ${styles.compactPill} ${feedTone} ${compactTone}`}
+                    title={[marketLabel, nextOpen, `Feed: ${feedLabel}`].filter(Boolean).join(' · ')}
+                    aria-label={`${marketLabel}${nextOpen ? `, ${nextOpen}` : ''}. Price feed ${feedLabel.toLowerCase()}.`}
+                >
+                    <span className={`${styles.dot}${connected ? ` ${styles.dotLive}` : ''}`} aria-hidden />
+                    {compactLabel}
                 </span>
             </div>
         </header>

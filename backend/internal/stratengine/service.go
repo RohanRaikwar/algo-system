@@ -133,6 +133,7 @@ type liveOrderPayload struct {
 	StrategyName    string                `json:"strategy_name"`
 	Side            strategy.PositionSide `json:"side"`
 	FNOToken        string                `json:"fno_token,omitempty"`
+	FNOSymbol       string                `json:"fno_symbol,omitempty"`
 	EntryFNOPrice   int64                 `json:"entry_fno_price,omitempty"`
 	CurrentFNOPrice int64                 `json:"current_fno_price,omitempty"`
 	BestFNOPrice    int64                 `json:"best_fno_price,omitempty"`
@@ -754,10 +755,13 @@ func (svc *Service) signalLoop(ctx context.Context) {
 					}
 				}
 
+				// Option actually traded: the entry's token for an exit.
+				tradedToken := fnoToken
 				if sig.Action == strategy.ActionExit {
 					svc.normalizeExitInstrument(&sig, entryInstruments, posKey)
 					svc.removeLiveOrder(sig.StrategyName, sig.Side)
 					if entryToken, ok := entryFNOTokens[posKey]; ok && entryToken != "" {
+						tradedToken = entryToken
 						if exitLTP := svc.orderExecutor.GetLTP(entryToken); exitLTP > 0 {
 							currentFNOPrice = exitLTP
 							sig.Price = exitLTP
@@ -791,8 +795,18 @@ func (svc *Service) signalLoop(ctx context.Context) {
 					svc.dispatchOrder(ctx, sig)
 				}
 
+				// Journal and publish a copy naming the traded option. The
+				// order was already dispatched with sig unchanged above.
+				rec := sig
+				rec.FNOToken = svc.unqualifyToken(tradedToken)
+				if rec.FNOSymbol == "" || sig.Action == strategy.ActionExit {
+					if name := svc.fnoSymbolFor(rec.FNOToken); name != "" {
+						rec.FNOSymbol = name
+					}
+				}
+
 				// Journal the signal with live mode and profit cap flags
-				if err := svc.journal.Record(sig, now, nil, liveMode, profitCapHit); err != nil {
+				if err := svc.journal.Record(rec, now, nil, liveMode, profitCapHit); err != nil {
 					log.Printf("[stratengine] journal write error: %v", err)
 				}
 
@@ -811,6 +825,8 @@ func (svc *Service) signalLoop(ctx context.Context) {
 					"current_fno_price": currentFNOPrice,
 					"stoploss_price":    stoplossPrice,
 					"reason":            sig.Reason,
+					"fno_token":         rec.FNOToken,
+					"fno_symbol":        rec.FNOSymbol,
 					"order_mode":        orderMode,
 					"profit_cap_hit":    profitCapHit,
 					"ts":                now.UTC().Format(time.RFC3339Nano),
@@ -1018,6 +1034,17 @@ func liveOrderKey(strategyName string, side strategy.PositionSide) string {
 	return strategyName + "|" + string(side)
 }
 
+// fnoSymbolFor names an option token for display ("NIFTY06OCT2622500PE"),
+// from the instrument master; "" when unknown. Display only — the order path
+// resolves its own instrument.
+func (svc *Service) fnoSymbolFor(token string) string {
+	exch := svc.cfg.FNOExchange
+	if exch == "" {
+		exch = "NFO"
+	}
+	return orderexec.GetInstrumentMaster().SymbolForToken(exch, svc.unqualifyToken(token))
+}
+
 func (svc *Service) unqualifyToken(token string) string {
 	token = strings.TrimSpace(token)
 	if token == "" {
@@ -1211,6 +1238,7 @@ func (svc *Service) snapshotLiveOrdersLocked() []liveOrderPayload {
 			StrategyName:    rt.StrategyName,
 			Side:            rt.Side,
 			FNOToken:        rt.Token,
+			FNOSymbol:       svc.fnoSymbolFor(rt.Token),
 			EntryFNOPrice:   rt.EntryPrice,
 			CurrentFNOPrice: rt.CurrentPrice,
 			BestFNOPrice:    rt.BestPrice,

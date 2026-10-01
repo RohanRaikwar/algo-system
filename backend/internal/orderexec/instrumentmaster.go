@@ -53,6 +53,7 @@ type CacheMetadata struct {
 type InstrumentMaster struct {
 	mu          sync.RWMutex
 	instruments map[string]*Instrument // key: symbol
+	byToken     map[string]*Instrument // key: exch_seg + ":" + token
 	lastUpdated time.Time
 	cacheTTL    time.Duration
 	loading     bool
@@ -335,11 +336,7 @@ func (im *InstrumentMaster) loadFromDiskCache() {
 
 	// Build symbol -> instrument map
 	im.mu.Lock()
-	im.instruments = make(map[string]*Instrument, len(instruments))
-	for i := range instruments {
-		inst := &instruments[i]
-		im.instruments[inst.Symbol] = inst
-	}
+	im.setInstrumentsLocked(instruments)
 	im.lastUpdated = metadata.LastUpdated
 	im.loaded = true
 	im.mu.Unlock()
@@ -443,11 +440,7 @@ func (im *InstrumentMaster) Load() error {
 	// Build symbol -> instrument map
 	im.mu.Lock()
 	oldCount := len(im.instruments)
-	im.instruments = make(map[string]*Instrument, len(instruments))
-	for i := range instruments {
-		inst := &instruments[i]
-		im.instruments[inst.Symbol] = inst
-	}
+	im.setInstrumentsLocked(instruments)
 	im.lastUpdated = time.Now()
 	im.loaded = true
 	im.mu.Unlock()
@@ -510,6 +503,32 @@ func (im *InstrumentMaster) GetInstrument(symbol string) (*Instrument, error) {
 	}
 
 	return inst, nil
+}
+
+// setInstrumentsLocked replaces both indexes. Caller holds im.mu for writing.
+func (im *InstrumentMaster) setInstrumentsLocked(instruments []Instrument) {
+	im.instruments = make(map[string]*Instrument, len(instruments))
+	im.byToken = make(map[string]*Instrument, len(instruments))
+	for i := range instruments {
+		inst := &instruments[i]
+		im.instruments[inst.Symbol] = inst
+		im.byToken[inst.ExchSeg+":"+inst.Token] = inst
+	}
+}
+
+// SymbolForToken returns the trading symbol (e.g. "NIFTY06OCT2622500PE") of
+// a token on an exchange segment ("NFO"), or "" when unknown or not loaded.
+// Tokens are only unique within a segment, so the segment is required.
+func (im *InstrumentMaster) SymbolForToken(exchSeg, token string) string {
+	if token == "" {
+		return ""
+	}
+	im.mu.RLock()
+	defer im.mu.RUnlock()
+	if inst, ok := im.byToken[exchSeg+":"+token]; ok {
+		return inst.Symbol
+	}
+	return ""
 }
 
 // IsLoaded returns true if instrument master is loaded

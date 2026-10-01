@@ -15,6 +15,8 @@ export interface OpenOrder {
     leg?: string;
     strike?: number;
     short?: boolean;
+    /** Traded option, e.g. NIFTY06OCT2622500PE */
+    fnoSymbol?: string;
 }
 
 export interface CompletedEvent {
@@ -138,6 +140,7 @@ export function buildOpenOrders(
                 strategy: sig.strategy,
                 side,
                 instrument: `${sig.exchange}:${sig.token}`,
+                fnoSymbol: live?.fno_symbol || sig.fno_symbol || undefined,
                 buyPrice: extractPrice(sig) ?? (live?.entry_fno_price ? live.entry_fno_price / 100 : null),
                 currentPrice: live?.current_fno_price ? live.current_fno_price / 100 : null,
                 entryTime: sig.created_at,

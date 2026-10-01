@@ -2,8 +2,10 @@ import { useEffect, useRef, type MutableRefObject } from 'react';
 import type { ISeriesApi } from 'lightweight-charts';
 import { useSignalStore } from '../../../store/useSignalStore';
 import { useRefusedStore } from '../../../store/useRefusedStore';
+import { buildLiveOrderKey, useLiveOrderStore } from '../../../store/useLiveOrderStore';
 import { IST_OFFSET } from '../../../utils/helpers';
-import type { SignalRecord } from '../../../types/signal';
+import { useMediaQuery, PHONE_QUERY } from '../../../hooks/useMediaQuery';
+import type { LiveOrderStatePayload, SignalRecord } from '../../../types/signal';
 import type { RefusedEntry } from '../../../types/refused';
 import { inferSide, legInfo } from '../../signals/signalAnalytics';
 import { TradeMarkersPrimitive, type TradeMarker } from '../tradeMarkersPrimitive';
@@ -107,7 +109,8 @@ function entryLines(s: SignalRecord): string[] {
     const lines: string[] = [metaLine(s.strategy, s.created_at || s.candle_ts)];
     const strike = signalStrike(s);
     const sideCh = sideShort(s.side);
-    const head = [s.price && s.price > 0 ? `@ ${rupees(s.price)}` : '', strike > 0 ? `${strike}${sideCh}` : '']
+    const contract = s.fno_symbol || (strike > 0 ? `${strike}${sideCh}` : '');
+    const head = [s.price && s.price > 0 ? `@ ${rupees(s.price)}` : '', contract]
         .filter(Boolean).join('  ');
     if (head) lines.push(head);
     if (s.qty && s.qty > 0) lines.push(`qty ${s.qty}`);
@@ -125,8 +128,9 @@ function label(verb: string, side: string | undefined, compact: boolean): string
  * Chart markers for the selected instrument: entries (below the bar), exits
  * and refused entries (above), sorted by time. Each carries detail lines for
  * its callout card (strategy and time, premium, strike, qty, levels, P&L,
- * reason). Compact mode
- * drops label and lines and keeps the icon plus C/P.
+ * reason). An entry still open today gets a live P&L row from the live
+ * order state (pub:orders) and an OPEN label. Compact mode drops label and
+ * lines and keeps the icon plus C/P.
  */
 export function buildChartMarkers(
     signals: SignalRecord[],
@@ -134,6 +138,7 @@ export function buildChartMarkers(
     selectedToken: string,
     tfSec: number,
     compact: boolean,
+    liveOrders: Record<string, LiveOrderStatePayload> = {},
 ): TradeMarker[] {
     const out: TradeMarker[] = [];
 
@@ -141,7 +146,7 @@ export function buildChartMarkers(
     const mine = signals
         .filter(s => matchesToken(s.token, s.exchange, selectedToken))
         .sort((a, b) => Date.parse(signalTs(a)) - Date.parse(signalTs(b)));
-    const open = new Map<string, { price: number; qty: number; day: string }>();
+    const open = new Map<string, { price: number; qty: number; day: string; marker: TradeMarker; signal: SignalRecord }>();
 
     for (const s of mine) {
         const ts = signalTs(s);
@@ -159,7 +164,7 @@ export function buildChartMarkers(
         };
 
         if (isBuy) {
-            if (s.price && s.price > 0) open.set(key, { price: s.price, qty: s.qty ?? 0, day });
+            open.set(key, { price: s.price && s.price > 0 ? s.price : 0, qty: s.qty ?? 0, day, marker, signal: s });
             if (!compact) marker.lines = entryLines(s);
         } else {
             const entry = open.get(key);
@@ -167,7 +172,7 @@ export function buildChartMarkers(
             const lines: string[] = [metaLine(s.strategy, s.created_at || s.candle_ts)];
             if (s.price && s.price > 0) {
                 lines.push(`@ ${rupees(s.price)}`);
-                if (entry && entry.day === day) {
+                if (entry && entry.price > 0 && entry.day === day) {
                     const qty = s.qty && s.qty > 0 ? s.qty : entry.qty > 0 ? entry.qty : 1;
                     marker.pnl = (s.price - entry.price) * qty;
                     lines.push(`P&L ${marker.pnl > 0 ? '+' : ''}${rupees(marker.pnl)}`);
@@ -177,6 +182,23 @@ export function buildChartMarkers(
             if (!compact) marker.lines = lines;
         }
         out.push(marker);
+    }
+
+    // Positions still open today: live P&L from the option's last price.
+    const today = IST_DAY.format(new Date());
+    for (const o of open.values()) {
+        if (o.day !== today) continue;
+        const s = o.signal;
+        const live = liveOrders[buildLiveOrderKey(s.strategy, inferSide(s), legInfo(s)?.leg)];
+        const ltp = live?.current_fno_price ?? 0;
+        const entryPrice = o.price > 0 ? o.price : live?.entry_fno_price ?? 0;
+        if (!live || ltp <= 0 || entryPrice <= 0) continue;
+        const qty = o.qty > 0 ? o.qty : 1;
+        o.marker.pnl = (ltp - entryPrice) * qty;
+        if (!compact) {
+            o.marker.label = label('OPEN', s.side, compact);
+            o.marker.lines.push(`P&L ${o.marker.pnl > 0 ? '+' : ''}${rupees(o.marker.pnl)} · LTP ${rupees(ltp)}`);
+        }
     }
 
     for (const r of refused) {
@@ -202,6 +224,9 @@ export function useChartMarkers(
 ) {
     const signals = useSignalStore(s => s.signals);
     const refused = useRefusedStore(s => s.entries);
+    const liveOrders = useLiveOrderStore(s => s.ordersByKey);
+    // Re-evaluated on resize/rotate, so badges switch to compact live.
+    const compact = useMediaQuery(PHONE_QUERY);
     const lastFingerprint = useRef<string>('');
     const primitive = useRef<TradeMarkersPrimitive | null>(null);
 
@@ -213,15 +238,15 @@ export function useChartMarkers(
             series.attachPrimitive(primitive.current);
         }
 
-        const fp = `${selectedToken}::${selectedTF}::`
+        const fp = `${selectedToken}::${selectedTF}::${compact}::`
             + signals.map(s => `${s.id}:${s.action}:${s.price ?? ''}:${s.qty ?? ''}:${s.reason?.length ?? 0}`).join('|')
-            + '::' + refused.map(r => r.ts).join('|');
+            + '::' + refused.map(r => r.ts).join('|')
+            + '::' + Object.entries(liveOrders).map(([k, o]) => `${k}:${o.current_fno_price ?? 0}`).join('|');
         if (fp === lastFingerprint.current) return;
         lastFingerprint.current = fp;
 
-        const compact = typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches;
-        primitive.current.setMarkers(buildChartMarkers(signals, refused, selectedToken, selectedTF || 60, compact));
-    }, [signals, refused, selectedToken, selectedTF, candleSeries]);
+        primitive.current.setMarkers(buildChartMarkers(signals, refused, selectedToken, selectedTF || 60, compact, liveOrders));
+    }, [signals, refused, liveOrders, selectedToken, selectedTF, candleSeries, compact]);
 
     useEffect(() => () => {
         if (primitive.current) candleSeries.current?.detachPrimitive(primitive.current);
