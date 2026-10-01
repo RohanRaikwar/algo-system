@@ -494,3 +494,87 @@ func TestLastFrameTime_AdvancesOnReceivedFrames(t *testing.T) {
 		return s.LastFrameTime().After(atConnect.Add(10 * time.Millisecond))
 	})
 }
+
+// Redial replaces a silent-but-open socket at once, without the reconnect
+// backoff (here 1h, so a backoff wait would time the test out).
+func TestRedial_ReconnectsWithoutBackoff(t *testing.T) {
+	ts := newWSTestServer(t)
+	s := newTestSocket(t, ts)
+	s.retryDelay = time.Hour
+	if err := s.Connect(); err != nil {
+		t.Fatal(err)
+	}
+	gen1 := s.testGen()
+
+	s.Redial("stall (test)")
+
+	waitFor(t, "redialled connection", func() bool {
+		return ts.accepted.Load() == 2 && ts.open.Load() == 1
+	})
+	if s.testGen() == gen1 {
+		t.Fatal("generation did not advance on redial")
+	}
+}
+
+// A 429 on reconnect means the client code already has its max sockets open:
+// surface it once instead of retrying.
+func TestHandleError_ConnLimitSurfaces(t *testing.T) {
+	ts := newWSTestServer(t)
+	ts.status.Store(http.StatusTooManyRequests)
+	s := newTestSocket(t, ts)
+	var codes []string
+	var mu sync.Mutex
+	s.OnError = func(code, msg string) { mu.Lock(); codes = append(codes, code); mu.Unlock() }
+
+	if err := s.Connect(); !errors.Is(err, ErrConnLimit) {
+		t.Fatalf("Connect error = %v, want ErrConnLimit", err)
+	}
+	done := make(chan struct{})
+	go func() { s.handleError(0, errors.New("boom")); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reconnect loop kept retrying after 429")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(codes) != 1 || codes[0] != ErrCodeConnLimit {
+		t.Fatalf("OnError codes = %v, want [%s]", codes, ErrCodeConnLimit)
+	}
+}
+
+func TestPinnedOrder_RotatesByIndex(t *testing.T) {
+	ips := []string{"103.82.178.39", "103.82.178.35", "103.82.178.38", "103.82.178.36"}
+	if got := pinnedOrder(ips, 0)[0]; got != "103.82.178.35" {
+		t.Fatalf("index 0 first = %s, want 103.82.178.35", got)
+	}
+	if got := pinnedOrder(ips, 1)[0]; got != "103.82.178.36" {
+		t.Fatalf("index 1 first = %s, want 103.82.178.36", got)
+	}
+	if got := pinnedOrder(ips, 5); len(got) != 4 || got[0] != "103.82.178.36" {
+		t.Fatalf("index 5 = %v, want 4 addrs starting 103.82.178.36", got)
+	}
+}
+
+// The pinned dialer connects through the resolved IP while the URL keeps its
+// hostname.
+func TestPinnedDialer_DialsResolvedAddress(t *testing.T) {
+	ts := newWSTestServer(t)
+	port := ts.URL[strings.LastIndex(ts.URL, ":")+1:]
+	orig := lookupHost
+	lookupHost = func(ctx context.Context, host string) ([]string, error) {
+		if host != "feed.test" {
+			t.Errorf("lookup host = %q, want feed.test", host)
+		}
+		return []string{"127.0.0.1"}, nil
+	}
+	t.Cleanup(func() { lookupHost = orig })
+
+	s := newTestSocket(t, ts)
+	s.url = "ws://feed.test:" + port
+	s.Dialer = NewPinnedDialer(1)
+	if err := s.Connect(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "server connection", func() bool { return ts.accepted.Load() == 1 })
+}

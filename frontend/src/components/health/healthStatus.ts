@@ -30,6 +30,22 @@ export interface Issue {
 export const LAG_SUSTAIN_SAMPLES = 3;
 
 /**
+ * Samples the tick rate must stay at 0 for before the feed counts as silent.
+ * mdengine writes its snapshot every 2s and the gateway reads it on its own 2s
+ * timer, so two reads can land on the same snapshot and yield one false 0.
+ */
+export const FEED_SUSTAIN_SAMPLES = 3;
+
+/**
+ * rates: recent tick-rate samples, newest last. Only a full window of known
+ * zeros is a stall; null (no rate yet, or counter reset) is not evidence.
+ */
+export function isTicking(rates: (number | null)[]): boolean {
+    const recent = rates.slice(-FEED_SUSTAIN_SAMPLES);
+    return recent.length < FEED_SUSTAIN_SAMPLES || !recent.every(r => r === 0);
+}
+
+/**
  * lagHistory: recent candle_lag_sec samples, newest last (current included).
  * Without it the current value alone decides.
  */
@@ -57,6 +73,11 @@ export function collectIssues(m: SystemMetrics, ticking: boolean, lagHistory?: n
     const recentLags = lagHistory && lagHistory.length > 0 ? lagHistory.slice(-LAG_SUSTAIN_SAMPLES) : p ? [p.candle_lag_sec] : [];
     if (p && ticking && recentLags.length > 0 && Math.min(...recentLags) >= 2) {
         issues.push({ key: 'lag', text: `Candles are running ${p.candle_lag_sec.toFixed(1)}s behind real time (normal is about 1s).`, tone: p.candle_lag_sec >= 5 ? 'bad' : 'warn' });
+    }
+    const wanted = p?.feed_conns_wanted ?? 0;
+    const up = p?.feed_conns_up ?? 0;
+    if (p && p.market_open && ticking && wanted > 1 && up < wanted) {
+        issues.push({ key: 'sockets', text: `Only ${up} of ${wanted} market data connections are open, so a network stall can interrupt the feed.`, tone: 'warn' });
     }
     if (p && p.market_open && !ticking) {
         issues.push({ key: 'feed', text: 'Market is open but no ticks are arriving. Check the market data feed.', tone: 'bad' });

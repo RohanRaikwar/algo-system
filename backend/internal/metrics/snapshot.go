@@ -31,6 +31,8 @@ type PipelineSnapshot struct {
 	WSReconnects         float64 `json:"ws_reconnects"`
 	FeedSeqGaps          float64 `json:"feed_seq_gaps"`
 	FeedStaleAlerts      float64 `json:"feed_stale_alerts"`
+	FeedConnsUp          float64 `json:"feed_conns_up"`
+	FeedConnsWanted      float64 `json:"feed_conns_wanted"`
 	CandleLagSec         float64 `json:"candle_lag_sec"`
 	WatermarkDelaySec    float64 `json:"watermark_delay_sec"`
 	MarketOpen           bool    `json:"market_open"`
@@ -89,6 +91,8 @@ func (m *Metrics) PipelineSnapshot() PipelineSnapshot {
 		WSReconnects:         Value(m.WSReconnects),
 		FeedSeqGaps:          Value(m.FeedSeqGaps),
 		FeedStaleAlerts:      Value(m.FeedStaleAlerts),
+		FeedConnsUp:          Value(m.FeedConnsUp),
+		FeedConnsWanted:      Value(m.FeedConnsWanted),
 		CandleLagSec:         Value(m.CandleLag),
 		MarketOpen:           Value(m.MarketState) == 1,
 	}

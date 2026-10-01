@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { collectIssues, isStale, STALE_MS } from '../healthStatus';
+import { collectIssues, isStale, isTicking, STALE_MS, FEED_SUSTAIN_SAMPLES } from '../healthStatus';
 import type { SystemMetrics, PipelineSnapshot } from '../../../types/ws';
 
 function base(over: Partial<SystemMetrics> = {}): SystemMetrics {
@@ -60,8 +60,30 @@ describe('collectIssues', () => {
         expect(collectIssues(spike, true, [2.2, 2.3, 2.41]).map(i => i.key)).toEqual(['lag']);
     });
 
+    it('warns when feed redundancy is degraded during market hours', () => {
+        const pipe = (up: number) => base({ pipeline: { candle_lag_sec: 1, market_open: true, feed_conns_up: up, feed_conns_wanted: 2 } as PipelineSnapshot });
+        expect(collectIssues(pipe(1), true).map(i => [i.key, i.tone])).toEqual([['sockets', 'warn']]);
+        expect(collectIssues(pipe(2), true)).toEqual([]);
+        expect(collectIssues(pipe(0), false).map(i => i.key)).toEqual(['feed']);
+    });
+
     it('flags a silent feed during market hours', () => {
         const open = base({ pipeline: { candle_lag_sec: 1, market_open: true } as PipelineSnapshot });
         expect(collectIssues(open, false).map(i => i.key)).toEqual(['feed']);
+    });
+});
+
+describe('isTicking', () => {
+    it('ignores a single zero sample from snapshot aliasing', () => {
+        expect(isTicking([88, 90, 0])).toBe(true);
+        expect(isTicking([88, 0, 0])).toBe(true);
+    });
+    it('reports a stall once the rate stays at zero for the sustain window', () => {
+        expect(isTicking([88, ...Array(FEED_SUSTAIN_SAMPLES).fill(0)])).toBe(false);
+    });
+    it('does not treat unknown rates as a stall', () => {
+        expect(isTicking([])).toBe(true);
+        expect(isTicking([null])).toBe(true);
+        expect(isTicking([null, 0, 0])).toBe(true);
     });
 });

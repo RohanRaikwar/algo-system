@@ -2,7 +2,7 @@
 # They share one SQLite data dir, so they must live together (a Railway
 # volume can only attach to one service). Redis runs separately.
 
-FROM golang:1.21-bookworm AS build
+FROM golang:1.25-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
