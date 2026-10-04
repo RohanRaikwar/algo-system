@@ -416,7 +416,7 @@ func (svc *Service) Run(ctx context.Context) error {
 	svc.clearStalePositions()
 	svc.publishLiveOrders(ctx)
 
-	// ── EOD auto-exit: close all positions at 15:30:00 IST ──
+	// ── EOD auto-exit: close all positions at STRAT_EOD_EXIT_TIME (default 15:15 IST) ──
 	go svc.eodAutoExitLoop(ctx)
 
 	// ── Daily PnL reset at 00:00 IST so the profit cap, win/loss tallies,

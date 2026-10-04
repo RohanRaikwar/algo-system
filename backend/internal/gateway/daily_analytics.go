@@ -137,6 +137,17 @@ func resolveSignalJournalPaths() []string {
 	return journalPaths
 }
 
+// resolveSignalLogJournalPaths is the strategy journals plus exitwatch's
+// WATCH_* journal, for the Signals LOG history only. Daily analytics keeps
+// resolveSignalJournalPaths so shadow signals never reach P&L.
+func resolveSignalLogJournalPaths() []string {
+	p := os.Getenv("EXITWATCH_JOURNAL_PATH")
+	if p == "" {
+		p = "data/exitwatch_signals.db"
+	}
+	return append(resolveSignalJournalPaths(), p)
+}
+
 func mustLoadIST() *time.Location {
 	loc, err := time.LoadLocation("Asia/Kolkata")
 	if err != nil {

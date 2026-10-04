@@ -63,7 +63,9 @@ function ExitWatchCell({ order }: { order: OpenOrder }) {
     const title = [
         `reversal p=${pct}%`,
         `progress ${Math.round(view.progress * 100)}% (peak ${Math.round(view.peak_progress * 100)}%)`,
-        view.exit_reason ? `exit: ${view.exit_reason}` : '',
+        view.exit_reason ? `exit: ${view.exit_reason}${view.exit_text ? ` (${view.exit_text})` : ''}` : '',
+        view.phase === 'RUNNER' && view.next_level ? `next ${view.next_level.type} ${(view.next_level.price / 100).toFixed(2)}` : '',
+        view.phase === 'RUNNER' && view.lock_level ? `lock ${(view.lock_level / 100).toFixed(2)}` : '',
         view.suggested_stop ? `suggested stop ${(view.suggested_stop / 100).toFixed(2)}` : '',
         reasons ? `reasons: ${reasons}` : '',
     ].filter(Boolean).join('\n');
@@ -72,6 +74,12 @@ function ExitWatchCell({ order }: { order: OpenOrder }) {
             <span className={`ew-badge ew-${view.decision.toLowerCase()}`}>{view.decision}</span>
             <span className="ew-bar"><span className="ew-fill" style={{ width: `${pct}%` }} /></span>
             <span className="ew-pct">{pct}%</span>
+            {view.phase === 'RUNNER' && (
+                <span className="ew-runner">
+                    runner{view.next_level ? ` → ${(view.next_level.price / 100).toFixed(0)}` : ''}
+                    {view.lock_level ? ` · lock ${(view.lock_level / 100).toFixed(0)}` : ''}
+                </span>
+            )}
             {payload?.shadow && <span className="ew-shadow">shadow</span>}
         </div>
     );

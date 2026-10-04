@@ -62,7 +62,7 @@ type Config struct {
 	DynamicStrikes bool // true = auto-resolve ATM CE/PE at market open
 
 	// ── End of day ──
-	EODExitTime string // "HH:MM" IST: auto-exit all positions and stop entries (default 15:05)
+	EODExitTime string // "HH:MM" IST: auto-exit all positions and stop entries (default 15:15)
 
 	// ── Signal-Time Option Automation ──
 	// ── Range-market strategies (NIFTY_RANGE_MARKET_GUIDE.md), paper only ──
@@ -148,7 +148,7 @@ func LoadConfig() Config {
 
 		// Dynamic strikes
 		DynamicStrikes: config.GetEnvBool("STRAT_DYNAMIC_STRIKES", false),
-		EODExitTime:    config.GetEnv("STRAT_EOD_EXIT_TIME", "15:05"),
+		EODExitTime:    config.GetEnv("STRAT_EOD_EXIT_TIME", "15:15"),
 		// Range-market strategies
 		RangeEnabled:          config.GetEnvBool("STRAT_RANGE_ENABLED", true),
 		RangeICEnabled:        config.GetEnvBool("STRAT_RANGE_IC_ENABLED", true),
@@ -244,9 +244,9 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// 15:05: after the strategies' own 15:00 exits, before NSE's closing
-// auction session (15:00-15:30) gets going.
-const defaultEODExitHour, defaultEODExitMin = 15, 5
+// 15:15: after the strategies' own time exits (RANGE 15:00, SR 15:10),
+// with 15 minutes left before the 15:30 close.
+const defaultEODExitHour, defaultEODExitMin = 15, 15
 
 // parseHHMM parses a 24-hour "HH:MM" time of day.
 func parseHHMM(v string) (int, int, error) {

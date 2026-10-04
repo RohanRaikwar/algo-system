@@ -97,6 +97,7 @@ func SetCORS(w http.ResponseWriter, r *http.Request) {
 // RegisterRoutes registers all HTTP routes on the provided mux.
 func RegisterRoutes(mux *http.ServeMux, hub *Hub, rdb *goredis.Client, ctx context.Context, tfs []int, tokenKeys, indicators []string, processStart time.Time, accountSvc *AccountService) {
 	journalPaths := resolveSignalJournalPaths()
+	logJournalPaths := resolveSignalLogJournalPaths()
 	dailyAnalytics := NewDailyAnalyticsService(journalPaths, nil)
 
 	// WebSocket endpoint
@@ -468,7 +469,7 @@ func RegisterRoutes(mux *http.ServeMux, hub *Hub, rdb *goredis.Client, ctx conte
 
 		var allRecords []signalRecord
 
-		for _, jPath := range journalPaths {
+		for _, jPath := range logJournalPaths {
 			db, err := openSignalDB(jPath)
 			if err != nil {
 				continue

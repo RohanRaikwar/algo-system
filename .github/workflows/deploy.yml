@@ -173,6 +173,7 @@ jobs:
           sudo CGO_ENABLED=1 /usr/local/go/bin/go build -o bin/api_gateway     ./cmd/api_gateway/
           sudo CGO_ENABLED=1 /usr/local/go/bin/go build -o bin/stratengine     ./cmd/stratengine/
           sudo CGO_ENABLED=1 /usr/local/go/bin/go build -o bin/analyst         ./cmd/analyst/
+          sudo CGO_ENABLED=1 /usr/local/go/bin/go build -o bin/exitwatch       ./cmd/exitwatch/
           
           echo "✅ All binaries built successfully"
           
@@ -218,13 +219,15 @@ jobs:
             "Strategy Engine" "redis-server.service trading-indengine.service" "redis-server.service"
           create_unit "analyst" "analyst" \
             "Market Analyst Engine" "redis-server.service trading-mdengine.service" "redis-server.service"
+          create_unit "exitwatch" "exitwatch" \
+            "Exit Watch (shadow exit advice)" "redis-server.service trading-mdengine.service trading-stratengine.service" "redis-server.service"
           
           # Grouping target
           sudo tee /etc/systemd/system/trading-backend.target > /dev/null <<TARGET
           [Unit]
           Description=Trading System Backend (all services)
-          Requires=trading-mdengine.service trading-indengine.service trading-api-gateway.service trading-stratengine.service trading-analyst.service
-          After=trading-mdengine.service trading-indengine.service trading-api-gateway.service trading-stratengine.service trading-analyst.service
+          Requires=trading-mdengine.service trading-indengine.service trading-api-gateway.service trading-stratengine.service trading-analyst.service trading-exitwatch.service
+          After=trading-mdengine.service trading-indengine.service trading-api-gateway.service trading-stratengine.service trading-analyst.service trading-exitwatch.service
 
           [Install]
           WantedBy=multi-user.target
@@ -247,7 +250,7 @@ jobs:
             ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} << 'HEALTH_SCRIPT'
           
           echo "── Service Status ──"
-          SERVICES="mdengine indengine api-gateway stratengine analyst"
+          SERVICES="mdengine indengine api-gateway stratengine analyst exitwatch"
           ALL_OK=true
           
           # Retry up to 3 times with 5s intervals — stratengine needs
@@ -281,6 +284,12 @@ jobs:
             echo "  ✅ API Gateway responding on :9090"
           else
             echo "  ⚠️  API Gateway not ready yet"
+            ALL_OK=false
+          fi
+          if curl -sf http://localhost:9099/healthz > /dev/null 2>&1; then
+            echo "  ✅ exitwatch responding on :9099"
+          else
+            echo "  ⚠️  exitwatch not ready yet"
             ALL_OK=false
           fi
           

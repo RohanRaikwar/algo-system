@@ -16,6 +16,7 @@ import (
 
 	"trading-systemv1/internal/heartbeat"
 	"trading-systemv1/internal/model"
+	"trading-systemv1/internal/strategy"
 )
 
 const (
@@ -23,33 +24,43 @@ const (
 	reversalKey       = "analyst:reversal:latest"
 	posContextChannel = "pub:poscontext"
 	posContextKey     = "poscontext:latest"
+	analystLevelsChan = "pub:analyst:levels"
+	analystLevelsKey  = "analyst:levels:latest"
+	ourSRChannel      = "pub:sr"
+	ourSRKey          = "sr:state"
+	signalChannel     = "pub:signal"
 
-	evalEvery = 250 * time.Millisecond // stall keeps growing between ticks
-	atrEvery  = 30 * time.Second
-	atrPeriod = 14
+	evalEvery   = 250 * time.Millisecond // stall keeps growing between ticks
+	candleEvery = 5 * time.Second        // poll for newly closed 1m index candles
+	wantedEvery = 20                     // evalEvery ticks between token-set refreshes
+	atrPeriod   = 14
 )
 
 // Service wires the Engine to Redis (ticks, poscontext, publish) and SQLite.
 // All engine calls happen on the Run goroutine.
 type Service struct {
-	cfg    Config
-	rdb    *goredis.Client
-	rec    *Recorder
-	engine *Engine
+	cfg     Config
+	rdb     *goredis.Client
+	rec     *Recorder
+	journal *strategy.SignalJournal
+	engine  *Engine
 
 	wanted atomic.Pointer[map[string]bool] // tokens the engine needs; read by the tick subscriber
 
 	tickCh   chan model.Tick
 	posCh    chan []model.PositionContext
-	atrCh    chan atrUpdate
+	candleCh chan model.TFCandle
+	levelCh  chan levelUpdate
+	sigCh    chan SignalEvent
 	reloadCh chan Model
 	pubCh    chan []byte
 	latest   atomic.Pointer[[]byte]
 }
 
-type atrUpdate struct {
-	token string
-	atr   int64
+type levelUpdate struct {
+	token  string
+	ourSR  bool // false: analyst levels
+	levels []Level
 }
 
 // New connects to Redis and opens the recorder.
@@ -69,13 +80,23 @@ func New(cfg Config) (*Service, error) {
 		cfg: cfg, rdb: rdb, rec: rec,
 		tickCh:   make(chan model.Tick, 4096),
 		posCh:    make(chan []model.PositionContext, 8),
-		atrCh:    make(chan atrUpdate, 8),
+		candleCh: make(chan model.TFCandle, 512),
+		levelCh:  make(chan levelUpdate, 16),
+		sigCh:    make(chan SignalEvent, 256),
 		reloadCh: make(chan Model, 1),
 		pubCh:    make(chan []byte, 8),
 	}
-	empty := map[string]bool{}
-	svc.wanted.Store(&empty)
+	svc.journal, err = strategy.NewSignalJournal(cfg.JournalPath)
+	if err != nil {
+		rdb.Close()
+		return nil, fmt.Errorf("exitwatch journal: %w", err)
+	}
 	svc.engine = NewEngine(svc.loadModel(), svc, true)
+	for _, k := range cfg.IndexKeys {
+		exch, tok := splitKey(k)
+		svc.engine.SetExchange(tok, exch)
+	}
+	svc.storeWanted()
 	return svc, nil
 }
 
@@ -104,15 +125,19 @@ func (svc *Service) Run(ctx context.Context) error {
 	go heartbeat.NewPublisher("exitwatch", svc.rdb).Run(ctx)
 	go svc.subscribeTicks(ctx)
 	go svc.subscribePositions(ctx)
-	go svc.atrLoop(ctx)
+	go svc.subscribeLevels(ctx)
+	go svc.candleLoop(ctx)
 	go svc.publishLoop(ctx)
+	go svc.signalLoop(ctx)
 	svc.startHTTP(ctx)
 
+	svc.loadInitialLevels(ctx)
 	svc.loadInitialPositions(ctx)
 	svc.loop(ctx)
 
 	close(recDone)
 	<-recExited
+	svc.journal.Close()
 	svc.rdb.Close()
 	log.Println("[exitwatch] shutdown complete.")
 	return nil
@@ -122,6 +147,7 @@ func (svc *Service) Run(ctx context.Context) error {
 func (svc *Service) loop(ctx context.Context) {
 	t := time.NewTicker(evalEvery)
 	defer t.Stop()
+	n := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -129,27 +155,45 @@ func (svc *Service) loop(ctx context.Context) {
 		case tk := <-svc.tickCh:
 			svc.engine.OnTick(tk)
 		case ps := <-svc.posCh:
-			svc.engine.SetPositions(ps, time.Now())
-			svc.storeWanted(ps)
-		case u := <-svc.atrCh:
-			svc.engine.SetATR(u.token, u.atr)
+			svc.engine.SetPositions(ps, svc.engine.ClockAt(time.Now()))
+			svc.storeWanted()
+		case c := <-svc.candleCh:
+			svc.engine.OnCandle(c)
+		case u := <-svc.levelCh:
+			if u.ourSR {
+				svc.engine.SetOurSRLevels(u.token, u.levels)
+			} else {
+				svc.engine.SetAnalystLevels(u.token, u.levels)
+			}
 		case m := <-svc.reloadCh:
 			svc.engine.SetModel(m)
 		case now := <-t.C:
 			svc.engine.Tick(now)
+			if n++; n%wantedEvery == 0 { // ghosts end inside Tick
+				svc.storeWanted()
+			}
 		}
 	}
 }
 
-func (svc *Service) storeWanted(ps []model.PositionContext) {
-	w := make(map[string]bool, 2*len(ps))
-	for _, p := range ps {
-		w[p.IndexToken] = true
-		if p.FNOToken != "" {
-			w[p.FNOToken] = true
-		}
+// storeWanted publishes the token set for the tick subscriber: every
+// tracker's tokens plus the index keys (day high/low for the level book).
+// Called only from the loop goroutine.
+func (svc *Service) storeWanted() {
+	w := svc.engine.Tokens()
+	for _, k := range svc.cfg.IndexKeys {
+		_, tok := splitKey(k)
+		w[tok] = true
 	}
 	svc.wanted.Store(&w)
+}
+
+func splitKey(k string) (exch, token string) {
+	i := strings.LastIndexByte(k, ':')
+	if i < 0 {
+		return "NSE", k
+	}
+	return k[:i], k[i+1:]
 }
 
 // subscribeTicks decodes only ticks whose channel token the engine wants.
@@ -221,19 +265,20 @@ func (svc *Service) handlePositions(ctx context.Context, b []byte) {
 	}
 }
 
-// atrLoop refreshes a simple 14-bar 1m ATR per index from the closed-candle stream.
-func (svc *Service) atrLoop(ctx context.Context) {
-	t := time.NewTicker(atrEvery)
+// candleLoop feeds closed 1m index candles to the engine: today's candles
+// from 09:15 IST at startup, then new stream entries every candleEvery.
+func (svc *Service) candleLoop(ctx context.Context) {
+	last := make(map[string]string, len(svc.cfg.IndexKeys))
+	for _, k := range svc.cfg.IndexKeys {
+		y, m, d := time.Now().In(bookIST).Date()
+		open := time.Date(y, m, d, 9, 15, 0, 0, bookIST)
+		last[k] = fmt.Sprintf("%d-0", open.UnixMilli())
+	}
+	t := time.NewTicker(candleEvery)
 	defer t.Stop()
 	for {
-		for _, key := range svc.cfg.IndexKeys {
-			if atr, ok := svc.fetchATR(ctx, key); ok {
-				select {
-				case svc.atrCh <- atrUpdate{token: key[strings.LastIndexByte(key, ':')+1:], atr: atr}:
-				case <-ctx.Done():
-					return
-				}
-			}
+		for _, k := range svc.cfg.IndexKeys {
+			last[k] = svc.readCandles(ctx, k, last[k])
 		}
 		select {
 		case <-ctx.Done():
@@ -243,24 +288,34 @@ func (svc *Service) atrLoop(ctx context.Context) {
 	}
 }
 
-func (svc *Service) fetchATR(ctx context.Context, key string) (int64, bool) {
-	msgs, err := svc.rdb.XRevRangeN(ctx, "candle:60s:"+key, "+", "-", atrPeriod+1).Result()
+// readCandles sends stream entries after from and returns the last ID read.
+func (svc *Service) readCandles(ctx context.Context, key, from string) string {
+	// from is the session open on the first read (inclusive), then
+	// "(<last id>" (exclusive range start, Redis >= 6.2).
+	msgs, err := svc.rdb.XRange(ctx, "candle:60s:"+key, from, "+").Result()
 	if err != nil {
-		log.Printf("[exitwatch] ATR read %s: %v", key, err)
-		return 0, false
+		log.Printf("[exitwatch] candle read %s: %v", key, err)
+		return from
 	}
-	cs := make([]model.TFCandle, 0, len(msgs))
-	for i := len(msgs) - 1; i >= 0; i-- { // chronological
-		data, ok := msgs[i].Values["data"].(string)
+	for _, msg := range msgs {
+		data, ok := msg.Values["data"].(string)
 		if !ok {
 			continue
 		}
 		var c model.TFCandle
-		if json.Unmarshal([]byte(data), &c) == nil && !c.Forming {
-			cs = append(cs, c)
+		if json.Unmarshal([]byte(data), &c) != nil || c.Forming {
+			continue
+		}
+		select {
+		case svc.candleCh <- c:
+		case <-ctx.Done():
+			return from
 		}
 	}
-	return computeATR(cs)
+	if n := len(msgs); n > 0 {
+		return "(" + msgs[n-1].ID
+	}
+	return from
 }
 
 // computeATR averages true range over the candles after the first.
@@ -374,4 +429,90 @@ func (svc *Service) startHTTP(ctx context.Context) {
 		defer cancel()
 		srv.Shutdown(sctx)
 	}()
+}
+
+// ── S/R level feeds ──
+
+func (svc *Service) subscribeLevels(ctx context.Context) {
+	ps := svc.rdb.Subscribe(ctx, analystLevelsChan, ourSRChannel)
+	defer ps.Close()
+	ch := ps.Channel()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			svc.handleLevels(ctx, msg.Channel == ourSRChannel, []byte(msg.Payload))
+		}
+	}
+}
+
+func (svc *Service) loadInitialLevels(ctx context.Context) {
+	for _, src := range []struct {
+		key   string
+		ourSR bool
+	}{{analystLevelsKey, false}, {ourSRKey, true}} {
+		b, err := svc.rdb.Get(ctx, src.key).Bytes()
+		if err != nil {
+			if err != goredis.Nil {
+				log.Printf("[exitwatch] read %s: %v", src.key, err)
+			}
+			continue
+		}
+		svc.handleLevels(ctx, src.ourSR, b)
+	}
+}
+
+func (svc *Service) handleLevels(ctx context.Context, ourSR bool, b []byte) {
+	parse := parseAnalystLevels
+	if ourSR {
+		parse = parseOurSRLevels
+	}
+	tok, ls, err := parse(b)
+	if err != nil {
+		log.Printf("[exitwatch] %v", err)
+		return
+	}
+	select {
+	case svc.levelCh <- levelUpdate{token: tok, ourSR: ourSR, levels: ls}:
+	case <-ctx.Done():
+	}
+}
+
+// ── Signals (pub:signal + journal) ──
+
+// Signal queues an exitwatch signal; a full queue drops it with a log line.
+func (svc *Service) Signal(ev SignalEvent) {
+	select {
+	case svc.sigCh <- ev:
+	default:
+		log.Printf("[exitwatch] signal queue full, dropped %s %s", ev.Action, ev.Reason)
+	}
+}
+
+func (svc *Service) signalLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev := <-svc.sigCh:
+			log.Printf("[exitwatch] signal %s %s %s: %s", ev.StrategyName, ev.Side, ev.Action, ev.Reason)
+			if b, err := json.Marshal(ev); err == nil {
+				if err := svc.rdb.Publish(ctx, signalChannel, string(b)).Err(); err != nil {
+					log.Printf("[exitwatch] signal publish error: %v", err)
+				}
+			}
+			sig := strategy.Signal{
+				StrategyName: ev.StrategyName, Action: strategy.Action(ev.Action),
+				Side: strategy.PositionSide(ev.Side), Token: ev.Token, Exchange: ev.Exchange,
+				Price: ev.Price, Reason: ev.Reason, FNOToken: ev.FNOToken,
+			}
+			if err := svc.journal.Record(sig, ev.at, nil, false, false); err != nil {
+				log.Printf("[exitwatch] journal error: %v", err)
+			}
+		}
+	}
 }

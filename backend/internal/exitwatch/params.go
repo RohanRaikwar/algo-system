@@ -46,6 +46,23 @@ type Params struct {
 	PremiumBufferPct    float64 `json:"premium_buffer_pct"`    // score EXIT allowed down to entry*(1-buf)
 	TightenKeepPct      float64 `json:"tighten_keep_pct"`      // suggested stop keeps this share of MFE
 	TimeExitMin         int     `json:"time_exit_min"`         // IST minute of day, e.g. 910 = 15:10
+
+	// Runner: target hit and momentum strong → hold to the next S/R.
+	RunnerLockPct    float64 `json:"runner_lock_pct"`     // lock = entry + this × target move
+	RunnerMinRoomPct float64 `json:"runner_min_room_pct"` // next level must be this × target move away to hold
+	RejectATR        float64 `json:"reject_atr"`          // pullback from peak (× ATR) that counts as rejection
+	RejectMinPaise   int64   `json:"reject_min_paise"`    // floor for the rejection pullback
+	LevelTolATR      float64 `json:"level_tol_atr"`       // "at the level" tolerance (× ATR)
+	LevelTolMinPaise int64   `json:"level_tol_min_paise"` // floor for the level tolerance
+	BreakHoldSec     float64 `json:"break_hold_sec"`      // beyond level this long = broken, ladder up
+	RunnerGiveback   float64 `json:"runner_giveback"`     // give back this share of the extension past target
+	GhostMaxMin      int     `json:"ghost_max_min"`       // follow a closed runner at most this long
+	GhostEndMin      int     `json:"ghost_end_min"`       // IST minute of day ghosts stop, e.g. 925 = 15:25
+
+	// Day level book.
+	FractalBars        int   `json:"fractal_bars"`          // 1m bars each side for a swing high/low
+	ORBMin             int   `json:"orb_min"`               // opening range length in minutes from 09:15
+	LevelMergeTolPaise int64 `json:"level_merge_tol_paise"` // levels this close merge into one
 }
 
 // DefaultParams returns hand-set weights. They are a starting point for
@@ -75,6 +92,21 @@ func DefaultParams() Params {
 		PremiumBufferPct:    0.05,
 		TightenKeepPct:      0.30,
 		TimeExitMin:         15*60 + 10,
+
+		RunnerLockPct:    0.70,
+		RunnerMinRoomPct: 0.30,
+		RejectATR:        0.25,
+		RejectMinPaise:   500,
+		LevelTolATR:      0.10,
+		LevelTolMinPaise: 300,
+		BreakHoldSec:     30,
+		RunnerGiveback:   0.50,
+		GhostMaxMin:      60,
+		GhostEndMin:      15*60 + 25,
+
+		FractalBars:        2,
+		ORBMin:             15,
+		LevelMergeTolPaise: 500,
 	}
 }
 
@@ -110,11 +142,12 @@ type Model struct {
 	Params
 	W        [numFeatures]float64
 	confirmN int64 // ConfirmSec in nanoseconds
+	breakN   int64 // BreakHoldSec in nanoseconds
 }
 
 // Compile converts Params into a Model.
 func (p Params) Compile() Model {
-	m := Model{Params: p, confirmN: int64(p.ConfirmSec * 1e9)}
+	m := Model{Params: p, confirmN: int64(p.ConfirmSec * 1e9), breakN: int64(p.BreakHoldSec * 1e9)}
 	for name, w := range p.Weights {
 		if f := featureIndex(name); f >= 0 {
 			m.W[f] = w

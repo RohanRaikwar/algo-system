@@ -13,6 +13,7 @@ type Config struct {
 	RedisPassword string
 	HTTPAddr      string
 	DBPath        string   // SQLite file for decisions + 1Hz features
+	JournalPath   string   // signal journal (same schema as stratengine's) for the LOG tab
 	ParamsPath    string   // optional JSON tuning file; defaults when missing
 	IndexKeys     []string // "EXCH:TOKEN" of indexes whose 1m ATR is tracked
 }
@@ -31,6 +32,7 @@ func LoadConfig() Config {
 		HTTPAddr:      config.GetEnv("EXITWATCH_HTTP_ADDR", ":9099"),
 		DBPath:        config.GetEnv("EXITWATCH_DB", "data/exitwatch.db"),
 		ParamsPath:    config.GetEnv("EXITWATCH_PARAMS", "config/exitwatch.json"),
+		JournalPath:   config.GetEnv("EXITWATCH_JOURNAL_PATH", "data/exitwatch_signals.db"),
 		IndexKeys:     keys,
 	}
 }
@@ -39,6 +41,9 @@ func LoadConfig() Config {
 func (c Config) Validate() error {
 	if c.DBPath == "" {
 		return fmt.Errorf("EXITWATCH_DB cannot be empty")
+	}
+	if c.JournalPath == "" {
+		return fmt.Errorf("EXITWATCH_JOURNAL_PATH cannot be empty")
 	}
 	for _, k := range c.IndexKeys {
 		if !strings.Contains(k, ":") {

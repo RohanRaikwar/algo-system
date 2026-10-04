@@ -1619,3 +1619,10 @@
 .ew-fill { display: block; height: 100%; background: var(--sg-muted); }
 .ew-pct { font-size: 0.72rem; color: var(--sg-text-2); font-variant-numeric: tabular-nums; }
 .ew-shadow { font-size: 0.62rem; color: var(--sg-faint); text-transform: uppercase; }
+
+/* Exit-watch signals in the LOG tab: advice, never an order. */
+.action-badge.watch-hold { color: var(--sg-info); background: var(--sg-info-soft); }
+.action-badge.watch-tighten { color: var(--sg-warn); background: var(--sg-warn-soft); }
+.action-badge.watch-exit { color: var(--sg-loss); background: var(--sg-loss-soft); }
+.order-type-badge.shadow { color: var(--sg-info); background: var(--sg-info-soft); }
+.ew-runner { font-size: 0.68rem; color: var(--sg-info); white-space: nowrap; }

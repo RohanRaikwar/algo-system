@@ -88,6 +88,12 @@ export interface BreakoutEvent {
 
 export type ReversalDecision = 'HOLD' | 'TIGHTEN' | 'EXIT';
 
+export interface ReversalLevel {
+    price: number;             // paise
+    type: string;              // DAY_HIGH | ORB_LOW | SWING_HIGH | MICRO_LOW | OUR_SR:<src> | ANALYST:<type>
+    since: string;
+}
+
 export interface ReversalView {
     strategy: string;
     side: string;              // CALL | PUT
@@ -106,6 +112,11 @@ export interface ReversalView {
     premium_ltp: number;
     progress: number;          // move / target move
     peak_progress: number;
+    phase?: 'NORMAL' | 'RUNNER' | 'GHOST';
+    exit_text?: string;        // detail of a latched EXIT
+    next_level?: ReversalLevel; // runner: next S/R ahead
+    lock_level?: number;       // runner: profit lock, index paise
+    levels?: ReversalLevel[];  // nearest 3 ahead + 2 behind
     features: Record<string, number>;
     ts: string;
 }

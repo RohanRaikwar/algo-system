@@ -23,6 +23,12 @@ type Assessment struct {
 	PremiumLTP    int64
 	TS            time.Time
 	Snapshot      Snapshot
+
+	Phase     Phase
+	ExitText  string  // detail for the latched EXIT, e.g. which level rejected
+	NextLevel *Level  // runner target level, nil when none
+	LockLevel int64   // runner lock as index price, 0 before runner
+	Levels    []Level // nearest 3 levels ahead and 2 behind
 }
 
 const (
@@ -84,6 +90,12 @@ type Tracker struct {
 	oi, oiFirst             int64
 	atr                     int64
 	dec                     decider
+
+	book     *LevelBook // shared S/R book of the index; nil = no levels
+	run      runner
+	events   []Event
+	exitText string
+	ghost    bool
 }
 
 // NewTracker validates the position and returns a tracker for it.
@@ -102,6 +114,36 @@ func NewTracker(pos Position, m Model) (*Tracker, error) {
 		return nil, fmt.Errorf("exitwatch: target %d not in favour of %s entry %d", pos.TargetLevel, pos.Side, pos.IndexEntry)
 	}
 	return &Tracker{pos: pos, m: &m, sign: sign, targetMove: tm}, nil
+}
+
+// SetBook attaches the index's S/R book.
+func (t *Tracker) SetBook(b *LevelBook) { t.book = b }
+
+// Phase reports NORMAL, RUNNER or GHOST.
+func (t *Tracker) Phase() Phase {
+	if t.ghost {
+		return PhaseGhost
+	}
+	if t.run.phase == "" {
+		return PhaseNormal
+	}
+	return t.run.phase
+}
+
+// InRunner reports whether the position is past target and being held.
+func (t *Tracker) InRunner() bool { return t.run.phase == PhaseRunner }
+
+// LastMove is the current favourable move in paise.
+func (t *Tracker) LastMove() int64 { return t.lastMove }
+
+// TargetMove is the favourable move the target sits at, in paise.
+func (t *Tracker) TargetMove() int64 { return t.targetMove }
+
+// DrainEvents returns and clears the pending WATCH_HOLD events.
+func (t *Tracker) DrainEvents() []Event {
+	ev := t.events
+	t.events = nil
+	return ev
 }
 
 // Position returns the tracked position context.
@@ -207,9 +249,24 @@ func (t *Tracker) Evaluate(now time.Time) Assessment {
 	} else {
 		premOK = t.lastMove > 0
 	}
+	t.runnerStep(&s, now)
 	dec, why := t.dec.step(t.m, &s, p, premOK, now.UnixNano())
+	if why == "SCORE" && t.run.phase != PhaseNormal && t.run.hasNext && t.exitText == "" &&
+		t.moveOf(t.run.next.Price)-t.lastMove <= 2*t.levelTol() {
+		// Reversal score fired at the runner's level: that is a rejection.
+		why, t.dec.reason = ReasonSRReject, ReasonSRReject
+		t.exitText = fmt.Sprintf("reversal at %s %s (%s)", t.aheadWord(), pts(t.run.next.Price), t.run.next.Type)
+	}
 
 	a.P, a.Decision, a.ExitReason, a.Latched, a.Snapshot = p, dec, why, t.dec.latched, s
+	a.Phase, a.ExitText, a.Levels = t.Phase(), t.exitText, t.nearLevels()
+	if t.run.phase == PhaseRunner {
+		a.LockLevel = t.levelPrice(t.run.lockMove)
+		if t.run.hasNext {
+			nl := t.run.next
+			a.NextLevel = &nl
+		}
+	}
 	a.Reasons = make([]string, n)
 	for i := 0; i < n; i++ {
 		a.Reasons[i] = top[i].String()
