@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Starts all five backend services. If any one exits, stop the rest and
+# Starts all six backend services. If any one exits, stop the rest and
 # exit non-zero so the platform restarts the container.
 set -uo pipefail
 cd /app
@@ -32,6 +32,8 @@ sleep 2
 start indengine
 start stratengine
 start analyst
+# exitwatch: shadow-only exit advice (WATCH_* signals); never places orders.
+start exitwatch
 start api_gateway
 
 wait -n

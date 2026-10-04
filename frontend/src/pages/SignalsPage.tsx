@@ -15,6 +15,7 @@ import { SessionHealthTab } from '../components/signals/SessionHealthTab';
 import { buildOpenOrders, inferSide } from '../components/signals/signalAnalytics';
 import type { SignalRecord } from '../types/signal';
 import '../components/signals/signals.css';
+import { matchesActionFilter } from '../components/signals/watch';
 
 type SignalTab = 'LOG' | 'LIVE' | 'EVENT_PRICE' | 'FNO' | 'DAILY' | 'PNL' | 'ACCOUNT' | 'SETTINGS' | 'SESSION';
 
@@ -123,7 +124,7 @@ export function SignalsPage() {
     // Fully filtered signals (for LOG tab — adds action + token filters)
     const filtered = useMemo(() => {
         return stratFiltered.filter(s => {
-            if (actionFilter !== 'ALL' && s.action !== actionFilter) return false;
+            if (!matchesActionFilter(s.action, actionFilter)) return false;
             if (tokenFilter && !`${s.exchange}:${s.token}`.toLowerCase().includes(tokenFilter.toLowerCase())) return false;
             return true;
         });
@@ -330,6 +331,7 @@ export function SignalsPage() {
                                 <option value="ALL">All actions</option>
                                 <option value="BUY">Entries (BUY)</option>
                                 <option value="EXIT">Exits (EXIT)</option>
+                                <option value="WATCH">Exit watch (WATCH_*)</option>
                             </select>
                             <input
                                 type="search"

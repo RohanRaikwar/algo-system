@@ -23,7 +23,7 @@ trap 'kill $(jobs -p) 2>/dev/null; exit 0' SIGINT SIGTERM
 
 echo "╔═══════════════════════════════════════════════════╗"
 echo "║  PRODUCTION MODE                                 ║"
-echo "║  Services: mdengine + api_gateway + stratengine + analyst + indengine ║"
+echo "║  Services: mdengine + api_gateway + stratengine + analyst + indengine + exitwatch ║"
 echo "║  Strategy: NIFTY50_FNO (live orders)             ║"
 echo "║  Data: Angel One Live Feed                       ║"
 echo "╚═══════════════════════════════════════════════════╝"
@@ -33,5 +33,6 @@ echo "╚═══════════════════════�
 ./tmp/api_gateway  2>&1 | sed 's/^/[api_gateway]  /' &
 ./tmp/stratengine 2>&1 | sed 's/^/[stratengine] /' &
 ./tmp/analyst     2>&1 | sed 's/^/[analyst]     /' &
+./tmp/exitwatch   2>&1 | sed 's/^/[exitwatch]   /' &
 
 wait

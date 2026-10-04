@@ -2,8 +2,8 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-  # Build PRODUCTION services: api_gateway, indengine, mdengine, stratengine, analyst
-  cmd = "go build -o ./tmp/mdengine ./cmd/mdengine/ && go build -o ./tmp/indengine ./cmd/indengine/ && go build -o ./tmp/api_gateway ./cmd/api_gateway/ && go build -o ./tmp/stratengine ./cmd/stratengine/ && go build -o ./tmp/analyst ./cmd/analyst/"
+  # Build PRODUCTION services: api_gateway, indengine, mdengine, stratengine, analyst, exitwatch
+  cmd = "go build -o ./tmp/mdengine ./cmd/mdengine/ && go build -o ./tmp/indengine ./cmd/indengine/ && go build -o ./tmp/api_gateway ./cmd/api_gateway/ && go build -o ./tmp/stratengine ./cmd/stratengine/ && go build -o ./tmp/analyst ./cmd/analyst/ && go build -o ./tmp/exitwatch ./cmd/exitwatch/"
   bin = "tmp/mdengine"
   full_bin = "bash ./run_production.sh"
   include_ext = ["go", "toml"]

@@ -264,3 +264,15 @@ func TestCondorDefaultsTradeDayBeforeExpiry(t *testing.T) {
 		t.Fatalf("1-DTE condor: %+v", sigs)
 	}
 }
+
+func TestCondorForceExitStaleKeepsTodaysCondor(t *testing.T) {
+	s, f := newWarmIC(t, icTestConfig())
+	openCondor(t, s, f)
+	if out := s.ForceExitStale(f.day.Format("2006-01-02"), "STALE"); len(out) != 0 {
+		t.Fatalf("same-day condor must survive a restart, got %+v", out)
+	}
+	out := s.ForceExitStale(f.day.AddDate(0, 0, 1).Format("2006-01-02"), "STALE")
+	if len(out) != 1 || len(out[0].Legs) != 4 || out[0].Action != ActionExit {
+		t.Fatalf("previous-day condor must exit, got %+v", out)
+	}
+}

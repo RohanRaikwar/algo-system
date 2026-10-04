@@ -1,5 +1,6 @@
 import { PlusCircle } from 'lucide-react';
 import { useStrikeStore } from '../../store/useStrikeStore';
+import { findReversal, useAnalystStore } from '../../store/useAnalystStore';
 import type { OpenOrder } from './signalAnalytics';
 
 interface LiveOrdersTabProps {
@@ -47,6 +48,41 @@ function useFNOPrice(side: string): number | null {
     if (side === 'CALL' && callLTP > 0) return callLTP / 100;
     if (side === 'PUT' && putLTP > 0) return putLTP / 100;
     return null;
+}
+
+/**
+ * Exit-watch verdict for the position: reversal probability, HOLD/TIGHTEN/EXIT
+ * and the top reasons. SHADOW means stratengine does not act on it yet.
+ */
+function ExitWatchCell({ order }: { order: OpenOrder }) {
+    const payload = useAnalystStore(s => s.reversal);
+    const view = order.leg ? null : findReversal(payload, order.strategy, order.side);
+    if (!view) return <span className="price-na">—</span>;
+    const pct = Math.round(view.p * 100);
+    const reasons = (view.reasons ?? []).join(', ');
+    const title = [
+        `reversal p=${pct}%`,
+        `progress ${Math.round(view.progress * 100)}% (peak ${Math.round(view.peak_progress * 100)}%)`,
+        view.exit_reason ? `exit: ${view.exit_reason}${view.exit_text ? ` (${view.exit_text})` : ''}` : '',
+        view.phase === 'RUNNER' && view.next_level ? `next ${view.next_level.type} ${(view.next_level.price / 100).toFixed(2)}` : '',
+        view.phase === 'RUNNER' && view.lock_level ? `lock ${(view.lock_level / 100).toFixed(2)}` : '',
+        view.suggested_stop ? `suggested stop ${(view.suggested_stop / 100).toFixed(2)}` : '',
+        reasons ? `reasons: ${reasons}` : '',
+    ].filter(Boolean).join('\n');
+    return (
+        <div className="ew-cell" title={title}>
+            <span className={`ew-badge ew-${view.decision.toLowerCase()}`}>{view.decision}</span>
+            <span className="ew-bar"><span className="ew-fill" style={{ width: `${pct}%` }} /></span>
+            <span className="ew-pct">{pct}%</span>
+            {view.phase === 'RUNNER' && (
+                <span className="ew-runner">
+                    runner{view.next_level ? ` → ${(view.next_level.price / 100).toFixed(0)}` : ''}
+                    {view.lock_level ? ` · lock ${(view.lock_level / 100).toFixed(0)}` : ''}
+                </span>
+            )}
+            {payload?.shadow && <span className="ew-shadow">shadow</span>}
+        </div>
+    );
 }
 
 function LiveOrderRow({ order }: { order: OpenOrder }) {
@@ -107,6 +143,7 @@ function LiveOrderRow({ order }: { order: OpenOrder }) {
                     ? `${pnl > 0 ? '+' : pnl < 0 ? '−' : ''}₹${Math.abs(pnl).toFixed(2)}`
                     : '—'}
             </td>
+            <td><ExitWatchCell order={order} /></td>
             <td className="signal-time" title={order.entryTime}>
                 {formatTime(order.entryTime)}
                 <span className="signal-time-sub">
@@ -139,6 +176,7 @@ export function LiveOrdersTab({ orders }: LiveOrdersTabProps) {
                         <th className="num" style={{ width: '100px' }}>Current</th>
                         <th className="num" style={{ width: '100px' }}>Stop loss</th>
                         <th className="num" style={{ width: '100px' }}>P&L</th>
+                        <th style={{ width: '170px' }}>Exit watch</th>
                         <th style={{ width: '120px' }}>Entry time</th>
                     </tr>
                 </thead>

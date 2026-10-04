@@ -360,6 +360,8 @@ export function useWebSocket() {
                     store.setLevels(enrichedLevels);
                 } else if (envelope.channel === 'pub:analyst:breakout') {
                     store.setBreakout(analystData as import('../types/analyst').BreakoutEvent);
+                } else if (envelope.channel === 'pub:analyst:reversal') {
+                    store.setReversal(analystData as import('../types/analyst').ReversalPayload);
                 }
                 return;
             }

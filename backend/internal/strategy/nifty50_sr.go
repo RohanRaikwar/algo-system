@@ -788,11 +788,24 @@ func (s *Nifty50SR) ResetPositions() {
 }
 
 func (s *Nifty50SR) ForceExitAll(reason string) []Signal {
+	return s.forceExit("", reason)
+}
+
+// ForceExitStale exits only positions whose last bar was on a day other
+// than today (IST "2006-01-02"), so a restart mid-session keeps today's
+// positions open.
+func (s *Nifty50SR) ForceExitStale(today, reason string) []Signal {
+	return s.forceExit(today, reason)
+}
+
+// forceExit exits every open position, or with today set, only those not
+// from today.
+func (s *Nifty50SR) forceExit(today, reason string) []Signal {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var sigs []Signal
 	for key, st := range s.instruments {
-		if st.Side == SideNone {
+		if st.Side == SideNone || (today != "" && st.TradeDay == today) {
 			continue
 		}
 		exch, token := splitKey(key)

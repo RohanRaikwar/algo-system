@@ -9,6 +9,7 @@ import type { LiveOrderStatePayload, SignalRecord } from '../../../types/signal'
 import type { RefusedEntry } from '../../../types/refused';
 import { inferSide, legInfo } from '../../signals/signalAnalytics';
 import { TradeMarkersPrimitive, type TradeMarker } from '../tradeMarkersPrimitive';
+import { isWatchAction } from '../../signals/watch';
 
 function matchesToken(token: string, exchange: string, selectedToken: string): boolean {
     const full = exchange ? `${exchange}:${token}` : token;
@@ -143,8 +144,9 @@ export function buildChartMarkers(
     const out: TradeMarker[] = [];
 
     // Oldest first so each EXIT pairs with the BUY before it (same key, same IST day).
+    // WATCH_* exit-watch advice is not a trade: no marker, no pairing.
     const mine = signals
-        .filter(s => matchesToken(s.token, s.exchange, selectedToken))
+        .filter(s => !isWatchAction(s.action) && matchesToken(s.token, s.exchange, selectedToken))
         .sort((a, b) => Date.parse(signalTs(a)) - Date.parse(signalTs(b)));
     const open = new Map<string, { price: number; qty: number; day: string; marker: TradeMarker; signal: SignalRecord }>();
 

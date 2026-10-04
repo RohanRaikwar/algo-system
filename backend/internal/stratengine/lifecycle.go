@@ -303,16 +303,37 @@ var ist = time.FixedZone("IST", 5*3600+30*60)
 // clearStalePositions fires exit signals for any open position that was
 // entered on a previous calendar day (IST). Called once at startup after
 // snapshot restore so the engine starts each day with a clean slate.
+// Positions from today are kept: a mid-session restart must not close them.
 func (svc *Service) clearStalePositions() {
-	today := time.Now().In(ist).Truncate(24 * time.Hour)
-	allSigs := svc.forceExitAllStrategies("STALE position from previous day — auto-closed on startup")
+	svc.clearStalePositionsAt(time.Now())
+}
+
+func (svc *Service) clearStalePositionsAt(now time.Time) {
+	today := now.In(ist).Format("2006-01-02")
+	allSigs := svc.forceExitStaleStrategies(today, "STALE position from previous day — auto-closed on startup")
 	for _, sig := range allSigs {
 		log.Printf("[stratengine] clearing stale position: %s %s:%s", sig.Side, sig.Exchange, sig.Token)
 		svc.tfEngine.SendSignal(sig)
 	}
 	if len(allSigs) > 0 {
-		log.Printf("[stratengine] cleared %d stale positions (today=%s)", len(allSigs), today.Format("2006-01-02"))
+		log.Printf("[stratengine] cleared %d stale positions (today=%s)", len(allSigs), today)
 	}
+}
+
+// forceExitStaleStrategies is forceExitAllStrategies limited to positions
+// not from today (IST "2006-01-02").
+func (svc *Service) forceExitStaleStrategies(today, reason string) []strategy.Signal {
+	var sigs []strategy.Signal
+	if svc.nifty50RangeStrategy != nil {
+		sigs = append(sigs, svc.nifty50RangeStrategy.ForceExitStale(today, reason)...)
+	}
+	if svc.nifty50RangeICStrategy != nil {
+		sigs = append(sigs, svc.nifty50RangeICStrategy.ForceExitStale(today, reason)...)
+	}
+	if svc.srStrategy != nil {
+		sigs = append(sigs, svc.srStrategy.ForceExitStale(today, reason)...)
+	}
+	return sigs
 }
 
 // dailyResetLoop waits until 09:00:00 IST each day (just before market

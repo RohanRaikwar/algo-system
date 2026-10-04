@@ -410,3 +410,23 @@ func TestSREntryTimeframe(t *testing.T) {
 		t.Fatalf("5m: closed=%v retest bars=%d", s.entryBarClosed(st), s.retestBars())
 	}
 }
+
+func TestSRForceExitStaleKeepsTodaysPosition(t *testing.T) {
+	s, st := srTest(t)
+	st.Side, st.IndexEntry, st.StopLevel, st.TargetLevel = SideCall, pts(22756), pts(22715), pts(22848)
+
+	if sigs := s.ForceExitStale("2026-09-28", "STALE"); len(sigs) != 0 {
+		t.Fatalf("same-day position must survive a restart, got %+v", sigs)
+	}
+	if st.Side != SideCall {
+		t.Fatalf("position reset: side=%s", st.Side)
+	}
+
+	sigs := s.ForceExitStale("2026-09-29", "STALE")
+	if len(sigs) != 1 || sigs[0].Action != ActionExit || sigs[0].Side != SideCall {
+		t.Fatalf("previous-day position must exit, got %+v", sigs)
+	}
+	if st.Side != SideNone {
+		t.Fatalf("position not reset: side=%s", st.Side)
+	}
+}

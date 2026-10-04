@@ -1,6 +1,7 @@
 import type { SignalRecord } from '../../types/signal';
 import { inferSide } from './signalAnalytics';
 import { RANGE_KIND_LABEL, rangeEntryKind } from './rangeKind';
+import { isWatchAction, watchBadgeClass } from './watch';
 
 interface SignalRowProps {
     signal: SignalRecord;
@@ -48,6 +49,7 @@ function relativeTime(ts: string): string {
 }
 
 function getActionBadge(action: string): string {
+    if (isWatchAction(action)) return watchBadgeClass(action);
     if (action === 'EXIT') return 'action-badge exit';
     return 'action-badge buy-call';
 }
@@ -107,7 +109,11 @@ export function SignalRow({ signal, isNew, entryPrice, entryTime }: SignalRowPro
     let badgeTitle = 'Paper trade (simulation only)';
 
     // Profit cap takes precedence for visually distinguishing from manual paper mode
-    if (signal.profit_cap) {
+    if (isWatchAction(signal.action)) {
+        badgeText = 'Shadow';
+        badgeClass = 'shadow';
+        badgeTitle = 'Exit watch advice only: no order placed';
+    } else if (signal.profit_cap) {
         badgeText = 'Capped';
         badgeClass = 'capped';
         badgeTitle = 'Paper trade: daily profit cap reached';
