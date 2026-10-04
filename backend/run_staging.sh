@@ -21,7 +21,7 @@ export STAGING_MODE=true
 echo "╔═══════════════════════════════════════════════════╗"
 echo "║  STAGING MODE                                    ║"
 echo "║  Services: tickserver + mdengine                 ║"
-echo "║            + api_gateway + stratengine + analyst + indengine ║"
+echo "║            + api_gateway + stratengine + analyst + indengine + exitwatch ║"
 echo "║  Strategy: NIFTY50_FNO (dry-run)                 ║"
 echo "║  Data: Local Tickserver (simulated)              ║"
 echo "╚═══════════════════════════════════════════════════╝"
@@ -33,5 +33,6 @@ sleep 1
 ./tmp/api_gateway  2>&1 | sed 's/^/[api_gateway]  /' &
 ./tmp/stratengine 2>&1 | sed 's/^/[stratengine] /' &
 ./tmp/analyst     2>&1 | sed 's/^/[analyst]     /' &
+./tmp/exitwatch   2>&1 | sed 's/^/[exitwatch]   /' &
 
 wait

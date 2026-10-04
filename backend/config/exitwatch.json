@@ -1,0 +1,25 @@
+{
+  "bias": -4.0,
+  "weights": {
+    "giveback": 2.5,
+    "stall": 1.0,
+    "velocity": 1.5,
+    "imbalance": 1.0,
+    "lower_highs": 0.8,
+    "wick": 0.8,
+    "prem_div": 1.2,
+    "spread": 0.4,
+    "oi_change": 0.3,
+    "pullback_atr": 1.0,
+    "time_pressure": 0.8
+  },
+  "exit_p": 0.70,
+  "tighten_p": 0.50,
+  "confirm_sec": 3,
+  "min_peak_progress": 0.40,
+  "protect_peak_progress": 0.60,
+  "protect_giveback": 0.50,
+  "premium_buffer_pct": 0.05,
+  "tighten_keep_pct": 0.30,
+  "time_exit_min": 910
+}

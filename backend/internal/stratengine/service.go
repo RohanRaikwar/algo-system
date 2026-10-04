@@ -399,6 +399,9 @@ func (svc *Service) Run(ctx context.Context) error {
 		go svc.srStateLoop(ctx)
 	}
 
+	// ── Open-position context for exitwatch (pub:poscontext, internal) ──
+	go svc.posContextLoop(ctx)
+
 	// ── NIFTY50_SR strike selection view (pub:strikesel) ──
 	if svc.cfg.SREnabled || svc.picker != nil {
 		go svc.strikeSelLoop(ctx)

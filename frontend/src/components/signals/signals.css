@@ -1596,3 +1596,26 @@
     letter-spacing: -0.01em;
     white-space: nowrap;
 }
+
+/* ── Exit watch (pub:analyst:reversal) ─────────────────────── */
+
+.ew-cell { display: flex; align-items: center; gap: 6px; }
+.ew-badge {
+    padding: 1px 7px;
+    border-radius: var(--sg-r-pill);
+    font-size: 0.68rem;
+    font-weight: 600;
+}
+.ew-badge.ew-hold { color: var(--sg-profit); background: var(--sg-profit-soft); }
+.ew-badge.ew-tighten { color: var(--sg-warn); background: var(--sg-warn-soft); }
+.ew-badge.ew-exit { color: var(--sg-loss); background: var(--sg-loss-soft); }
+.ew-bar {
+    width: 44px;
+    height: 4px;
+    border-radius: var(--sg-r-pill);
+    background: var(--sg-line);
+    overflow: hidden;
+}
+.ew-fill { display: block; height: 100%; background: var(--sg-muted); }
+.ew-pct { font-size: 0.72rem; color: var(--sg-text-2); font-variant-numeric: tabular-nums; }
+.ew-shadow { font-size: 0.62rem; color: var(--sg-faint); text-transform: uppercase; }

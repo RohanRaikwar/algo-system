@@ -83,3 +83,35 @@ export interface BreakoutEvent {
     tf: number;
     ts: string;
 }
+
+// ── Exit watch (pub:analyst:reversal) ──
+
+export type ReversalDecision = 'HOLD' | 'TIGHTEN' | 'EXIT';
+
+export interface ReversalView {
+    strategy: string;
+    side: string;              // CALL | PUT
+    fno_token: string;
+    index_entry: number;       // paise
+    target_level: number;      // paise
+    stop_level: number;        // paise
+    fno_entry_price: number;   // paise
+    p: number;                 // reversal probability 0..1
+    decision: ReversalDecision;
+    exit_reason?: string;      // PROTECT | SCORE
+    latched: boolean;
+    reasons: string[] | null;
+    suggested_stop?: number;   // index paise, on TIGHTEN
+    index_ltp: number;
+    premium_ltp: number;
+    progress: number;          // move / target move
+    peak_progress: number;
+    features: Record<string, number>;
+    ts: string;
+}
+
+export interface ReversalPayload {
+    shadow: boolean;           // true: stratengine does not act on EXIT
+    positions: ReversalView[];
+    ts: string;
+}
