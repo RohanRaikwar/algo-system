@@ -194,6 +194,7 @@ func (s *Nifty50SR) OnTFCandle(candle model.TFCandle) *Signal {
 	}
 	if st.TradeDay != day {
 		st.TradeDay, st.TradesToday, st.ConsecLosses, st.DayPnLPts = day, 0, 0, 0
+		st.LastSide, st.LastADX = SideNone, 0
 		st.PendingSide = SideNone
 	}
 	if st.CooldownLeft > 0 {
@@ -303,6 +304,15 @@ func (s *Nifty50SR) entryBlock(st *nifty50SRState, closeMin int) string {
 		return "cooldown"
 	}
 	return ""
+}
+
+// weakReentry reports a same-side re-entry on a trend no stronger than at
+// the day's previous entry.
+func (s *Nifty50SR) weakReentry(st *nifty50SRState, side PositionSide, adx float64) bool {
+	if s.cfg.ReentryMinADX <= 0 || st.LastSide != side {
+		return false
+	}
+	return adx < s.cfg.ReentryMinADX && adx <= st.LastADX
 }
 
 // stopBuffer is the distance beyond a level for the index stop.
@@ -557,6 +567,10 @@ func (s *Nifty50SR) tryEnter(candle model.TFCandle, st *nifty50SRState, ss SRSta
 		s.reject(why)
 		return nil
 	}
+	if s.weakReentry(st, side, ss.Range.ADX) {
+		s.reject(kindTag(kind) + ":reentry_adx")
+		return nil
+	}
 	entry := candle.Close
 	risk := absInt64(entry - stop)
 	if risk <= 0 || (side == SideCall && stop >= entry) || (side == SidePut && stop <= entry) {
@@ -582,6 +596,8 @@ func (s *Nifty50SR) tryEnter(candle model.TFCandle, st *nifty50SRState, ss SRSta
 	st.Side, st.Kind, st.Regime = side, kind, ss.Regime
 	st.IndexEntry, st.StopLevel, st.TargetLevel, st.Risk = entry, stop, target, risk
 	st.Breakeven = false
+	st.EntryTS, st.MaxGain = candle.TS, 0
+	st.LastSide, st.LastADX = side, ss.Range.ADX
 	st.FNOToken, st.FNOEntryPrice, st.FNOBestPrice = "", 0, 0
 	st.Strike = atmStrike(entry, s.cfg.StrikeStep)
 	st.TradesToday++
@@ -632,6 +648,9 @@ func (s *Nifty50SR) evaluateExit(candle model.TFCandle, st *nifty50SRState) *Sig
 		sign = -1
 	}
 	gain := (close - st.IndexEntry) * sign
+	if gain > st.MaxGain {
+		st.MaxGain = gain
+	}
 	if !st.Breakeven && s.cfg.BreakevenAtR > 0 && gain*100 >= st.Risk*s.cfg.BreakevenAtR {
 		st.StopLevel, st.Breakeven = st.IndexEntry, true
 		log.Printf("[strategy] %s: %s stop to breakeven %d (gain %d)", s.Name(), st.Side, st.IndexEntry, gain)
@@ -641,8 +660,24 @@ func (s *Nifty50SR) evaluateExit(candle model.TFCandle, st *nifty50SRState) *Sig
 		return s.exit(candle.Exchange, candle.Token, st, fmt.Sprintf("SR %s STOP stop=%d close=%d", st.Side, st.StopLevel, close))
 	case (close-st.TargetLevel)*sign >= 0:
 		return s.exit(candle.Exchange, candle.Token, st, fmt.Sprintf("SR %s TARGET target=%d close=%d", st.Side, st.TargetLevel, close))
+	case s.noProgress(candle, st):
+		return s.exit(candle.Exchange, candle.Token, st, fmt.Sprintf("SR %s NO PROGRESS %dm best=%d need=%d close=%d",
+			st.Side, s.cfg.NoProgressMin, st.MaxGain, st.Risk*s.cfg.NoProgressRPct/100, close))
 	}
 	return nil
+}
+
+// noProgress reports a trade that, NoProgressMin minutes after entry, has
+// never closed NoProgressRPct of R in its favour. A position restored
+// without its entry time is left alone.
+func (s *Nifty50SR) noProgress(candle model.TFCandle, st *nifty50SRState) bool {
+	if s.cfg.NoProgressMin <= 0 || st.EntryTS.IsZero() || st.Breakeven {
+		return false
+	}
+	if candle.TS.Sub(st.EntryTS) < time.Duration(s.cfg.NoProgressMin)*time.Minute {
+		return false
+	}
+	return st.MaxGain*100 < st.Risk*s.cfg.NoProgressRPct
 }
 
 // exit closes the position, books its index result against the day's caps
@@ -773,6 +808,7 @@ func (s *Nifty50SR) resetPosition(st *nifty50SRState) {
 	st.Side, st.Kind, st.Regime = SideNone, "", SRRegimeNone
 	st.IndexEntry, st.StopLevel, st.TargetLevel, st.Risk = 0, 0, 0, 0
 	st.Breakeven = false
+	st.EntryTS, st.MaxGain = time.Time{}, 0
 	st.Strike, st.FNOToken, st.FNOEntryPrice, st.FNOBestPrice = 0, "", 0, 0
 	st.CooldownLeft = s.cfg.CooldownCandles
 }

@@ -430,3 +430,84 @@ func TestSRForceExitStaleKeepsTodaysPosition(t *testing.T) {
 		t.Fatalf("position not reset: side=%s", st.Side)
 	}
 }
+
+func TestSRNoProgressExit(t *testing.T) {
+	s, st := srTest(t)
+	s.cfg.NoProgressMin, s.cfg.NoProgressRPct = 30, 50
+	ss, prev, cur := fadeSetup()
+	if s.evaluateFade(srCandle(cur.Close), st, ss, prev, cur, srMin) == nil {
+		t.Fatal("no entry")
+	}
+	entry, risk := st.IndexEntry, st.Risk
+	at := func(min int, close int64) model.TFCandle {
+		c := srCandle(close)
+		c.TS = srNow.Add(time.Duration(min) * time.Minute)
+		st.LastClose = close
+		return c
+	}
+
+	// Drifting below +0.5R: held until 30 minutes have passed, then exited.
+	if sig := s.evaluateExit(at(10, entry+risk*40/100), st); sig != nil {
+		t.Fatalf("exited early: %s", sig.Reason)
+	}
+	if sig := s.evaluateExit(at(29, entry+risk*10/100), st); sig != nil {
+		t.Fatalf("exited before 30 min: %s", sig.Reason)
+	}
+	sig := s.evaluateExit(at(30, entry+risk*10/100), st)
+	if sig == nil || !strings.Contains(sig.Reason, "NO PROGRESS") {
+		t.Fatalf("no no-progress exit: %+v", sig)
+	}
+
+	// A trade that reached +0.5R once is left to its stops.
+	st.CooldownLeft = 0
+	if s.evaluateFade(srCandle(cur.Close), st, ss, prev, cur, srMin) == nil {
+		t.Fatal("no second entry")
+	}
+	entry, risk = st.IndexEntry, st.Risk
+	if sig := s.evaluateExit(at(5, entry+risk*60/100), st); sig != nil {
+		t.Fatalf("exited at +0.6R: %s", sig.Reason)
+	}
+	if sig := s.evaluateExit(at(40, entry+risk*10/100), st); sig != nil {
+		t.Fatalf("exited after progress: %s", sig.Reason)
+	}
+}
+
+func TestSRNoProgressOffByDefault(t *testing.T) {
+	s, st := srTest(t)
+	ss, prev, cur := fadeSetup()
+	if s.evaluateFade(srCandle(cur.Close), st, ss, prev, cur, srMin) == nil {
+		t.Fatal("no entry")
+	}
+	c := srCandle(st.IndexEntry)
+	c.TS = srNow.Add(2 * time.Hour)
+	st.LastClose = c.Close
+	if sig := s.evaluateExit(c, st); sig != nil {
+		t.Fatalf("exited with no-progress off: %s", sig.Reason)
+	}
+}
+
+func TestSRReentryNeedsStrongerTrend(t *testing.T) {
+	s, st := srTest(t)
+	s.cfg.ReentryMinADX = 30
+	ss, prev, cur := fadeSetup() // ADX 18
+	if s.evaluateFade(srCandle(cur.Close), st, ss, prev, cur, srMin) == nil {
+		t.Fatal("first entry refused")
+	}
+	st.LastClose = cur.Close
+	s.exit("NSE", "NIFTY", st, "test")
+	st.CooldownLeft = 0
+
+	// Same side, ADX no higher than at the last entry and below 30: refused.
+	if sig := s.evaluateFade(srCandle(cur.Close), st, ss, prev, cur, srMin); sig != nil {
+		t.Fatalf("re-entry on a weakening trend: %s", sig.Reason)
+	}
+	if s.rejects["fade:reentry_adx"] != 1 {
+		t.Errorf("rejects=%v", s.rejects)
+	}
+
+	// ADX rising since the last entry: allowed.
+	ss.Range.ADX = 21
+	if s.evaluateFade(srCandle(cur.Close), st, ss, prev, cur, srMin) == nil {
+		t.Fatalf("re-entry with rising ADX refused; rejects=%v", s.rejects)
+	}
+}

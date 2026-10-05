@@ -56,6 +56,16 @@ type Nifty50SRConfig struct {
 	MinRewardRiskPct int64 // index reward ≥ this % of risk (150 = 1.5:1)
 	BreakevenAtR     int64 // move the stop to entry once gain ≥ this R (×100), 0 = off
 
+	// No-progress exit: flat once NoProgressMin minutes have passed since
+	// entry without any 1m close reaching NoProgressRPct of R in favour.
+	// 0 = off.
+	NoProgressMin  int
+	NoProgressRPct int64
+
+	// ReentryMinADX: a second same-side entry in a day needs 15m ADX at
+	// least this, or higher than at the previous entry. 0 = off.
+	ReentryMinADX float64
+
 	EntryFromMin    int // no entries before (IST minutes)
 	EntryToMin      int // no entries from
 	TimeExitMin     int // flat at
@@ -102,7 +112,7 @@ func DefaultNifty50SRConfig() Nifty50SRConfig {
 		StopMinPts:       2000, // 20 pts
 		DefaultTargetR:   200,
 		MinRewardRiskPct: 150,
-		BreakevenAtR:     100,
+		BreakevenAtR:     50, // 0.5R: −₹13.3k vs −₹22.1k at 1R (Mar–Sep 2026 option-model backtest), better in both halves
 
 		EntryFromMin:    hhmm(9, 30),
 		EntryToMin:      hhmm(14, 45),
@@ -134,8 +144,10 @@ type nifty50SRState struct {
 	IndexEntry  int64
 	StopLevel   int64
 	TargetLevel int64
-	Risk        int64 // |entry − initial stop|
-	Breakeven   bool  // stop moved to entry
+	Risk        int64     // |entry − initial stop|
+	Breakeven   bool      // stop moved to entry
+	EntryTS     time.Time // bucket start of the entry bar
+	MaxGain     int64     // best 1m-close gain since entry, index paise
 
 	Strike        int64
 	FNOToken      string
@@ -151,7 +163,9 @@ type nifty50SRState struct {
 	TradeDay     string
 	TradesToday  int
 	ConsecLosses int
-	DayPnLPts    int64 // closed trades, index paise, sign-adjusted
+	DayPnLPts    int64        // closed trades, index paise, sign-adjusted
+	LastSide     PositionSide // side of today's last entry
+	LastADX      float64      // 15m ADX at that entry
 	CooldownLeft int
 	LastClose    int64
 
@@ -176,6 +190,8 @@ type nifty50SRSnapshot struct {
 	TargetLevel   int64        `json:"target_level"`
 	Risk          int64        `json:"risk"`
 	Breakeven     bool         `json:"breakeven"`
+	EntryTS       time.Time    `json:"entry_ts,omitempty"`
+	MaxGain       int64        `json:"max_gain,omitempty"`
 	Strike        int64        `json:"strike"`
 	FNOToken      string       `json:"fno_token"`
 	FNOEntryPrice int64        `json:"fno_entry_price"`
@@ -185,12 +201,14 @@ type nifty50SRSnapshot struct {
 	PendingLevel int64        `json:"pending_level"`
 	PendingLeft  int          `json:"pending_left"`
 
-	TradeDay     string `json:"trade_day"`
-	TradesToday  int    `json:"trades_today"`
-	ConsecLosses int    `json:"consec_losses"`
-	DayPnLPts    int64  `json:"day_pnl_pts"`
-	CooldownLeft int    `json:"cooldown_left"`
-	LastClose    int64  `json:"last_close"`
+	TradeDay     string       `json:"trade_day"`
+	TradesToday  int          `json:"trades_today"`
+	ConsecLosses int          `json:"consec_losses"`
+	DayPnLPts    int64        `json:"day_pnl_pts"`
+	LastSide     PositionSide `json:"last_side,omitempty"`
+	LastADX      float64      `json:"last_adx,omitempty"`
+	CooldownLeft int          `json:"cooldown_left"`
+	LastClose    int64        `json:"last_close"`
 
 	LastCloseTS time.Time `json:"last_close_ts"`
 }
@@ -208,10 +226,11 @@ func snapshotNifty50SR(key string, s *nifty50SRState) nifty50SRSnapshot {
 		Key: key, Context: s.ctx.snapshot(),
 		Side: s.Side, Kind: s.Kind, Regime: s.Regime, IndexEntry: s.IndexEntry,
 		StopLevel: s.StopLevel, TargetLevel: s.TargetLevel, Risk: s.Risk, Breakeven: s.Breakeven,
+		EntryTS: s.EntryTS, MaxGain: s.MaxGain,
 		Strike: s.Strike, FNOToken: s.FNOToken, FNOEntryPrice: s.FNOEntryPrice, FNOBestPrice: s.FNOBestPrice,
 		PendingSide: s.PendingSide, PendingLevel: s.PendingLevel, PendingLeft: s.PendingLeft,
 		TradeDay: s.TradeDay, TradesToday: s.TradesToday, ConsecLosses: s.ConsecLosses,
-		DayPnLPts: s.DayPnLPts, CooldownLeft: s.CooldownLeft, LastClose: s.LastClose,
+		DayPnLPts: s.DayPnLPts, LastSide: s.LastSide, LastADX: s.LastADX, CooldownLeft: s.CooldownLeft, LastClose: s.LastClose,
 		LastCloseTS: s.LastCloseTS,
 	}
 }
@@ -221,10 +240,11 @@ func restoreNifty50SR(cfg Nifty50SRConfig, snap nifty50SRSnapshot) *nifty50SRSta
 		ctx:  restoreSRContext(cfg.Context, snap.Context),
 		Side: snap.Side, Kind: snap.Kind, Regime: snap.Regime, IndexEntry: snap.IndexEntry,
 		StopLevel: snap.StopLevel, TargetLevel: snap.TargetLevel, Risk: snap.Risk, Breakeven: snap.Breakeven,
+		EntryTS: snap.EntryTS, MaxGain: snap.MaxGain,
 		Strike: snap.Strike, FNOToken: snap.FNOToken, FNOEntryPrice: snap.FNOEntryPrice, FNOBestPrice: snap.FNOBestPrice,
 		PendingSide: snap.PendingSide, PendingLevel: snap.PendingLevel, PendingLeft: snap.PendingLeft,
 		TradeDay: snap.TradeDay, TradesToday: snap.TradesToday, ConsecLosses: snap.ConsecLosses,
-		DayPnLPts: snap.DayPnLPts, CooldownLeft: snap.CooldownLeft, LastClose: snap.LastClose,
+		DayPnLPts: snap.DayPnLPts, LastSide: snap.LastSide, LastADX: snap.LastADX, CooldownLeft: snap.CooldownLeft, LastClose: snap.LastClose,
 		LastCloseTS: snap.LastCloseTS,
 	}
 	if s.Side == "" {
