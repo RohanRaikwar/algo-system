@@ -11,6 +11,9 @@ import { useChartSubscription, usePaneSubscription } from './hooks/useChartSubsc
 import { useChartLazyLoad } from './hooks/useChartLazyLoad';
 import { useChartMarkers } from './hooks/useChartMarkers';
 import { useRangeLines } from './hooks/useRangeLines';
+import { useSRLines } from './hooks/useSRLines';
+import { useSRBox } from './hooks/useSRBox';
+import { SRSituationCard } from './SRSituationCard';
 import { ChartLegend } from './ChartLegend';
 import styles from './Chart.module.css';
 
@@ -44,6 +47,7 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
     const selectedTF = compact ? (paneTF || 60) : globalTF;
     const setSelectedTF = compact ? (tf: number) => onPaneTFChange?.(tf) : setGlobalTF;
     const activeIndicators = compact ? NO_INDICATORS : globalIndicators;
+    const srOverlay = useAppStore(s => s.overlays.srSituation) && !compact;
 
     // Show only indicators whose TF is <= chart TF (e.g. allow 3m on 5m, block >5m)
     const activeEntries = useMemo(
@@ -103,6 +107,9 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
     useChartLazyLoad(chartApi, selectedTF, selectedToken);
     useChartMarkers(candleSeries, selectedToken, selectedTF);
     useRangeLines(candleSeries, selectedToken);
+    const lastPaise = quote ? Math.round(quote.price * 100) : null;
+    useSRLines(candleSeries, selectedToken, lastPaise, srOverlay);
+    useSRBox(candleSeries, selectedToken, srOverlay);
 
     const tone = !quote || quote.change === 0 ? '' : quote.change > 0 ? styles.up : styles.down;
     const sign = !quote ? '' : quote.change > 0 ? '+' : quote.change < 0 ? '−' : '';
@@ -180,6 +187,8 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
                         Waiting for market data for {tokenLabel(selectedToken) || 'this instrument'}…
                     </div>
                 )}
+
+                {srOverlay && <SRSituationCard selectedToken={selectedToken} price={lastPaise} />}
 
                 <ChartLegend
                     ohlcData={ohlcData}

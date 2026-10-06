@@ -55,6 +55,8 @@ export function SettingsModal({ open, onClose }: Props) {
     const selectedTF = useAppStore(s => s.selectedTF);
     const activeIndicators = useAppStore(s => s.activeIndicators);
     const setActiveIndicators = useAppStore(s => s.setActiveIndicators);
+    const srOverlay = useAppStore(s => s.overlays.srSituation);
+    const setOverlay = useAppStore(s => s.setOverlay);
     const chartTF = selectedTF || 60;
 
     const [draft, setDraft] = useState<IndicatorEntry[]>([]);
@@ -227,6 +229,18 @@ export function SettingsModal({ open, onClose }: Props) {
                                 })}
                             </ul>
                         )}
+                    </section>
+
+                    <section>
+                        <h3 className={styles.sectionTitle}>Overlays</h3>
+                        <label className={styles.row}>
+                            <input
+                                type="checkbox"
+                                checked={srOverlay}
+                                onChange={(e) => setOverlay('srSituation', e.target.checked)}
+                            />
+                            <span className={styles.rowName}>SR situation: supports/resistances, day lines, sideways box</span>
+                        </label>
                     </section>
 
                     <section>

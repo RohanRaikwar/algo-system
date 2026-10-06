@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { X } from 'lucide-react';
-import { useRangeStore } from '../../store/useRangeStore';
-import { RANGE_KIND_LABEL, type RangeEntryKind } from '../signals/rangeKind';
-import { REGIME_LABEL, asOf, hhmm, pnlPaise, points, rupees, watching } from './rangeFormat';
+import { useSRStore } from '../../store/useSRStore';
+import { rejectLabel } from '../signals/SRStatusCard';
+import { KIND_LABEL, REGIME_LABEL, asOf, clock, hhmm, nearestLevels, pnlPaise, points, rupees, sourceLabel, watching } from './srFormat';
+import { DayPosition } from './DayPosition';
 import { useLastNiftyPaise } from './useLastNiftyPaise';
-import styles from './RangeMobile.module.css';
+import styles from './SRMobile.module.css';
 
 export type SheetSnap = 'closed' | 'half' | 'full';
 
-interface RangeSheetProps {
+interface SRSheetProps {
     id: string;
     snap: SheetSnap;
     onSnap: (s: SheetSnap) => void;
@@ -30,17 +31,18 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
 }
 
 function SheetBody() {
-    const v = useRangeStore(s => s.view);
+    const v = useSRStore(s => s.view);
     const last = useLastNiftyPaise(v?.key);
 
     if (!v) return <p className={styles.muted}>Waiting for the strategy engine…</p>;
 
-    const watch = watching(v);
-    const watchLive = watch.kind === 'pending' || (watch.kind === 'flag' && watch.ready);
+    const price = last ?? v.close ?? null;
+    const watch = watching(v, price);
     const inPosition = v.side !== 'NONE';
-    const kindLabel = v.kind ? RANGE_KIND_LABEL[v.kind as RangeEntryKind] ?? v.kind : '';
+    const kindLabel = v.kind ? KIND_LABEL[v.kind] ?? v.kind : '';
     const pnl = pnlPaise(v, last);
-    const hasLevels = Boolean(v.support && v.resistance);
+    const { support, resistance } = nearestLevels(v.levels, price);
+    const rejectAt = clock(v.last_reject_ts);
 
     return (
         <>
@@ -62,42 +64,45 @@ function SheetBody() {
 
             <section className={styles.card} aria-label="Watching">
                 <h3 className={styles.cardTitle}>Watching</h3>
-                <p className={`${styles.watch}${watchLive ? ` ${styles.warn}` : ''}`}>{watch.text}</p>
+                <p className={`${styles.watch}${watch.kind === 'pending' ? ` ${styles.warn}` : ''}`}>{watch.text}</p>
+                {!inPosition && v.last_reject && (
+                    <p className={styles.note}>Last refused{rejectAt ? ` ${rejectAt}` : ''}: {rejectLabel(v.last_reject)}</p>
+                )}
             </section>
 
             <section className={styles.card} aria-label="Situation">
                 <h3 className={styles.cardTitle}>Situation</h3>
                 <div className={styles.stats}>
-                    <Stat label="15m ADX" value={v.adx.toFixed(1)} sub={`range < ${v.max_adx}`} />
+                    <Stat label="15m ADX" value={v.adx.toFixed(1)} />
                     <Stat label="5m RSI" value={v.rsi5 ? v.rsi5.toFixed(0) : '—'} />
-                    <Stat label="Day move" value={v.day_open ? points(v.day_trend, true) : '—'} />
-                    {hasLevels && (
-                        <>
-                            <Stat label="Support" value={rupees(v.support)} sub={last && v.support ? points(last - v.support, true) : undefined} />
-                            <Stat label="Resistance" value={rupees(v.resistance)} sub={last && v.resistance ? points(v.resistance - last, true) : undefined} />
-                            <Stat label="Width" value={v.width ? points(v.width) : '—'} sub={v.class ? v.class.toLowerCase() : undefined} />
-                        </>
-                    )}
+                    <Stat label="15m ATR" value={v.atr15 ? points(v.atr15) : '—'} />
+                    <Stat label="VWAP" value={rupees(v.vwap)} sub={price && v.vwap ? points(price - v.vwap, true) : undefined} />
+                    <Stat label="Support" value={rupees(support?.price)}
+                        sub={support && price ? `${points(price - support.price, true)} · ${sourceLabel(support.source)}` : undefined} />
+                    <Stat label="Resistance" value={rupees(resistance?.price)}
+                        sub={resistance && price ? `${points(resistance.price - price, true)} · ${sourceLabel(resistance.source)}` : undefined} />
                 </div>
-                {!hasLevels && <p className={styles.note}>No range levels yet</p>}
+                <DayPosition v={v} price={price} />
+                {!support && !resistance && <p className={styles.note}>No S/R levels yet</p>}
                 {!inPosition && <p className={styles.note}>Position: Flat</p>}
             </section>
 
             <div className={styles.chips}>
                 <span className={styles.chip}>Trades {v.trades_today}/{v.max_trades}</span>
-                <span className={styles.chip}>Entries on {v.entry_tf}m closes</span>
-                <span className={styles.chip}>Flat by {hhmm(v.time_exit_min)}</span>
-                <span className={`${styles.chip} ${v.breakout ? styles.chipOn : ''}`}>Breakout</span>
-                <span className={`${styles.chip} ${v.flag ? styles.chipOn : ''}`}>Flag</span>
-                <span className={`${styles.chip} ${v.mean_reversion ? styles.chipOn : ''}`}>Mean rev.</span>
+                <span className={styles.chip}>Day {points(v.day_pnl_pts, true)}</span>
+                {v.cooldown_left > 0 && <span className={styles.chip}>Cooldown {v.cooldown_left}m</span>}
+                <span className={styles.chip}>Entries {hhmm(v.entry_from_min)}–{hhmm(v.entry_to_min)} on {v.entry_tf}m</span>
+                <span className={`${styles.chip} ${v.fade ? styles.chipOn : ''}`}>Fade</span>
+                <span className={`${styles.chip} ${v.retest ? styles.chipOn : ''}`}>Retest</span>
+                <span className={`${styles.chip} ${v.pullback ? styles.chipOn : ''}`}>Pullback</span>
             </div>
         </>
     );
 }
 
-/** Phone bottom sheet for the range strategy: half (chart stays usable) or full height. */
-export function RangeSheet({ id, snap, onSnap, returnFocusRef }: RangeSheetProps) {
-    const v = useRangeStore(s => s.view);
+/** Phone bottom sheet for the S/R strategy: half (chart stays usable) or full height. */
+export function SRSheet({ id, snap, onSnap, returnFocusRef }: SRSheetProps) {
+    const v = useSRStore(s => s.view);
     const sheetRef = useRef<HTMLDivElement>(null);
     const drag = useRef<{ startY: number; startH: number } | null>(null);
     const [dragH, setDragH] = useState<number | null>(null);
@@ -162,7 +167,7 @@ export function RangeSheet({ id, snap, onSnap, returnFocusRef }: RangeSheetProps
                 style={dragH !== null ? { height: dragH } : undefined}
                 role="dialog"
                 aria-modal={snap === 'full'}
-                aria-label="Range strategy"
+                aria-label="S/R strategy"
                 aria-hidden={!open}
                 tabIndex={-1}
             >
@@ -175,8 +180,8 @@ export function RangeSheet({ id, snap, onSnap, returnFocusRef }: RangeSheetProps
                 >
                     <span className={styles.handle} aria-hidden />
                     <div className={styles.sheetTitleRow}>
-                        <h2 className={styles.sheetTitle}>Range strategy</h2>
-                        {v && <span className={`${styles.pill} ${styles[`regime${v.regime}`]}`}>{REGIME_LABEL[v.regime] ?? v.regime}</span>}
+                        <h2 className={styles.sheetTitle}>S/R strategy</h2>
+                        {v && <span className={`${styles.pill} ${styles[`regime${v.regime}`] ?? ''}`}>{REGIME_LABEL[v.regime] ?? v.regime}</span>}
                         <span className={`${styles.pill} ${styles.regimeWARMING}`} title="The executor only sends real orders for NIFTY50_FNO">Paper</span>
                         {updated && <span className={styles.updated}>as of {updated} IST</span>}
                         <button type="button" className={styles.close} onClick={() => onSnap('closed')} aria-label="Close strategy details">

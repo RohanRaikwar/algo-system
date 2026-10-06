@@ -32,6 +32,10 @@ const REJECT_LABEL: Record<string, string> = {
 
 export function rejectLabel(reason: string): string {
     if (REJECT_LABEL[reason]) return REJECT_LABEL[reason];
+    const side = /^(\w+):sideways$/.exec(reason);
+    if (side) return `${side[1]}: market sideways (boxed in)`;
+    const ext = /^(\w+):day_extreme$/.exec(reason);
+    if (ext) return `${ext[1]}: price at the day's extreme`;
     const m = /^(\w+):(confirmations_(\d)|bad_stop|reward_risk)$/.exec(reason);
     if (m) {
         if (m[3] !== undefined) return `${m[1]}: only ${m[3]} confirmations`;

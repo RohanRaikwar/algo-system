@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { TradingChart } from '../components/chart/TradingChart';
-import { RangePanel } from '../components/range/RangePanel';
-import { RangePeek } from '../components/range/RangePeek';
-import { RangeSheet, type SheetSnap } from '../components/range/RangeSheet';
+import { SRPanel } from '../components/sr/SRPanel';
+import { SRPeek } from '../components/sr/SRPeek';
+import { SRSheet, type SheetSnap } from '../components/sr/SRSheet';
 import { useMediaQuery, PHONE_QUERY, PHONE_LANDSCAPE_QUERY } from '../hooks/useMediaQuery';
 import { useAppStore } from '../store/useAppStore';
 import { loadLayout, saveLayout, LAYOUTS, type ChartLayout } from './dashboardLayout';
 import styles from './DashboardPage.module.css';
 
-const SHEET_ID = 'range-sheet';
+const SHEET_ID = 'sr-sheet';
 const SNAP_KEY = 'rangeSheetSnap';
 
 /** Last open snap point this session; half when none or storage is blocked. */
@@ -86,11 +86,11 @@ export function DashboardPage({ onOpenIndicators }: DashboardPageProps) {
                 </div>
                 {compactUI ? (
                     <>
-                        <RangePeek ref={peekRef} open={snap !== 'closed'} sheetId={SHEET_ID} onOpen={openSheet} />
-                        <RangeSheet id={SHEET_ID} snap={snap} onSnap={onSnap} returnFocusRef={peekRef} />
+                        <SRPeek ref={peekRef} open={snap !== 'closed'} sheetId={SHEET_ID} onOpen={openSheet} />
+                        <SRSheet id={SHEET_ID} snap={snap} onSnap={onSnap} returnFocusRef={peekRef} />
                     </>
                 ) : (
-                    <RangePanel />
+                    <SRPanel />
                 )}
             </div>
         </ErrorBoundary>

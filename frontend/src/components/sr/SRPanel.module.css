@@ -31,7 +31,10 @@
 }
 
 .regimeRANGE { color: var(--sg-info); background: var(--sg-info-soft); }
-.regimeTRENDING { color: var(--sg-warn); background: var(--sg-warn-soft); }
+.regimeTREND_UP { color: var(--sg-profit); background: var(--sg-profit-soft); }
+.regimeTREND_DOWN { color: var(--sg-loss); background: var(--sg-loss-soft); }
+.regimeMIXED { color: var(--sg-warn); background: var(--sg-warn-soft); }
+.regimeDEAD,
 .regimeWARMING { color: var(--sg-muted); background: var(--sg-line-soft); }
 .paper { color: var(--sg-muted); background: var(--sg-line-soft); }
 
@@ -81,6 +84,7 @@
 
 .watch { margin: 0; line-height: 1.4; }
 .watchLive { color: var(--sg-warn); }
+.reject { margin: 6px 0 0; font-size: 11px; color: var(--sg-faint); }
 
 .posHead {
     display: flex;
@@ -117,6 +121,7 @@
 }
 
 .modes { display: inline-flex; gap: 8px; margin-left: auto; }
+.warnCount { color: var(--sg-warn); }
 .on { color: var(--sg-profit); }
 .off { color: var(--sg-faint); text-decoration: line-through; }
 

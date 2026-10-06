@@ -113,7 +113,10 @@
 }
 
 .regimeRANGE { color: var(--sg-info); background: var(--sg-info-soft); }
-.regimeTRENDING { color: var(--sg-warn); background: var(--sg-warn-soft); }
+.regimeTREND_UP { color: var(--sg-profit); background: var(--sg-profit-soft); }
+.regimeTREND_DOWN { color: var(--sg-loss); background: var(--sg-loss-soft); }
+.regimeMIXED { color: var(--sg-warn); background: var(--sg-warn-soft); }
+.regimeDEAD,
 .regimeWARMING { color: var(--sg-muted); background: var(--sg-line-soft); }
 
 /* ── Sheet ────────────────────────────────────────────────── */
