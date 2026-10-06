@@ -100,7 +100,7 @@ type Rejects map[string]int
 
 // String lists rejects as "delta 12, spread 1" in rule order.
 func (r Rejects) String() string {
-	order := []string{"not streamed", "quote stale", "spread", "no iv", "delta", "theta", "gamma", "iv", "liquidity", "cost", "credit", "sell iv"}
+	order := []string{"not streamed", "quote stale", "crossed", "spread", "no iv", "delta", "theta", "gamma", "iv", "liquidity", "cost", "credit", "sell iv"}
 	s := ""
 	for _, k := range order {
 		if n := r[k]; n > 0 {

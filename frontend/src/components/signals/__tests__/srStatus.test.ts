@@ -15,6 +15,8 @@ describe('SR status', () => {
     it('labels reject reasons', () => {
         expect(rejectLabel('fade:not_at_level')).toBe('fade: price not at a level');
         expect(rejectLabel('pullback:confirmations_2')).toBe('pullback: only 2 confirmations');
+        expect(rejectLabel('pullback:sideways')).toBe('pullback: market sideways (boxed in)');
+        expect(rejectLabel('fade:day_extreme')).toBe("fade: price at the day's extreme");
         expect(rejectLabel('retest:reward_risk')).toBe('retest: reward:risk too low');
         expect(rejectLabel('something_new')).toBe('something_new');
     });

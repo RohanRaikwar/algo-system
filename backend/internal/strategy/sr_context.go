@@ -92,7 +92,11 @@ type SRState struct {
 	// PrevDayHigh/Low are the previous session's extremes, 0 until known.
 	PrevDayHigh int64
 	PrevDayLow  int64
-	Levels      []SRLevel // sorted by price
+	// DayOpen/High/Low are today's so far (DayOpen 0 if unknown).
+	DayOpen int64
+	DayHigh int64
+	DayLow  int64
+	Levels  []SRLevel // sorted by price
 }
 
 type srContext struct {
@@ -211,6 +215,7 @@ func (sc *srContext) refresh(price int64) {
 		st.ORHigh, st.ORLow = sc.orHigh, sc.orLow
 	}
 	st.PrevDayHigh, st.PrevDayLow = sc.rc.prevDayHigh, sc.rc.prevDayLow
+	st.DayOpen, st.DayHigh, st.DayLow = sc.rc.dayOpen, sc.rc.dayHigh, sc.rc.dayLow
 	st.Levels = sc.levels()
 	st.Regime = sc.regime(st, price)
 	sc.state = st

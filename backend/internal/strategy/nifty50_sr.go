@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +28,7 @@ type Nifty50SR struct {
 
 	// Today's refusals for the dashboard (RejectStats keeps the run total).
 	dayRejects   map[string]int
+	dayWarns     map[string]int // today's entries taken with each warning
 	lastReject   string
 	lastRejectTS time.Time // bucket start of the candle that was refused
 	rejectDay    string
@@ -190,7 +192,7 @@ func (s *Nifty50SR) OnTFCandle(candle model.TFCandle) *Signal {
 	day := candle.TS.In(ist).Format("2006-01-02")
 	s.barTS = candle.TS
 	if s.rejectDay != day {
-		s.rejectDay, s.dayRejects, s.lastReject, s.lastRejectTS = day, nil, "", time.Time{}
+		s.rejectDay, s.dayRejects, s.dayWarns, s.lastReject, s.lastRejectTS = day, nil, nil, "", time.Time{}
 	}
 	if st.TradeDay != day {
 		st.TradeDay, st.TradesToday, st.ConsecLosses, st.DayPnLPts = day, 0, 0, 0
@@ -349,6 +351,111 @@ func (c confirmations) String() string {
 	return fmt.Sprintf("vwap=%s ema=%s rsi=%s candle=%s", mark(c.VWAP), mark(c.EMA), mark(c.RSI), mark(c.Candle))
 }
 
+// srDayPos is where a price stands in today's data. Distances are
+// price − reference, paise.
+type srDayPos struct {
+	Known    bool  // day high > day low
+	Pct      int64 // 0 = day low, 100 = day high
+	FromHigh int64 // day high − price (≥ 0)
+	FromLow  int64 // price − day low (≥ 0)
+	VsPDH    int64
+	VsPDL    int64
+	VsOpen   int64
+	HasPD    bool
+	HasOpen  bool
+	OR       string // above | inside | below, "" before the opening range completes
+}
+
+func dayPosition(ss SRState, price int64) srDayPos {
+	d := srDayPos{}
+	if rng := ss.DayHigh - ss.DayLow; ss.DayLow > 0 && rng > 0 {
+		d.Known = true
+		d.FromHigh, d.FromLow = ss.DayHigh-price, price-ss.DayLow
+		d.Pct = d.FromLow * 100 / rng
+	}
+	if ss.PrevDayHigh > 0 && ss.PrevDayLow > 0 {
+		d.HasPD, d.VsPDH, d.VsPDL = true, price-ss.PrevDayHigh, price-ss.PrevDayLow
+	}
+	if ss.DayOpen > 0 {
+		d.HasOpen, d.VsOpen = true, price-ss.DayOpen
+	}
+	if ss.ORHigh > 0 && ss.ORLow > 0 {
+		switch {
+		case price > ss.ORHigh:
+			d.OR = "above"
+		case price < ss.ORLow:
+			d.OR = "below"
+		default:
+			d.OR = "inside"
+		}
+	}
+	return d
+}
+
+// String is the day picture for an order reason, index points:
+// "day=pos:92% hi:-8 lo:+112 pdh:+15 pdl:+230 open:+95 or:above".
+func (d srDayPos) String() string {
+	if !d.Known {
+		return "day=unknown"
+	}
+	p := func(paise int64) string { return fmt.Sprintf("%+d", paise/100) }
+	out := fmt.Sprintf("day=pos:%d%% hi:%s lo:%s", d.Pct, p(-d.FromHigh), p(d.FromLow))
+	if d.HasPD {
+		out += " pdh:" + p(d.VsPDH) + " pdl:" + p(d.VsPDL)
+	}
+	if d.HasOpen {
+		out += " open:" + p(d.VsOpen)
+	}
+	if d.OR != "" {
+		out += " or:" + d.OR
+	}
+	return out
+}
+
+// dayExtreme reports a CALL at the top of a day that already ran up
+// DayRunPts from its low (with DayExtremePuts, a PUT at the bottom of one
+// that fell as far).
+func (s *Nifty50SR) dayExtreme(d srDayPos, side PositionSide) bool {
+	if s.cfg.DayExtremePct <= 0 || !d.Known {
+		return false
+	}
+	if side == SideCall {
+		return d.Pct >= s.cfg.DayExtremePct && d.FromLow >= s.cfg.DayRunPts
+	}
+	return s.cfg.DayExtremePuts && d.Pct <= 100-s.cfg.DayExtremePct && d.FromHigh >= s.cfg.DayRunPts
+}
+
+// situationWarnings names the situation checks an entry on side fails
+// now: "sideways" (pullback/retest in a sideways box; fades too with
+// BoxFadeToo) and "day_extreme". Empty when none apply.
+func (s *Nifty50SR) situationWarnings(st *nifty50SRState, ss SRState, side PositionSide, kind string, day srDayPos, closeMin int) []string {
+	var w []string
+	if _, boxed := s.sideways(st, ss); boxed && (kind != SRKindFade || s.cfg.BoxFadeToo) {
+		w = append(w, "sideways")
+	}
+	if closeMin >= s.cfg.DayExtremeFromMin && s.dayExtreme(day, side) {
+		w = append(w, "day_extreme")
+	}
+	return w
+}
+
+// sideways returns the high−low span of the last BoxBars closed 5m bars
+// and whether it is narrow enough (≤ BoxATRPct % of the 15m ATR) to
+// count as a sideways box.
+func (s *Nifty50SR) sideways(st *nifty50SRState, ss SRState) (int64, bool) {
+	n := s.cfg.BoxBars
+	bars := st.ctx.rc.bars5
+	if n <= 0 || s.cfg.BoxATRPct <= 0 || len(bars) < n || ss.Range.ATR15 <= 0 {
+		return 0, false
+	}
+	hi, lo := bars[len(bars)-n].High, bars[len(bars)-n].Low
+	for _, b := range bars[len(bars)-n+1:] {
+		hi, lo = maxInt64(hi, b.High), minInt64(lo, b.Low)
+	}
+	box := hi - lo
+	return box, box*100 <= ss.Range.ATR15*s.cfg.BoxATRPct
+}
+
 // levelNear returns the level closest to price within tol, 0 if none.
 func levelNear(levels []SRLevel, price, tol int64) int64 {
 	var best, bestD int64
@@ -438,6 +545,10 @@ func (s *Nifty50SR) armBreak(st *nifty50SRState, ss SRState, prev, cur ohlcv) bo
 
 func (s *Nifty50SR) evaluateRetest(candle model.TFCandle, st *nifty50SRState, ss SRState, prev, cur ohlcv, closeMin int) *Signal {
 	side, l, tol := st.PendingSide, st.PendingLevel, s.cfg.TouchTolPts
+	touchTol := tol
+	if s.cfg.RetestTolPts > 0 {
+		touchTol = s.cfg.RetestTolPts
+	}
 	st.PendingLeft--
 	expire := func(reason string) {
 		st.PendingSide = SideNone
@@ -452,14 +563,14 @@ func (s *Nifty50SR) evaluateRetest(candle model.TFCandle, st *nifty50SRState, ss
 	var touched, rejected bool
 	var c confirmations
 	if long {
-		touched = cur.Low <= l+tol && cur.Close > l
+		touched = cur.Low <= l+touchTol && cur.Close > l
 		rejected = bullishReversal(prev, cur) || (cur.bullish() && cur.lowerWick() >= cur.body())
 		c = confirmations{
 			VWAP: cur.Close > ss.VWAP, EMA: ss.EMAFast > ss.EMASlow,
 			RSI: ss.Range.RSIReady && ss.Range.RSI5 > 50, Candle: rejected,
 		}
 	} else {
-		touched = cur.High >= l-tol && cur.Close < l
+		touched = cur.High >= l-touchTol && cur.Close < l
 		rejected = bearishReversal(prev, cur) || (cur.bearish() && cur.upperWick() >= cur.body())
 		c = confirmations{
 			VWAP: cur.Close < ss.VWAP, EMA: ss.EMAFast < ss.EMASlow,
@@ -571,6 +682,12 @@ func (s *Nifty50SR) tryEnter(candle model.TFCandle, st *nifty50SRState, ss SRSta
 		s.reject(kindTag(kind) + ":reentry_adx")
 		return nil
 	}
+	day := dayPosition(ss, candle.Close)
+	warns := s.situationWarnings(st, ss, side, kind, day, closeMin)
+	if s.cfg.GateMode == SRGateBlock && len(warns) > 0 {
+		s.reject(kindTag(kind) + ":" + warns[0])
+		return nil
+	}
 	entry := candle.Close
 	risk := absInt64(entry - stop)
 	if risk <= 0 || (side == SideCall && stop >= entry) || (side == SidePut && stop <= entry) {
@@ -602,14 +719,24 @@ func (s *Nifty50SR) tryEnter(candle model.TFCandle, st *nifty50SRState, ss SRSta
 	st.Strike = atmStrike(entry, s.cfg.StrikeStep)
 	st.TradesToday++
 
-	reason := fmt.Sprintf("SR %s %s regime=%s level=%d stop=%d target=%d vwap=%d ema=%d/%d rsi5=%.1f adx=%.1f %s strike=%d close=%d",
-		kind, side, ss.Regime, level, stop, target, ss.VWAP, ss.EMAFast, ss.EMASlow, ss.Range.RSI5, ss.Range.ADX, c, st.Strike, entry)
+	reason := fmt.Sprintf("SR %s %s regime=%s level=%d stop=%d target=%d vwap=%d ema=%d/%d rsi5=%.1f adx=%.1f %s %s strike=%d close=%d",
+		kind, side, ss.Regime, level, stop, target, ss.VWAP, ss.EMAFast, ss.EMASlow, ss.Range.RSI5, ss.Range.ADX, c, day, st.Strike, entry)
+	if len(warns) > 0 {
+		reason += " warn=" + strings.Join(warns, ",")
+		if s.dayWarns == nil {
+			s.dayWarns = make(map[string]int)
+		}
+		for _, w := range warns {
+			s.dayWarns[w]++
+		}
+	}
 	log.Printf("[strategy] %s: %s", s.Name(), reason)
 	return &Signal{
 		StrategyName: s.Name(), Action: ActionBuy, Side: side,
 		Token: candle.Token, Exchange: candle.Exchange, Qty: s.qty,
 		MarketState: srMarketState(ss.Regime), Reason: reason, Strike: st.Strike,
 		TargetMove: reward,
+		Warnings:   warns,
 	}
 }
 
@@ -836,6 +963,29 @@ func (s *Nifty50SR) ForceExitStale(today, reason string) []Signal {
 
 // forceExit exits every open position, or with today set, only those not
 // from today.
+// ExitRequested closes the open position on side for an outside reason
+// (exitwatch). fnoToken, when both sides know it, must be the contract
+// held, so a request for an earlier trade cannot close a new one. nil
+// when no such position is open.
+func (s *Nifty50SR) ExitRequested(side PositionSide, fnoToken, reason string) *Signal {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, st := range s.instruments {
+		if st.Side != side {
+			continue
+		}
+		if fnoToken != "" && st.FNOToken != "" && st.FNOToken != fnoToken && !strings.HasSuffix(st.FNOToken, ":"+fnoToken) {
+			log.Printf("[strategy] %s: exit request for %s %s ignored — position holds %s", s.Name(), side, fnoToken, st.FNOToken)
+			return nil
+		}
+		exch, token := splitKey(key)
+		sig := s.exit(exch, token, st, reason)
+		sig.Price = 0 // the engine prices exits from the option LTP
+		return sig
+	}
+	return nil
+}
+
 func (s *Nifty50SR) forceExit(today, reason string) []Signal {
 	s.mu.Lock()
 	defer s.mu.Unlock()

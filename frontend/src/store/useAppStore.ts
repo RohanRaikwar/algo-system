@@ -42,6 +42,24 @@ function persistIndicators(indicators: IndicatorEntry[]) {
     } catch { /* ignore */ }
 }
 
+const OVERLAYS_KEY = 'chartOverlays_v1';
+
+/** Chart overlays the user can switch on and off (not server indicators). */
+export interface ChartOverlays {
+    /** NIFTY50_SR: 3 supports/resistances, day lines, sideways box, situation card. */
+    srSituation: boolean;
+}
+
+const DEFAULT_OVERLAYS: ChartOverlays = { srSituation: true };
+
+function loadOverlays(): ChartOverlays {
+    try {
+        const raw = localStorage.getItem(OVERLAYS_KEY);
+        if (raw) return { ...DEFAULT_OVERLAYS, ...JSON.parse(raw) };
+    } catch { /* blocked storage: defaults */ }
+    return DEFAULT_OVERLAYS;
+}
+
 interface AppState {
     config: AppConfig;
     selectedToken: string | null;
@@ -49,6 +67,8 @@ interface AppState {
 
     // Global indicator list (persists across TF changes)
     activeIndicators: IndicatorEntry[];
+    overlays: ChartOverlays;
+    setOverlay: (name: keyof ChartOverlays, on: boolean) => void;
 
     setConfig: (config: AppConfig) => void;
     setSelectedToken: (token: string) => void;
@@ -66,6 +86,13 @@ export const useAppStore = create<AppState>((set) => ({
     selectedToken: null,
     selectedTF: 60,
     activeIndicators: loadPersistedIndicators(),
+    overlays: loadOverlays(),
+
+    setOverlay: (name, on) => set((s) => {
+        const overlays = { ...s.overlays, [name]: on };
+        try { localStorage.setItem(OVERLAYS_KEY, JSON.stringify(overlays)); } catch { /* ignore */ }
+        return { overlays };
+    }),
 
     setConfig: (config) => set({ config }),
     setSelectedToken: (token) => set({ selectedToken: token }),

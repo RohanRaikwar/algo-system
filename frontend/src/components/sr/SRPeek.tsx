@@ -1,19 +1,19 @@
 import { forwardRef } from 'react';
 import { ChevronUp } from 'lucide-react';
-import { useRangeStore } from '../../store/useRangeStore';
-import { REGIME_LABEL, peekSummary } from './rangeFormat';
+import { useSRStore } from '../../store/useSRStore';
+import { REGIME_LABEL, peekSummary } from './srFormat';
 import { useLastNiftyPaise } from './useLastNiftyPaise';
-import styles from './RangeMobile.module.css';
+import styles from './SRMobile.module.css';
 
-interface RangePeekProps {
+interface SRPeekProps {
     open: boolean;
     sheetId: string;
     onOpen: () => void;
 }
 
 /** Phone strip above the tab bar: strategy state at a glance; tap opens the sheet. */
-export const RangePeek = forwardRef<HTMLButtonElement, RangePeekProps>(function RangePeek({ open, sheetId, onOpen }, ref) {
-    const v = useRangeStore(s => s.view);
+export const SRPeek = forwardRef<HTMLButtonElement, SRPeekProps>(function SRPeek({ open, sheetId, onOpen }, ref) {
+    const v = useSRStore(s => s.view);
     const last = useLastNiftyPaise(v?.key);
 
     if (!v) {
@@ -34,10 +34,10 @@ export const RangePeek = forwardRef<HTMLButtonElement, RangePeekProps>(function 
 
     return (
         <button ref={ref} type="button" className={styles.peek} onClick={onOpen}
-            aria-expanded={open} aria-controls={sheetId} aria-label="Range strategy details">
+            aria-expanded={open} aria-controls={sheetId} aria-label="S/R strategy details">
             <span className={styles.handle} aria-hidden />
             <span className={styles.peekRow}>
-                <span className={`${styles.pill} ${styles[`regime${v.regime}`]}`}>{REGIME_LABEL[v.regime] ?? v.regime}</span>
+                <span className={`${styles.pill} ${styles[`regime${v.regime}`] ?? ''}`}>{REGIME_LABEL[v.regime] ?? v.regime}</span>
                 <span className={`${styles.position} ${styles[p.position.tone]}`}>{p.position.text}</span>
                 {p.alert ? (
                     <span className={styles.alert}>{p.alert}</span>

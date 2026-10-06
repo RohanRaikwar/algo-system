@@ -18,6 +18,11 @@ export interface SRView {
     ema_slow?: number;
     or_high?: number;
     or_low?: number;
+    day_open?: number;
+    day_high?: number;
+    day_low?: number;
+    prev_day_high?: number;
+    prev_day_low?: number;
     close?: number;
     levels: SRLevel[] | null;
     pending_side?: string;
@@ -45,4 +50,22 @@ export interface SRView {
     fade: boolean;
     retest: boolean;
     pullback: boolean;
+    /** Day-extreme gate; 0 = off. */
+    day_extreme_pct?: number;
+    day_run_pts?: number;
+    day_extreme_puts?: boolean;
+    /** Sideways box: last box_bars 5m bars span box_pts; sideways at ≤ box_limit (paise). */
+    box_pts?: number;
+    box_limit?: number;
+    box_bars?: number;
+    box_from?: string;
+    box_to?: string;
+    box_high?: number;
+    box_low?: number;
+    boxed?: boolean;
+    /** What a CALL / PUT entered now would be flagged with, e.g. "call:day_extreme". */
+    warn?: string[] | null;
+    /** Today's entries taken with each warning. */
+    warns?: Record<string, number> | null;
+    gate_mode?: string; // warn | block
 }

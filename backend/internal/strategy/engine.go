@@ -27,6 +27,9 @@ type Signal struct {
 	EntryFNOPrice int64        `json:"entry_fno_price"`        // FNO option price at entry (paise, set on exit signals)
 	MarketState   string       `json:"market_state,omitempty"` // trending/sideways/choppy/range
 	Reason        string       `json:"reason"`
+	// Warnings are situation flags on an entry that was still taken
+	// (NIFTY50_SR: day_extreme, sideways).
+	Warnings []string `json:"warnings,omitempty"`
 
 	// ── Multi-leg (paper-only) ──
 	// A strategy emits one basket signal with Legs; stratengine resolves

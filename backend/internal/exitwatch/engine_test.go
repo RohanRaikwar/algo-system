@@ -14,7 +14,10 @@ type memSink struct {
 	decisions []View
 	features  []View
 	signals   []SignalEvent
+	exits     []model.ExitRequest
 }
+
+func (m *memSink) ExitRequest(r model.ExitRequest) { m.exits = append(m.exits, r) }
 
 func (m *memSink) Publish(p Payload)     { m.pubs = append(m.pubs, p) }
 func (m *memSink) RecordDecision(v View) { m.decisions = append(m.decisions, v) }
@@ -290,5 +293,68 @@ func TestEngineOurSRLevelPublishedMidRunRaisesLock(t *testing.T) {
 	}
 	if got := signalsWith(sink, ActionWatchHold, "NEW_LEVEL"); len(got) != 1 || !strings.Contains(got[0].Reason, "lock raised to 24042.00") {
 		t.Fatalf("want one lock raise to 24042, got %+v", got)
+	}
+}
+
+// driveToExit runs the stall-and-reverse path that ends in EXIT.
+func driveToExit(e *Engine) {
+	for el := time.Duration(0); el <= 140*time.Second; el += 250 * time.Millisecond {
+		ts := t0.Add(el)
+		m := stallReverse(el)
+		e.OnTick(model.Tick{Token: "99926000", Price: entryIdx + m, EventTS: ts})
+		e.OnTick(model.Tick{Token: "OPT1", Price: entryPrem + m/2, EventTS: ts})
+	}
+}
+
+func TestEngineAutoExitSendsExitRequest(t *testing.T) {
+	sink := &memSink{}
+	e := NewEngine(DefaultParams().Compile(), sink, true)
+	e.SetAutoExit([]string{"NIFTY50_SR"})
+	e.SetATR("99926000", 1500)
+	e.SetPositions([]model.PositionContext{ctxCall()}, t0)
+	driveToExit(e)
+	if len(sink.exits) != 1 {
+		t.Fatalf("want 1 exit request, got %d", len(sink.exits))
+	}
+	r := sink.exits[0]
+	if r.Strategy != "NIFTY50_SR" || r.Side != "CALL" || r.FNOToken != "OPT1" || !strings.HasPrefix(r.Reason, "EXITWATCH ") {
+		t.Fatalf("request %+v", r)
+	}
+	var auto bool
+	for _, s := range sink.signals {
+		if s.Action == ActionWatchExit && s.OrderMode == "AUTO" {
+			auto = true
+		}
+	}
+	if !auto {
+		t.Error("WATCH_EXIT signal not marked AUTO")
+	}
+}
+
+func TestEngineShadowStrategiesSendNoExitRequest(t *testing.T) {
+	for name, auto := range map[string][]string{"none": nil, "other strategy": {"NIFTY50_RANGE"}} {
+		sink := &memSink{}
+		e := NewEngine(DefaultParams().Compile(), sink, true)
+		e.SetAutoExit(auto)
+		e.SetATR("99926000", 1500)
+		e.SetPositions([]model.PositionContext{ctxCall()}, t0)
+		driveToExit(e)
+		if len(sink.exits) != 0 {
+			t.Errorf("%s: shadow position sent %d exit requests", name, len(sink.exits))
+		}
+	}
+}
+
+func TestEngineNeverAutoExitsRealOrders(t *testing.T) {
+	sink := &memSink{}
+	e := NewEngine(DefaultParams().Compile(), sink, true)
+	e.SetAutoExit([]string{model.RealOrderStrategy})
+	p := ctxCall()
+	p.Strategy = model.RealOrderStrategy
+	e.SetATR("99926000", 1500)
+	e.SetPositions([]model.PositionContext{p}, t0)
+	driveToExit(e)
+	if len(sink.exits) != 0 {
+		t.Fatalf("real-order strategy got %d exit requests", len(sink.exits))
 	}
 }

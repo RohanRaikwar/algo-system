@@ -132,6 +132,7 @@ func (svc *Service) restoreAndWire(ctx context.Context) {
 	svc.orderExecutor.SetFillListener(svc.onFill)
 	svc.wireAlerts()
 	svc.restoreState(ctx)
+	svc.subscribeHeldContracts(ctx)
 	svc.orderExecutor.SetStateListener(func() { svc.saveSnapshot(ctx) })
 	svc.orderExecutor.SetIntentPersister(func() error { return svc.persistSnapshot(ctx) })
 }

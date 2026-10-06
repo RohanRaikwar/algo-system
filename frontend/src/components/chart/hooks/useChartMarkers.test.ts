@@ -32,6 +32,14 @@ describe('buildChartMarkers', () => {
         expect(m[0]).toMatchObject({ kind: 'entry', label: 'BUY CALL', side: 'C' }); // sorted by time
     });
 
+    it('flags an SR entry taken with situation warnings', () => {
+        const warned = { ...entry, reason: 'SR PULLBACK CALL regime=TREND_UP close=2271270 warn=sideways,day_extreme' };
+        const [m] = buildChartMarkers([warned], [], 'NSE:99926000', 60, false);
+        expect(m.label).toBe('BUY CALL ⚠');
+        expect(m.lines).toContain('⚠ sideways, day extreme');
+        expect(buildChartMarkers([warned], [], 'NSE:99926000', 60, true)[0].label).toBe('');
+    });
+
     it('skips other instruments and uses compact text on phones', () => {
         expect(buildChartMarkers([], [refused], 'NFO:40712', 60, false)).toHaveLength(0);
         expect(buildChartMarkers([], [refused], '99926000', 60, true)[0]).toMatchObject({ label: '', side: 'P' });

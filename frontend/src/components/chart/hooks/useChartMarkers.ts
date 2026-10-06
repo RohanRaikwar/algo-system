@@ -4,6 +4,7 @@ import { useSignalStore } from '../../../store/useSignalStore';
 import { useRefusedStore } from '../../../store/useRefusedStore';
 import { buildLiveOrderKey, useLiveOrderStore } from '../../../store/useLiveOrderStore';
 import { IST_OFFSET } from '../../../utils/helpers';
+import { reasonWarnings, warnLabel } from '../../sr/srFormat';
 import { useMediaQuery, PHONE_QUERY } from '../../../hooks/useMediaQuery';
 import type { LiveOrderStatePayload, SignalRecord } from '../../../types/signal';
 import type { RefusedEntry } from '../../../types/refused';
@@ -117,12 +118,14 @@ function entryLines(s: SignalRecord): string[] {
     if (s.qty && s.qty > 0) lines.push(`qty ${s.qty}`);
     const levels = levelsLine(s.reason);
     if (levels) lines.push(levels);
+    const warns = reasonWarnings(s.reason);
+    if (warns.length > 0) lines.push(`⚠ ${warns.map(warnLabel).join(', ')}`);
     lines.push(...reasonLines(s.reason));
     return lines;
 }
 
-function label(verb: string, side: string | undefined, compact: boolean): string {
-    return compact ? '' : [verb, sideLong(side)].filter(Boolean).join(' ');
+function label(verb: string, side: string | undefined, compact: boolean, warned = false): string {
+    return compact ? '' : [verb, sideLong(side), warned ? '⚠' : ''].filter(Boolean).join(' ');
 }
 
 /**
@@ -160,7 +163,7 @@ export function buildChartMarkers(
         const marker: TradeMarker = {
             time,
             kind: isBuy ? 'entry' : 'exit',
-            label: label(isBuy ? 'BUY' : 'EXIT', s.side, compact),
+            label: label(isBuy ? 'BUY' : 'EXIT', s.side, compact, isBuy && reasonWarnings(s.reason).length > 0),
             side: sideShort(s.side),
             lines: [],
         };
@@ -198,7 +201,7 @@ export function buildChartMarkers(
         const qty = o.qty > 0 ? o.qty : 1;
         o.marker.pnl = (ltp - entryPrice) * qty;
         if (!compact) {
-            o.marker.label = label('OPEN', s.side, compact);
+            o.marker.label = label('OPEN', s.side, compact, reasonWarnings(s.reason).length > 0);
             o.marker.lines.push(`P&L ${o.marker.pnl > 0 ? '+' : ''}${rupees(o.marker.pnl)} · LTP ${rupees(ltp)}`);
         }
     }
