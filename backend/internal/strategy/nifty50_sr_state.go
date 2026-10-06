@@ -66,6 +66,33 @@ type Nifty50SRConfig struct {
 	// least this, or higher than at the previous entry. 0 = off.
 	ReentryMinADX float64
 
+	// Day extreme: no CALL once price is at or above DayExtremePct % of
+	// today's range after running at least DayRunPts (paise) up from the
+	// day low. 0 = off. DayExtremePuts applies the mirror to PUTs (off:
+	// it cut the PUT winners on falling days in the Mar–Oct 2026 backtest).
+	DayExtremePct  int64
+	DayRunPts      int64
+	DayExtremePuts bool
+	// DayExtremeFromMin: the day-extreme check starts at this IST minute
+	// (early in the session any rally sits at "100% of range"), 0 = always.
+	DayExtremeFromMin int
+
+	// Sideways box: no entry while the last BoxBars 5m bars span at most
+	// BoxATRPct % of the 15m ATR (price boxed in, whatever the regime
+	// says). BoxFadeToo also refuses fades. 0 = off.
+	BoxBars    int
+	BoxATRPct  int64
+	BoxFadeToo bool
+
+	// GateMode for the day-extreme and sideways checks: "warn" takes the
+	// entry and flags it (SR is paper-only; the user wants the signal),
+	// "block" refuses it.
+	GateMode string
+
+	// RetestTolPts: how close a retest bar must come back to the broken
+	// level (paise); 0 = TouchTolPts.
+	RetestTolPts int64
+
 	EntryFromMin    int // no entries before (IST minutes)
 	EntryToMin      int // no entries from
 	TimeExitMin     int // flat at
@@ -86,6 +113,12 @@ type Nifty50SRConfig struct {
 	IndexToken   string
 	NameOverride string
 }
+
+// GateMode values.
+const (
+	SRGateWarn  = "warn"
+	SRGateBlock = "block"
+)
 
 // DefaultNifty50SRConfig returns the default parameters.
 func DefaultNifty50SRConfig() Nifty50SRConfig {
@@ -113,6 +146,25 @@ func DefaultNifty50SRConfig() Nifty50SRConfig {
 		DefaultTargetR:   200,
 		MinRewardRiskPct: 150,
 		BreakevenAtR:     50, // 0.5R: −₹13.3k vs −₹22.1k at 1R (Mar–Sep 2026 option-model backtest), better in both halves
+
+		// CALL only, top 20% after 60 pts: −₹56/−₹141 vs −₹91/−₹177 off per unit
+		// (Mar–mid-Jun / mid-Jun–Oct 2026); blocking PUTs too lost in every setting.
+		DayExtremePct: 80,
+		DayRunPts:     6000,
+		// From 10:30: +₹25/−₹137 vs −₹56/−₹141 from the open (10:00 −₹36/−₹140,
+		// 11:00 −₹68/−₹167). A tighter retest touch (5 or 3 pts) lost in every
+		// combination, so RetestTolPts stays 0 (= TouchTolPts, 10 pts).
+		DayExtremeFromMin: hhmm(10, 30),
+
+		// Sideways box, 30 min ≤ 1.5× 15m ATR: +₹59/−₹103 vs +₹25/−₹137 without
+		// (Mar–mid-Jun / mid-Jun–Oct 2026, per unit). Neighbours are noisy
+		// (6×100%: −41/−70, 6×200%: +6/−195, 9×150%: +106/−161); also
+		// refusing fades scored +39/−98.
+		BoxBars:   6,
+		BoxATRPct: 150,
+		// Warn, don't block: the block-mode numbers above are what
+		// refusing these entries would have done.
+		GateMode: SRGateWarn,
 
 		EntryFromMin:    hhmm(9, 30),
 		EntryToMin:      hhmm(14, 45),

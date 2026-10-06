@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strings"
 
 	"trading-systemv1/internal/backtest"
@@ -66,6 +67,15 @@ func main() {
 	srBreakeven := flag.Int64("sr-breakeven-r", 0, "nifty50_sr: move the stop to entry at this %% of R (0 = default 50)")
 	srHardSL := flag.Int64("sr-hard-sl", 0, "nifty50_sr: premium hard SL %% below entry (0 = default 20)")
 	srReentryADX := flag.Float64("sr-reentry-adx", 0, "nifty50_sr: same-side re-entry needs 15m ADX ≥ this or above the last entry's (0 = off)")
+	srDayExtreme := flag.Int64("sr-day-extreme-pct", -1, "nifty50_sr: no CALL in the top N%% of today's range (PUT: bottom) after -sr-day-run pts; 0 = off (-1 = default)")
+	srDayRun := flag.Int64("sr-day-run", -1, "nifty50_sr: day run in index points needed before -sr-day-extreme-pct applies (-1 = default)")
+	srDayPuts := flag.String("sr-day-extreme-puts", "", "nifty50_sr: also refuse PUTs at the bottom of the day's range on|off (empty = default off)")
+	srDayFrom := flag.String("sr-day-extreme-from", "", "nifty50_sr: day-extreme check starts at HH:MM IST (empty = default)")
+	srRetestTol := flag.Int64("sr-retest-tol", -1, "nifty50_sr: retest bar must come within this many index points of the level (0 = touch tolerance, -1 = default)")
+	srBoxBars := flag.Int("sr-box-bars", -1, "nifty50_sr: sideways box over this many 5m bars, 0 = off (-1 = default)")
+	srBoxATR := flag.Int64("sr-box-atr", -1, "nifty50_sr: box ≤ this %% of 15m ATR counts as sideways (-1 = default)")
+	srGate := flag.String("sr-gate", "", "nifty50_sr: day-extreme and sideways checks warn|block (empty = default warn)")
+	srBoxFade := flag.String("sr-box-fade", "", "nifty50_sr: sideways box also refuses fades on|off (empty = default)")
 	srSetups := flag.String("sr-setups", "", "nifty50_sr: comma list of fade,retest,pullback to enable (empty = all). Strike greeks filter is live-only")
 	optModel := flag.Bool("option-model", false, "Price each trade's own option (strike, weekly expiry) with Black-Scholes; P&L in option premium")
 	optIV := flag.Float64("option-iv", 13, "Flat IV %% for -option-model when no India VIX history is loaded")
@@ -87,7 +97,7 @@ func main() {
 		OutDir:           *outDir,
 		StrategyType:     *stratFlag,
 		StrategyCfgGamma: gammaOverrides(*gRange, *gADX, *gSL, *gTarget, *gOTM),
-		StrategyCfgSR:    srOverrides(*srRangeADX, *srTrendADX, *srConfirm, *srMaxTrades, *srMaxLosses, *srDayLoss, *srStopATR, *srStopMin, *srEntryTF, *srSetups, *srNoProgMin, *srNoProgR, *srBreakeven, *srHardSL, *srReentryADX),
+		StrategyCfgSR:    srOverrides(*srRangeADX, *srTrendADX, *srConfirm, *srMaxTrades, *srMaxLosses, *srDayLoss, *srStopATR, *srStopMin, *srEntryTF, *srSetups, *srNoProgMin, *srNoProgR, *srBreakeven, *srHardSL, *srReentryADX, *srDayExtreme, *srDayRun, *srDayPuts, *srDayFrom, *srRetestTol, *srBoxBars, *srBoxATR, *srBoxFade, *srGate),
 		StrategyCfgRange: rangeOverrides(*rangeMaxADX, *rangeBOTarget, *rangeBOEnd, *rangeEntryTF, *rangeFlag, *flagBars, *flagWidth, *htfTrend, *htfLevels),
 		Option: backtest.OptionModel{
 			Enabled: *optModel, IVPct: *optIV, RatePct: 6.5, PremiumSLPct: *premSL,
@@ -126,6 +136,8 @@ func main() {
 		backtest.PrintConsole(result)
 	}
 
+	printWarnTally(result.Trades)
+
 	if n := engine.Skipped(); n > 0 {
 		fmt.Printf("\n  Entry gate skipped %d entries (min premium ₹%.0f, min DTE %d)\n", n, *minPrem, *minDTE)
 	}
@@ -153,13 +165,43 @@ func main() {
 }
 
 // srOverrides builds a nifty50_sr config from CLI flags (nil = defaults).
-func srOverrides(rangeADX, trendADX float64, confirm, maxTrades, maxLosses int, dayLossPts, stopATR, stopMinPts int64, entryTF int, setups string, noProgMin int, noProgR, breakevenR, hardSL int64, reentryADX float64) *strategy.Nifty50SRConfig {
+func srOverrides(rangeADX, trendADX float64, confirm, maxTrades, maxLosses int, dayLossPts, stopATR, stopMinPts int64, entryTF int, setups string, noProgMin int, noProgR, breakevenR, hardSL int64, reentryADX float64, dayExtremePct, dayRunPts int64, dayPuts, dayFrom string, retestTol int64, boxBars int, boxATR int64, boxFade, gate string) *strategy.Nifty50SRConfig {
 	if rangeADX == 0 && trendADX == 0 && confirm == 0 && maxTrades == 0 && maxLosses == 0 && dayLossPts == 0 &&
 		stopATR == 0 && stopMinPts == 0 && entryTF == 0 && setups == "" && noProgMin == 0 && breakevenR == 0 &&
-		hardSL == 0 && reentryADX == 0 {
+		hardSL == 0 && reentryADX == 0 && dayExtremePct < 0 && dayRunPts < 0 && dayPuts == "" && dayFrom == "" && retestTol < 0 && boxBars < 0 && boxATR < 0 && boxFade == "" && gate == "" {
 		return nil
 	}
 	cfg := strategy.DefaultNifty50SRConfig()
+	if dayExtremePct >= 0 {
+		cfg.DayExtremePct = dayExtremePct
+	}
+	if dayRunPts >= 0 {
+		cfg.DayRunPts = dayRunPts * 100
+	}
+	if dayPuts != "" {
+		cfg.DayExtremePuts = dayPuts == "on"
+	}
+	if dayFrom != "" {
+		var h, m int
+		if _, err := fmt.Sscanf(dayFrom, "%d:%d", &h, &m); err == nil {
+			cfg.DayExtremeFromMin = h*60 + m
+		}
+	}
+	if retestTol >= 0 {
+		cfg.RetestTolPts = retestTol * 100
+	}
+	if boxBars >= 0 {
+		cfg.BoxBars = boxBars
+	}
+	if boxATR >= 0 {
+		cfg.BoxATRPct = boxATR
+	}
+	if boxFade != "" {
+		cfg.BoxFadeToo = boxFade == "on"
+	}
+	if gate != "" {
+		cfg.GateMode = gate
+	}
 	if hardSL > 0 {
 		cfg.FNOHardSLPct = hardSL
 	}
@@ -273,4 +315,52 @@ func gammaOverrides(rangeBps int64, adx float64, sl, target int64, otm int) *str
 		cfg.OTMSteps = otm
 	}
 	return &cfg
+}
+
+// printWarnTally splits trades by the "warn=" flags in their entry reason
+// (NIFTY50_SR warn mode), so each warning's trades can be judged.
+func printWarnTally(trades []backtest.Trade) {
+	type tally struct {
+		n, wins int
+		pnl     int64
+	}
+	by := map[string]*tally{}
+	add := func(k string, t backtest.Trade) {
+		if by[k] == nil {
+			by[k] = &tally{}
+		}
+		p := t.PnLPaise()
+		by[k].n++
+		by[k].pnl += p
+		if p > 0 {
+			by[k].wins++
+		}
+	}
+	warned := false
+	for _, t := range trades {
+		i := strings.Index(t.EntryReason, " warn=")
+		if i < 0 {
+			add("(none)", t)
+			continue
+		}
+		warned = true
+		add("(any warning)", t)
+		for _, w := range strings.Split(strings.Fields(t.EntryReason[i+6:])[0], ",") {
+			add(w, t)
+		}
+	}
+	if !warned {
+		return
+	}
+	keys := make([]string, 0, len(by))
+	for k := range by {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	fmt.Println("\n  Entry warnings (trades taken with each flag):")
+	fmt.Printf("  %-16s %6s %8s %12s\n", "warning", "trades", "win%", "P&L ₹")
+	for _, k := range keys {
+		v := by[k]
+		fmt.Printf("  %-16s %6d %7.1f%% %12.2f\n", k, v.n, float64(v.wins)*100/float64(v.n), float64(v.pnl)/100)
+	}
 }

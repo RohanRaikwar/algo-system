@@ -227,6 +227,9 @@ func New(cfg Config) (*Service, error) {
 	srCfg := strategy.DefaultNifty50SRConfig()
 	srCfg.IndexToken = "NSE:99926000"
 	srCfg.MaxDayLossPts = cfg.SRMaxDayLossPts
+	srCfg.DayExtremePct, srCfg.DayRunPts, srCfg.DayExtremePuts = cfg.SRDayExtremePct, cfg.SRDayRunPts, cfg.SRDayExtremePuts
+	srCfg.DayExtremeFromMin = cfg.SRDayExtremeFrom
+	srCfg.BoxBars, srCfg.BoxATRPct, srCfg.GateMode = cfg.SRBoxBars, cfg.SRBoxATRPct, cfg.SRGateMode
 	svc.srStrategy = strategy.NewNifty50SR(cfg.Qty, srCfg)
 	svc.srStrategy.SetExpiry(orderexec.NewStrikePicker(nil).NextExpiry(time.Now()))
 
@@ -401,6 +404,11 @@ func (svc *Service) Run(ctx context.Context) error {
 
 	// ── Open-position context for exitwatch (pub:poscontext, internal) ──
 	go svc.posContextLoop(ctx)
+
+	// ── exitwatch exit requests (cmd:exitwatch:exit) for ExitWatchAuto ──
+	if len(svc.cfg.ExitWatchAuto) > 0 {
+		go svc.exitRequestLoop(ctx)
+	}
 
 	// ── NIFTY50_SR strike selection view (pub:strikesel) ──
 	if svc.cfg.SREnabled || svc.picker != nil {
@@ -761,6 +769,16 @@ func (svc *Service) signalLoop(ctx context.Context) {
 				// Option actually traded: the entry's token for an exit.
 				tradedToken := fnoToken
 				if sig.Action == strategy.ActionExit {
+					// After a restart the maps above are empty: take the
+					// held contract and fill from the executor's record.
+					if _, ok := entryFNOTokens[posKey]; !ok {
+						if token, price, ok := svc.restoredEntryFNO(posKey); ok {
+							entryFNOTokens[posKey] = token
+							if _, ok := entryFNOPrices[posKey]; !ok && price > 0 {
+								entryFNOPrices[posKey] = price
+							}
+						}
+					}
 					svc.normalizeExitInstrument(&sig, entryInstruments, posKey)
 					svc.removeLiveOrder(sig.StrategyName, sig.Side)
 					if entryToken, ok := entryFNOTokens[posKey]; ok && entryToken != "" {
@@ -828,6 +846,7 @@ func (svc *Service) signalLoop(ctx context.Context) {
 					"current_fno_price": currentFNOPrice,
 					"stoploss_price":    stoplossPrice,
 					"reason":            sig.Reason,
+					"warnings":          sig.Warnings,
 					"fno_token":         rec.FNOToken,
 					"fno_symbol":        rec.FNOSymbol,
 					"order_mode":        orderMode,
@@ -1057,6 +1076,42 @@ func (svc *Service) unqualifyToken(token string) string {
 		return token[idx+1:]
 	}
 	return token
+}
+
+// restoredEntryFNO returns the contract and fill price of an open position
+// from the executor's entry record. signalLoop's own entry maps start empty
+// after a restart; this keeps an exit pinned to the contract actually held
+// instead of the current ATM.
+func (svc *Service) restoredEntryFNO(posKey string) (token string, price int64, ok bool) {
+	if svc.orderExecutor == nil {
+		return "", 0, false
+	}
+	rec, ok := svc.orderExecutor.GetEntryOrders()[posKey]
+	if !ok || rec.Token == "" {
+		return "", 0, false
+	}
+	return rec.Token, rec.Price, true
+}
+
+// subscribeHeldContracts streams every restored open position's option
+// again. After a restart only the ATM pair and ladder get subscribed, so a
+// position bought at another strike would get no ticks: no premium stops
+// and a stale exit price.
+func (svc *Service) subscribeHeldContracts(ctx context.Context) {
+	if svc.orderExecutor == nil {
+		return
+	}
+	var tokens []string
+	for _, rec := range svc.orderExecutor.GetEntryOrders() {
+		if rec.Token != "" {
+			tokens = append(tokens, rec.Token)
+		}
+	}
+	if len(tokens) == 0 {
+		return
+	}
+	log.Printf("[stratengine] 📡 resubscribing %d held option contract(s) after restore: %v", len(tokens), tokens)
+	svc.subscribeTokens(ctx, tokens...)
 }
 
 func (svc *Service) seedLiveOrdersFromStrategies() {

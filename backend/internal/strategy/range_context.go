@@ -214,6 +214,7 @@ type rangeContext struct {
 	emaHist []int64 // 15m EMA values, newest last
 
 	curDay      string
+	dayOpen     int64 // first 1m open of the day
 	dayHigh     int64
 	dayLow      int64
 	prevDayHigh int64
@@ -305,7 +306,7 @@ func (rc *rangeContext) update(ts time.Time, b ohlcv) bool {
 		if rc.curDay != "" {
 			rc.prevDayHigh, rc.prevDayLow = rc.dayHigh, rc.dayLow
 		}
-		rc.curDay, rc.dayHigh, rc.dayLow = day, b.High, b.Low
+		rc.curDay, rc.dayOpen, rc.dayHigh, rc.dayLow = day, b.Open, b.High, b.Low
 	} else {
 		rc.dayHigh = maxInt64(rc.dayHigh, b.High)
 		rc.dayLow = minInt64(rc.dayLow, b.Low)
@@ -649,6 +650,7 @@ type rangeContextSnapshot struct {
 	Bars60      []tfBar      `json:"bars60,omitempty"`
 	Agg60       tfAggregator `json:"agg60"`
 	CurDay      string       `json:"cur_day"`
+	DayOpen     int64        `json:"day_open,omitempty"` // 0 in older snapshots: unknown
 	DayHigh     int64        `json:"day_high"`
 	DayLow      int64        `json:"day_low"`
 	PrevDayHigh int64        `json:"prev_day_high"`
@@ -664,7 +666,7 @@ func (rc *rangeContext) snapshot() rangeContextSnapshot {
 		Agg5:   rc.agg5, Agg15: rc.agg15,
 		BarsE: append([]tfBar(nil), rc.barsE...), AggE: rc.aggE,
 		Bars60: append([]tfBar(nil), rc.bars60...), Agg60: rc.agg60,
-		CurDay: rc.curDay, DayHigh: rc.dayHigh, DayLow: rc.dayLow,
+		CurDay: rc.curDay, DayOpen: rc.dayOpen, DayHigh: rc.dayHigh, DayLow: rc.dayLow,
 		PrevDayHigh: rc.prevDayHigh, PrevDayLow: rc.prevDayLow,
 		LastTS: rc.lastTS,
 	}
@@ -697,7 +699,7 @@ func restoreRangeContext(cfg RangeContextConfig, s rangeContextSnapshot) *rangeC
 	if s.Agg15.Minutes > 0 {
 		rc.agg15 = s.Agg15
 	}
-	rc.curDay, rc.dayHigh, rc.dayLow = s.CurDay, s.DayHigh, s.DayLow
+	rc.curDay, rc.dayOpen, rc.dayHigh, rc.dayLow = s.CurDay, s.DayOpen, s.DayHigh, s.DayLow
 	rc.prevDayHigh, rc.prevDayLow = s.PrevDayHigh, s.PrevDayLow
 	rc.lastTS = s.LastTS
 	if n := len(rc.bars1); n > 0 {

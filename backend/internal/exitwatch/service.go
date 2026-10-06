@@ -92,6 +92,7 @@ func New(cfg Config) (*Service, error) {
 		return nil, fmt.Errorf("exitwatch journal: %w", err)
 	}
 	svc.engine = NewEngine(svc.loadModel(), svc, true)
+	svc.engine.SetAutoExit(cfg.AutoExit)
 	for _, k := range cfg.IndexKeys {
 		exch, tok := splitKey(k)
 		svc.engine.SetExchange(tok, exch)
@@ -116,7 +117,7 @@ func (svc *Service) loadModel() Model {
 
 // Run starts all subsystems and blocks until ctx is cancelled.
 func (svc *Service) Run(ctx context.Context) error {
-	log.Println("[exitwatch] starting (shadow mode: publishes and records only, never orders)")
+	log.Printf("[exitwatch] starting (shadow, except EXIT closes positions of %v via %s)", svc.cfg.AutoExit, model.ExitRequestChannel)
 
 	recDone := make(chan struct{})
 	recExited := make(chan struct{})
@@ -480,6 +481,22 @@ func (svc *Service) handleLevels(ctx context.Context, ourSR bool, b []byte) {
 	case svc.levelCh <- levelUpdate{token: tok, ourSR: ourSR, levels: ls}:
 	case <-ctx.Done():
 	}
+}
+
+// ExitRequest publishes an exit request for stratengine. Sent inline: it
+// is rare and must not be dropped by a full queue.
+func (svc *Service) ExitRequest(r model.ExitRequest) {
+	b, err := json.Marshal(r)
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := svc.rdb.Publish(ctx, model.ExitRequestChannel, string(b)).Err(); err != nil {
+		log.Printf("[exitwatch] exit request publish error: %v", err)
+		return
+	}
+	log.Printf("[exitwatch] exit request sent: %s %s — %s", r.Strategy, r.Side, r.Reason)
 }
 
 // ── Signals (pub:signal + journal) ──

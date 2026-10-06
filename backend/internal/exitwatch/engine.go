@@ -97,6 +97,8 @@ type Sink interface {
 	RecordDecision(v View)
 	RecordFeatures(v View)
 	Signal(ev SignalEvent)
+	// ExitRequest asks stratengine to close a position (auto-exit strategies only).
+	ExitRequest(r model.ExitRequest)
 }
 
 const (
@@ -122,6 +124,7 @@ type Engine struct {
 	model   Model
 	sink    Sink
 	shadow  bool
+	auto    map[string]bool       // strategies whose EXIT closes the position
 	slots   map[string]*slot      // by PositionContext.Key()
 	atr     map[string]int64      // by index token
 	books   map[string]*LevelBook // by index token
@@ -146,6 +149,21 @@ func NewEngine(m Model, sink Sink, shadow bool) *Engine {
 		books: map[string]*LevelBook{}, exch: map[string]string{},
 	}
 }
+
+// SetAutoExit lists the strategies whose EXIT decisions are sent to
+// stratengine as exit requests; the others stay shadow. The real-order
+// strategy is never auto.
+func (e *Engine) SetAutoExit(strategies []string) {
+	e.auto = map[string]bool{}
+	for _, s := range strategies {
+		if s != "" && s != model.RealOrderStrategy {
+			e.auto[s] = true
+		}
+	}
+}
+
+// autoExit reports whether a strategy's EXIT closes the position.
+func (e *Engine) autoExit(strategy string) bool { return e.auto[strategy] }
 
 // SetModel applies reloaded tuning to every tracker and book.
 func (e *Engine) SetModel(m Model) {
@@ -336,6 +354,12 @@ func (e *Engine) Evaluate(now time.Time) {
 				log.Printf("[exitwatch] %s EXIT (%s, shadow=%v) p=%.2f idx=%d prem=%d %s reasons=%v",
 					a.Key(), a.ExitReason, e.shadow, a.P, a.IndexLTP, a.PremiumLTP, a.ExitText, a.Reasons)
 				e.signal(s, Event{Action: ActionWatchExit, Reason: a.ExitReason, Text: e.exitText(s, a)}, now)
+				if p := s.tr.Position(); s.ghostSince.IsZero() && e.autoExit(p.Strategy) {
+					e.sink.ExitRequest(model.ExitRequest{
+						Strategy: p.Strategy, Side: p.Side, IndexToken: p.IndexToken, FNOToken: p.FNOToken,
+						Reason: fmt.Sprintf("EXITWATCH %s: %s", a.ExitReason, e.exitText(s, a)), TS: now,
+					})
+				}
 			case DecisionTighten:
 				if s.lastTighten.IsZero() || now.Sub(s.lastTighten) >= tightenRepeat {
 					s.lastTighten = now
@@ -406,7 +430,7 @@ func (e *Engine) signal(s *slot, ev Event, now time.Time) {
 		exch = "NSE"
 	}
 	mode := "SHADOW"
-	if !e.shadow {
+	if !e.shadow || e.autoExit(p.Strategy) {
 		mode = "AUTO"
 	}
 	phase := ""

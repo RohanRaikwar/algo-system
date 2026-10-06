@@ -89,6 +89,21 @@ type Config struct {
 	SRMaxGamma        float64 // gamma cap within SRGammaDTE days of expiry, 0 = off
 	SRGammaDTE        int
 	SRMinDTE          int // buy the nearest expiry at least this many days out (2 = Monday skips Tuesday)
+	// SR day extreme: no CALL at ≥ SRDayExtremePct % of today's range after
+	// SRDayRunPts (paise) up from the low; SRDayExtremePuts mirrors it.
+	SRDayExtremePct  int64
+	SRDayRunPts      int64
+	SRDayExtremePuts bool
+	SRDayExtremeFrom int // IST minute the day-extreme check starts
+	// SR sideways box: no pullback/retest entry while the last SRBoxBars
+	// 5m bars span ≤ SRBoxATRPct % of the 15m ATR. 0 = off.
+	SRBoxBars   int
+	SRBoxATRPct int64
+	SRGateMode  string // warn (default: flag the entry) | block
+
+	// ExitWatchAuto: strategies exitwatch's exit requests may close
+	// (cmd:exitwatch:exit). NIFTY50_FNO is always refused.
+	ExitWatchAuto []string
 
 	// ── Global option picker (internal/optionpicker) ──
 	PickerMode       string        // off | shadow (log decisions only) | on (picker chooses the contract)
@@ -167,6 +182,14 @@ func LoadConfig() Config {
 		SRMaxGamma:            getEnvFloat("STRAT_SR_MAX_GAMMA", 0.005),
 		SRGammaDTE:            config.GetEnvInt("STRAT_SR_GAMMA_DTE", 1),
 		SRMinDTE:              config.GetEnvInt("STRAT_SR_MIN_DTE", 2),
+		SRDayExtremePct:       config.GetEnvInt64("STRAT_SR_DAY_EXTREME_PCT", 80),
+		SRDayRunPts:           config.GetEnvInt64("STRAT_SR_DAY_RUN_PAISE", 6000),
+		SRDayExtremePuts:      config.GetEnvBool("STRAT_SR_DAY_EXTREME_PUTS", false),
+		SRDayExtremeFrom:      config.GetEnvInt("STRAT_SR_DAY_EXTREME_FROM_MIN", 10*60+30),
+		SRBoxBars:             config.GetEnvInt("STRAT_SR_BOX_BARS", 6),
+		SRBoxATRPct:           config.GetEnvInt64("STRAT_SR_BOX_ATR_PCT", 150),
+		SRGateMode:            config.GetEnv("STRAT_SR_GATE_MODE", "warn"),
+		ExitWatchAuto:         splitList(config.GetEnv("STRAT_EXITWATCH_AUTO", "NIFTY50_SR")),
 		PickerMode:            config.GetEnv("STRAT_PICKER_MODE", "shadow"),
 		PickMaxSpreadPct:      getEnvFloat("STRAT_PICK_MAX_SPREAD_PCT", 2),
 		PickMaxQuoteAge:       getEnvDuration("STRAT_PICK_MAX_QUOTE_AGE", 3*time.Second),
@@ -273,4 +296,15 @@ func getEnvDuration(key string, def time.Duration) time.Duration {
 		}
 	}
 	return def
+}
+
+// splitList splits a comma-separated env value, dropping blanks.
+func splitList(v string) []string {
+	var out []string
+	for _, s := range strings.Split(v, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }

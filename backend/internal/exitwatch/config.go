@@ -16,6 +16,9 @@ type Config struct {
 	JournalPath   string   // signal journal (same schema as stratengine's) for the LOG tab
 	ParamsPath    string   // optional JSON tuning file; defaults when missing
 	IndexKeys     []string // "EXCH:TOKEN" of indexes whose 1m ATR is tracked
+	// AutoExit: strategies whose EXIT decision closes the position (paper
+	// strategies only; NIFTY50_FNO is always refused).
+	AutoExit []string
 }
 
 // LoadConfig reads all environment variables and returns a Config.
@@ -26,6 +29,12 @@ func LoadConfig() Config {
 			keys = append(keys, k)
 		}
 	}
+	var auto []string
+	for _, s := range strings.Split(config.GetEnv("EXITWATCH_AUTO_EXIT", "NIFTY50_SR"), ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			auto = append(auto, s)
+		}
+	}
 	return Config{
 		RedisAddr:     config.GetEnv("REDIS_ADDR", "localhost:6379"),
 		RedisPassword: config.GetEnv("REDIS_PASSWORD", ""),
@@ -34,6 +43,7 @@ func LoadConfig() Config {
 		ParamsPath:    config.GetEnv("EXITWATCH_PARAMS", "config/exitwatch.json"),
 		JournalPath:   config.GetEnv("EXITWATCH_JOURNAL_PATH", "data/exitwatch_signals.db"),
 		IndexKeys:     keys,
+		AutoExit:      auto,
 	}
 }
 

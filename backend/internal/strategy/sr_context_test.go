@@ -1,6 +1,9 @@
 package strategy
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // srLevelsFixture puts 15m swing highs at the given prices (window 2) and a
 // previous-day high/low into a fresh SR context.
@@ -67,5 +70,27 @@ func TestSRStateCarriesPrevDay(t *testing.T) {
 	st := sc.State()
 	if st.PrevDayHigh != pts(22905) || st.PrevDayLow != pts(22500) {
 		t.Errorf("prev day in state = %d/%d", st.PrevDayHigh, st.PrevDayLow)
+	}
+}
+
+func TestSRStateCarriesDayOpenHighLow(t *testing.T) {
+	sc := newSRContext(DefaultSRContextConfig())
+	day1 := time.Date(2026, 10, 5, 9, 15, 0, 0, ist)
+	sc.update(day1, ohlcv{Open: pts(22500), High: pts(22520), Low: pts(22490), Close: pts(22510)})
+	sc.update(day1.Add(time.Minute), ohlcv{Open: pts(22510), High: pts(22560), Low: pts(22505), Close: pts(22550)})
+	if st := sc.State(); st.DayOpen != pts(22500) || st.DayHigh != pts(22560) || st.DayLow != pts(22490) {
+		t.Fatalf("day 1 open/high/low = %d/%d/%d", st.DayOpen, st.DayHigh, st.DayLow)
+	}
+
+	day2 := day1.AddDate(0, 0, 1)
+	sc.update(day2, ohlcv{Open: pts(22600), High: pts(22610), Low: pts(22580), Close: pts(22590)})
+	st := sc.State()
+	if st.DayOpen != pts(22600) || st.DayHigh != pts(22610) || st.DayLow != pts(22580) {
+		t.Fatalf("day 2 open/high/low = %d/%d/%d", st.DayOpen, st.DayHigh, st.DayLow)
+	}
+
+	re := restoreSRContext(sc.cfg, sc.snapshot()).State()
+	if re.DayOpen != st.DayOpen || re.DayHigh != st.DayHigh || re.DayLow != st.DayLow {
+		t.Fatalf("restored %d/%d/%d, want %d/%d/%d", re.DayOpen, re.DayHigh, re.DayLow, st.DayOpen, st.DayHigh, st.DayLow)
 	}
 }

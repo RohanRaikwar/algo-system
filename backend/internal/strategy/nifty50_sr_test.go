@@ -511,3 +511,259 @@ func TestSRReentryNeedsStrongerTrend(t *testing.T) {
 		t.Fatalf("re-entry with rising ADX refused; rejects=%v", s.rejects)
 	}
 }
+
+// withDay sets today's open/high/low (index points) on a view.
+func withDay(ss SRState, open, high, low int64) SRState {
+	ss.DayOpen, ss.DayHigh, ss.DayLow = pts(open), pts(high), pts(low)
+	return ss
+}
+
+func pullbackSetup() (SRState, ohlcv, ohlcv) {
+	ss := srView(SRRegimeTrendUp, pts(22820), 50)
+	ss.EMAFast, ss.EMASlow = pts(22828), pts(22815)
+	ss.Levels = []SRLevel{{Price: pts(22700), Touches: 2}, {Price: pts(22900), Touches: 2}}
+	prev := ohlcv{Open: pts(22832), High: pts(22833), Low: pts(22822), Close: pts(22824)}
+	cur := ohlcv{Open: pts(22823), High: pts(22836), Low: pts(22818), Close: pts(22835)}
+	return ss, prev, cur
+}
+
+func dayTest(t *testing.T) (*Nifty50SR, *nifty50SRState) {
+	s, st := srTest(t)
+	s.cfg.DayExtremePct, s.cfg.DayRunPts, s.cfg.DayExtremePuts = 80, pts(100), true
+	s.cfg.DayExtremeFromMin = 0
+	s.cfg.GateMode = SRGateBlock
+	return s, st
+}
+
+// 13:12 on 2026-10-06: a CALL bought near the day high after a 100+ pt run.
+func TestSRDayExtremeRefusesCallAtTheTop(t *testing.T) {
+	s, st := dayTest(t)
+	ss, prev, cur := pullbackSetup()
+	ss = withDay(ss, 22730, 22840, 22720) // close 22,835: 96% of range, 115 pts off the low
+	if sig := s.evaluatePullback(srCandle(cur.Close), st, ss, prev, cur, srMin); sig != nil {
+		t.Fatalf("CALL at the day high: %s", sig.Reason)
+	}
+	if s.rejects["pullback:day_extreme"] != 1 {
+		t.Errorf("rejects=%v", s.rejects)
+	}
+}
+
+func TestSRDayExtremeAllowsCallMidRange(t *testing.T) {
+	s, st := dayTest(t)
+	ss, prev, cur := pullbackSetup()
+	ss = withDay(ss, 22700, 23000, 22720) // 41% of range
+	ss.PrevDayHigh, ss.PrevDayLow = pts(22820), pts(22600)
+	ss.ORHigh, ss.ORLow = pts(22760), pts(22720)
+	sig := s.evaluatePullback(srCandle(cur.Close), st, ss, prev, cur, srMin)
+	if sig == nil {
+		t.Fatalf("mid-range CALL refused; rejects=%v", s.rejects)
+	}
+	want := "day=pos:41% hi:-165 lo:+115 pdh:+15 pdl:+235 open:+135 or:above"
+	if !strings.Contains(sig.Reason, want) {
+		t.Errorf("reason %q lacks %q", sig.Reason, want)
+	}
+}
+
+func TestSRDayExtremeNeedsABigRun(t *testing.T) {
+	s, st := dayTest(t)
+	ss, prev, cur := pullbackSetup()
+	ss = withDay(ss, 22800, 22840, 22800) // 88% but only 35 pts off the low
+	if s.evaluatePullback(srCandle(cur.Close), st, ss, prev, cur, srMin) == nil {
+		t.Fatalf("small-day CALL refused; rejects=%v", s.rejects)
+	}
+}
+
+func TestSRDayExtremeRefusesFadeCallAtTheTop(t *testing.T) {
+	s, st := dayTest(t)
+	ss, prev, cur := fadeSetup() // close 22,816
+	ss = withDay(ss, 22710, 22820, 22700)
+	if sig := s.evaluateFade(srCandle(cur.Close), st, ss, prev, cur, srMin); sig != nil {
+		t.Fatalf("fade CALL at the day high: %s", sig.Reason)
+	}
+	if s.rejects["fade:day_extreme"] != 1 {
+		t.Errorf("rejects=%v", s.rejects)
+	}
+}
+
+func TestSRDayExtremeRefusesPutAtTheBottom(t *testing.T) {
+	s, st := dayTest(t)
+	ss := srView(SRRegimeMixed, pts(22825), 40)
+	ss.EMAFast, ss.EMASlow = pts(22800), pts(22820)
+	ss.Levels = append(ss.Levels, SRLevel{Price: pts(22760), Touches: 2, Source: SRLevelSwing})
+	ss = withDay(ss, 22900, 22920, 22795) // close 22,801: 5% of range, 119 pts off the high
+	st.PendingSide, st.PendingLevel, st.PendingLeft = SidePut, pts(22810), 6
+	brk := ohlcv{Open: pts(22812), High: pts(22813), Low: pts(22800), Close: pts(22802)}
+	retest := ohlcv{Open: pts(22804), High: pts(22811), Low: pts(22800), Close: pts(22801)}
+	if sig := s.evaluateRetest(srCandle(retest.Close), st, ss, brk, retest, srMin); sig != nil {
+		t.Fatalf("PUT at the day low: %s", sig.Reason)
+	}
+	if s.rejects["retest:day_extreme"] != 1 {
+		t.Errorf("rejects=%v", s.rejects)
+	}
+
+	// PUT mirror off (the default): the same PUT is taken.
+	s2, st2 := dayTest(t)
+	s2.cfg.DayExtremePuts = false
+	st2.PendingSide, st2.PendingLevel, st2.PendingLeft = SidePut, pts(22810), 6
+	if s2.evaluateRetest(srCandle(retest.Close), st2, ss, brk, retest, srMin) == nil {
+		t.Fatalf("PUT refused with the mirror off; rejects=%v", s2.rejects)
+	}
+}
+
+func TestSRDayExtremeOff(t *testing.T) {
+	s, st := srTest(t)
+	s.cfg.DayExtremePct = 0
+	ss, prev, cur := pullbackSetup()
+	ss = withDay(ss, 22730, 22840, 22720)
+	if s.evaluatePullback(srCandle(cur.Close), st, ss, prev, cur, srMin) == nil {
+		t.Fatalf("gate off still refused; rejects=%v", s.rejects)
+	}
+}
+
+// 09:51 on 2026-10-06: early in the day any rally is "100% of range";
+// the check waits for DayExtremeFromMin.
+func TestSRDayExtremeWaitsForFromMin(t *testing.T) {
+	s, st := dayTest(t)
+	s.cfg.DayExtremeFromMin = srMin + 1
+	ss, prev, cur := pullbackSetup()
+	ss = withDay(ss, 22730, 22840, 22720)
+	if s.evaluatePullback(srCandle(cur.Close), st, ss, prev, cur, srMin) == nil {
+		t.Fatalf("refused before the check starts; rejects=%v", s.rejects)
+	}
+}
+
+func TestSRRetestTolerance(t *testing.T) {
+	ss := srView(SRRegimeMixed, pts(22825), 40)
+	ss.EMAFast, ss.EMASlow = pts(22800), pts(22820)
+	ss.Levels = append(ss.Levels, SRLevel{Price: pts(22760), Touches: 2, Source: SRLevelSwing})
+	brk := ohlcv{Open: pts(22812), High: pts(22813), Low: pts(22800), Close: pts(22802)}
+	// High 7 pts under the broken 22,810 (inside the 10-pt touch, outside
+	// 5), red with an upper wick longer than its body.
+	loose := ohlcv{Open: pts(22799), High: pts(22803), Low: pts(22795), Close: pts(22796)}
+
+	s, st := srTest(t)
+	st.PendingSide, st.PendingLevel, st.PendingLeft = SidePut, pts(22810), 6
+	if s.evaluateRetest(srCandle(loose.Close), st, ss, brk, loose, srMin) == nil {
+		t.Fatalf("10-pt touch refused; rejects=%v", s.rejects)
+	}
+
+	s, st = srTest(t)
+	s.cfg.RetestTolPts = pts(5)
+	st.PendingSide, st.PendingLevel, st.PendingLeft = SidePut, pts(22810), 6
+	if sig := s.evaluateRetest(srCandle(loose.Close), st, ss, brk, loose, srMin); sig != nil {
+		t.Fatalf("loose retest taken with a 5-pt touch: %s", sig.Reason)
+	}
+	if st.PendingSide != SidePut {
+		t.Error("pending break dropped; it should keep waiting for a real retest")
+	}
+}
+
+// boxBars5 fills the context's 5m history with n bars spanning lo..hi.
+func boxBars5(st *nifty50SRState, n int, lo, hi int64) {
+	st.ctx.rc.bars5 = nil
+	for i := 0; i < n; i++ {
+		st.ctx.rc.bars5 = append(st.ctx.rc.bars5, tfBar{ohlcv: ohlcv{High: pts(hi), Low: pts(lo)}})
+	}
+}
+
+// 12:45–13:55 on 2026-10-06: price boxed in ~35 pts while 15m ADX still
+// read TREND_UP; the pullback CALL there went nowhere.
+func TestSRSidewaysBoxRefusesTrendEntry(t *testing.T) {
+	s, st := srTest(t)
+	s.cfg.BoxBars, s.cfg.BoxATRPct, s.cfg.GateMode = 6, 150, SRGateBlock
+	ss, prev, cur := pullbackSetup() // 15m ATR 20 pts → box limit 30 pts
+	boxBars5(st, 6, 22810, 22838)    // 28-pt box
+	if sig := s.evaluatePullback(srCandle(cur.Close), st, ss, prev, cur, srMin); sig != nil {
+		t.Fatalf("entered a sideways box: %s", sig.Reason)
+	}
+	if s.rejects["pullback:sideways"] != 1 {
+		t.Errorf("rejects=%v", s.rejects)
+	}
+
+	boxBars5(st, 6, 22790, 22838) // 48 pts: moving
+	if s.evaluatePullback(srCandle(cur.Close), st, ss, prev, cur, srMin) == nil {
+		t.Fatalf("moving market refused; rejects=%v", s.rejects)
+	}
+}
+
+func TestSRSidewaysBoxLeavesFades(t *testing.T) {
+	s, st := srTest(t)
+	s.cfg.BoxBars, s.cfg.BoxATRPct, s.cfg.GateMode = 6, 150, SRGateBlock
+	ss, prev, cur := fadeSetup()
+	boxBars5(st, 6, 22805, 22830)
+	if s.evaluateFade(srCandle(cur.Close), st, ss, prev, cur, srMin) == nil {
+		t.Fatalf("fade refused in a box; rejects=%v", s.rejects)
+	}
+	s2, st2 := srTest(t)
+	s2.cfg.BoxBars, s2.cfg.BoxATRPct, s2.cfg.BoxFadeToo, s2.cfg.GateMode = 6, 150, true, SRGateBlock
+	boxBars5(st2, 6, 22805, 22830)
+	if s2.evaluateFade(srCandle(cur.Close), st2, ss, prev, cur, srMin) != nil {
+		t.Fatal("fade taken with BoxFadeToo")
+	}
+}
+
+// Warn mode (the default): the entry is taken and flagged, not refused.
+func TestSRSituationWarnsInsteadOfBlocking(t *testing.T) {
+	s, st := dayTest(t)
+	s.cfg.GateMode = SRGateWarn
+	s.cfg.BoxBars, s.cfg.BoxATRPct = 6, 150
+	ss, prev, cur := pullbackSetup()
+	ss = withDay(ss, 22730, 22840, 22720) // 96% of the day after 115 pts
+	boxBars5(st, 6, 22810, 22838)         // 28-pt box, limit 30
+	sig := s.evaluatePullback(srCandle(cur.Close), st, ss, prev, cur, srMin)
+	if sig == nil {
+		t.Fatalf("warn mode refused the entry; rejects=%v", s.rejects)
+	}
+	if strings.Join(sig.Warnings, ",") != "sideways,day_extreme" {
+		t.Errorf("warnings %v", sig.Warnings)
+	}
+	if !strings.HasSuffix(sig.Reason, " warn=sideways,day_extreme") {
+		t.Errorf("reason %q", sig.Reason)
+	}
+	if s.dayWarns["sideways"] != 1 || s.dayWarns["day_extreme"] != 1 || len(s.rejects) != 0 {
+		t.Errorf("dayWarns=%v rejects=%v", s.dayWarns, s.rejects)
+	}
+}
+
+func TestSRSituationNoWarningWhenClear(t *testing.T) {
+	s, st := dayTest(t)
+	s.cfg.GateMode = SRGateWarn
+	ss, prev, cur := pullbackSetup()
+	ss = withDay(ss, 22700, 23000, 22720)
+	sig := s.evaluatePullback(srCandle(cur.Close), st, ss, prev, cur, srMin)
+	if sig == nil || len(sig.Warnings) != 0 || strings.Contains(sig.Reason, "warn=") {
+		t.Fatalf("clear entry flagged: %+v", sig)
+	}
+}
+
+func TestSRDefaultGateModeIsWarn(t *testing.T) {
+	if m := DefaultNifty50SRConfig().GateMode; m != SRGateWarn {
+		t.Fatalf("default GateMode %q, want warn", m)
+	}
+}
+
+func TestSRExitRequested(t *testing.T) {
+	s, st := srTest(t)
+	ss, prev, cur := pullbackSetup()
+	if s.evaluatePullback(srCandle(cur.Close), st, ss, prev, cur, srMin) == nil {
+		t.Fatalf("setup entry refused; rejects=%v", s.rejects)
+	}
+	st.LastClose, st.FNOToken = cur.Close, "NFO:45001"
+
+	if s.ExitRequested(SidePut, "45001", "x") != nil {
+		t.Fatal("closed a CALL on a PUT request")
+	}
+	if s.ExitRequested(SideCall, "45999", "x") != nil {
+		t.Fatal("closed the position on another contract's request")
+	}
+	sig := s.ExitRequested(SideCall, "45001", "EXITWATCH REVERSAL: p=0.81")
+	if sig == nil || sig.Action != ActionExit || sig.Side != SideCall || sig.Reason != "EXITWATCH REVERSAL: p=0.81" {
+		t.Fatalf("exit signal %+v", sig)
+	}
+	if st.Side != SideNone {
+		t.Fatal("position still open after the exit")
+	}
+	if s.ExitRequested(SideCall, "45001", "again") != nil {
+		t.Fatal("second request closed a flat book")
+	}
+}
