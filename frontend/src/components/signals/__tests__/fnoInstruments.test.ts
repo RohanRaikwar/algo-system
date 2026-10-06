@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { paramRows, rejectSummary, decisionLine } from '../FnoInstrumentsTab';
+import { paramRows, rejectSummary, decisionLine, quoteLine, sideComparison } from '../FnoInstrumentsTab';
 import { parseStrikeSelView } from '../../../store/useStrikeSelStore';
 import { channelKind } from '../../../utils/seqTracker';
 
@@ -96,5 +96,19 @@ describe('shortSymbol', () => {
         expect(shortSymbol('NIFTY06OCT2623050CE')).toBe('23050 CE');
         expect(shortSymbol('NIFTY13OCT2622450PE')).toBe('22450 PE');
         expect(shortSymbol('SOMETHING')).toBe('SOMETHING');
+    });
+});
+
+describe('new picker live pick', () => {
+    const rejects = { delta: 0, premium: 0, theta: 0, gamma: 0, liquidity: 0, iv: 0, cost: 0 };
+    it('formats the quote it picked on', () => {
+        expect(quoteLine({ strike: 22800, option: 'PE', expiry: '2026-10-13', dte: 7, delta: -0.49, iv: 11.2,
+            bid: 170.1, ask: 171.9, mid: 171, spread_pct: 1.0526, quote_age_s: 0.8, score: 0.21, liquidity: 210000 }))
+            .toBe('₹170.10 / ₹171.90 · spread 1.1% · 0.8s old');
+    });
+    it('compares old and new picks per side', () => {
+        expect(sideComparison({ rejects, agree: true })).toBe('agree');
+        expect(sideComparison({ rejects, agree: false })).toBe('disagree');
+        expect(sideComparison({ rejects })).toBe('none');
     });
 });

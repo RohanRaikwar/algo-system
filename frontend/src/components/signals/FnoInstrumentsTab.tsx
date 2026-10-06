@@ -3,7 +3,7 @@ import { useStrikeSelStore } from '../../store/useStrikeSelStore';
 import { SRStatusCard } from './SRStatusCard';
 import { useOptionLTPStore, livePremium } from '../../store/useOptionLTPStore';
 import { fetchStrikeSel } from '../../services/api';
-import type { SRContract, SRRejects, SRSide, StrikeSelView, PickerDecision, PickerView } from '../../types/strikesel';
+import type { SRContract, SRRejects, SRSide, StrikeSelView, PickerDecision, PickerView, PickerLivePick } from '../../types/strikesel';
 import { Target, TrendingUp, TrendingDown, Clock, SlidersHorizontal, History } from 'lucide-react';
 
 /** Rupees (the chain's unit) to a display string. */
@@ -125,6 +125,49 @@ export function shortSymbol(sym: string): string {
 }
 
 const COMPARISON_LABEL = { agree: 'Agree', disagree: 'Disagree', none: 'No comparison' } as const;
+
+/** Old vs new live pick for one side: 'none' until both pickers have an answer. */
+export function sideComparison(side: SRSide): 'agree' | 'disagree' | 'none' {
+    if (side.agree === undefined) return 'none';
+    return side.agree ? 'agree' : 'disagree';
+}
+
+/** "₹170.10 / ₹171.90 · spread 1.1% · 0.8s old" for a live picker pick. */
+export function quoteLine(p: PickerLivePick): string {
+    return `₹${p.bid.toFixed(2)} / ₹${p.ask.toFixed(2)} · spread ${p.spread_pct.toFixed(1)}% · ${p.quote_age_s.toFixed(1)}s old`;
+}
+
+function NewPickRows({ side }: { side: SRSide }) {
+    const p = side.new_pick;
+    const cmp = sideComparison(side);
+    return (
+        <>
+            <div className="fno-inst-row fno-new-pick-head">
+                <span className="fno-inst-label">New picker</span>
+                <span className="fno-inst-value">
+                    {p ? `${p.strike} ${p.option}` : 'refused'}
+                    {cmp !== 'none' && <span className={`picker-dec-badge ${cmp}`}>{COMPARISON_LABEL[cmp]}</span>}
+                </span>
+            </div>
+            {p ? (
+                <>
+                    <div className="fno-inst-row"><span className="fno-inst-label">Bid / ask</span><span className="fno-inst-value">{quoteLine(p)}</span></div>
+                    <div className="fno-inst-row"><span className="fno-inst-label">Delta · IV</span>
+                        <span className="fno-inst-value">{p.delta.toFixed(3)} · {p.iv.toFixed(1)}%</span></div>
+                    {p.score !== 0 && (
+                        <div className="fno-inst-row"><span className="fno-inst-label">Expected return</span>
+                            <span className="fno-inst-value">{scoreText(p.score)}</span></div>
+                    )}
+                </>
+            ) : (
+                <div className="fno-inst-row"><span className="fno-na">{side.new_error || 'No contract passes'}</span></div>
+            )}
+            {side.new_rejects && (
+                <div className="fno-inst-row"><span className="fno-inst-label">New rejected</span><span className="fno-inst-value">{side.new_rejects}</span></div>
+            )}
+        </>
+    );
+}
 
 function NewChoice({ d }: { d: PickerDecision }) {
     if (d.result !== 'picked') {
@@ -249,12 +292,13 @@ function SideCard({ title, kind, side, chainError }: { title: string; kind: 'cal
                         </span>
                     </div>
                 )}
-                {side && !side.error && (
+                {side && !side.error && !chainError && (
                     <div className="fno-inst-row">
                         <span className="fno-inst-label">Rejected</span>
                         <span className="fno-inst-value">{rejectSummary(side.rejects)}</span>
                     </div>
                 )}
+                {side && (side.new_pick || side.new_error) && <NewPickRows side={side} />}
             </div>
         </div>
     );

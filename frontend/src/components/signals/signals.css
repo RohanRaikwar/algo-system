@@ -1626,3 +1626,12 @@
 .action-badge.watch-exit { color: var(--sg-loss); background: var(--sg-loss-soft); }
 .order-type-badge.shadow { color: var(--sg-info); background: var(--sg-info-soft); }
 .ew-runner { font-size: 0.68rem; color: var(--sg-info); white-space: nowrap; }
+
+/* Global option picker's live pick under the old greeks pick */
+.fno-new-pick-head {
+    margin-top: 6px;
+    border-top: 1px dashed var(--sg-line);
+}
+
+.fno-new-pick-head .fno-inst-label { font-weight: 600; color: var(--sg-text-2); }
+.fno-new-pick-head .picker-dec-badge { margin-left: 8px; }

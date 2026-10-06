@@ -29,6 +29,31 @@ export interface SRSide {
     pick?: SRContract;
     rejects: SRRejects;
     error?: string;
+    /** Global option picker's live pick for the same SR intent (while the picker runs). */
+    new_pick?: PickerLivePick;
+    new_rejects?: string;
+    new_error?: string;
+    /** New pick has the same strike and expiry as the old one. */
+    agree?: boolean;
+}
+
+/** Picker's live contract with the quote it was chosen on. Prices are rupees. */
+export interface PickerLivePick {
+    strike: number;
+    option: string;
+    symbol?: string;
+    token?: string;
+    expiry: string;
+    dte: number;
+    delta: number;
+    iv: number;
+    bid: number;
+    ask: number;
+    mid: number;
+    spread_pct: number;
+    quote_age_s: number;
+    score: number;
+    liquidity: number;
 }
 
 export interface SRLastPick extends SRContract {
