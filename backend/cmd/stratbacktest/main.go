@@ -61,6 +61,11 @@ func main() {
 	srStopATR := flag.Int64("sr-stop-atr", 0, "nifty50_sr: stop beyond the level by this %% of 15m ATR (0 = default 50)")
 	srStopMin := flag.Int64("sr-stop-min", 0, "nifty50_sr: minimum stop distance beyond the level, index points (0 = default 10)")
 	srEntryTF := flag.Int("sr-entry-tf", 0, "nifty50_sr: entry bar minutes, 1 or 5 (0 = default 1)")
+	srNoProgMin := flag.Int("sr-noprog-min", 0, "nifty50_sr: exit when no 1m close reached -sr-noprog-r of R within this many minutes (0 = off)")
+	srNoProgR := flag.Int64("sr-noprog-r", 50, "nifty50_sr: progress needed by -sr-noprog-min, %% of R")
+	srBreakeven := flag.Int64("sr-breakeven-r", 0, "nifty50_sr: move the stop to entry at this %% of R (0 = default 50)")
+	srHardSL := flag.Int64("sr-hard-sl", 0, "nifty50_sr: premium hard SL %% below entry (0 = default 20)")
+	srReentryADX := flag.Float64("sr-reentry-adx", 0, "nifty50_sr: same-side re-entry needs 15m ADX ≥ this or above the last entry's (0 = off)")
 	srSetups := flag.String("sr-setups", "", "nifty50_sr: comma list of fade,retest,pullback to enable (empty = all). Strike greeks filter is live-only")
 	optModel := flag.Bool("option-model", false, "Price each trade's own option (strike, weekly expiry) with Black-Scholes; P&L in option premium")
 	optIV := flag.Float64("option-iv", 13, "Flat IV %% for -option-model when no India VIX history is loaded")
@@ -82,7 +87,7 @@ func main() {
 		OutDir:           *outDir,
 		StrategyType:     *stratFlag,
 		StrategyCfgGamma: gammaOverrides(*gRange, *gADX, *gSL, *gTarget, *gOTM),
-		StrategyCfgSR:    srOverrides(*srRangeADX, *srTrendADX, *srConfirm, *srMaxTrades, *srMaxLosses, *srDayLoss, *srStopATR, *srStopMin, *srEntryTF, *srSetups),
+		StrategyCfgSR:    srOverrides(*srRangeADX, *srTrendADX, *srConfirm, *srMaxTrades, *srMaxLosses, *srDayLoss, *srStopATR, *srStopMin, *srEntryTF, *srSetups, *srNoProgMin, *srNoProgR, *srBreakeven, *srHardSL, *srReentryADX),
 		StrategyCfgRange: rangeOverrides(*rangeMaxADX, *rangeBOTarget, *rangeBOEnd, *rangeEntryTF, *rangeFlag, *flagBars, *flagWidth, *htfTrend, *htfLevels),
 		Option: backtest.OptionModel{
 			Enabled: *optModel, IVPct: *optIV, RatePct: 6.5, PremiumSLPct: *premSL,
@@ -148,12 +153,25 @@ func main() {
 }
 
 // srOverrides builds a nifty50_sr config from CLI flags (nil = defaults).
-func srOverrides(rangeADX, trendADX float64, confirm, maxTrades, maxLosses int, dayLossPts, stopATR, stopMinPts int64, entryTF int, setups string) *strategy.Nifty50SRConfig {
+func srOverrides(rangeADX, trendADX float64, confirm, maxTrades, maxLosses int, dayLossPts, stopATR, stopMinPts int64, entryTF int, setups string, noProgMin int, noProgR, breakevenR, hardSL int64, reentryADX float64) *strategy.Nifty50SRConfig {
 	if rangeADX == 0 && trendADX == 0 && confirm == 0 && maxTrades == 0 && maxLosses == 0 && dayLossPts == 0 &&
-		stopATR == 0 && stopMinPts == 0 && entryTF == 0 && setups == "" {
+		stopATR == 0 && stopMinPts == 0 && entryTF == 0 && setups == "" && noProgMin == 0 && breakevenR == 0 &&
+		hardSL == 0 && reentryADX == 0 {
 		return nil
 	}
 	cfg := strategy.DefaultNifty50SRConfig()
+	if hardSL > 0 {
+		cfg.FNOHardSLPct = hardSL
+	}
+	if reentryADX > 0 {
+		cfg.ReentryMinADX = reentryADX
+	}
+	if breakevenR > 0 {
+		cfg.BreakevenAtR = breakevenR
+	}
+	if noProgMin > 0 {
+		cfg.NoProgressMin, cfg.NoProgressRPct = noProgMin, noProgR
+	}
 	if entryTF > 0 {
 		cfg.EntryTFMinutes = entryTF
 	}
