@@ -34,5 +34,6 @@ sleep 1
 ./tmp/stratengine 2>&1 | sed 's/^/[stratengine] /' &
 ./tmp/analyst     2>&1 | sed 's/^/[analyst]     /' &
 ./tmp/exitwatch   2>&1 | sed 's/^/[exitwatch]   /' &
+./tmp/archiver    2>&1 | sed 's/^/[archiver]    /' &
 
 wait

@@ -273,7 +273,11 @@ func (s *Service) setupPipeline(ctx context.Context) {
 		s.prom.FanoutDropsTotal.WithLabelValues(strconv.Itoa(subscriberIdx)).Inc()
 	}
 
-	sqliteCandleCh := s.fanout.Subscribe()
+	// Subscribe only when persisting: an undrained subscriber would fill and drop.
+	var sqliteCandleCh <-chan model.Candle
+	if len(s.cfg.Persist1sTokens) > 0 {
+		sqliteCandleCh = filterCandles(ctx, s.fanout.Subscribe(), s.cfg.Persist1sTokens)
+	}
 	var redis1sCandleCh <-chan model.Candle
 	if s.redisWriter != nil {
 		redis1sCandleCh = s.fanout.Subscribe()
@@ -301,7 +305,12 @@ func (s *Service) setupPipeline(ctx context.Context) {
 		}
 	}()
 
-	go s.sqlWriter.Run(ctx, sqliteCandleCh)
+	if sqliteCandleCh != nil {
+		log.Printf("[mdengine] 1s candles persisted to SQLite only for SUBSCRIBE_TOKENS %v", s.cfg.Persist1sTokens)
+		go s.sqlWriter.Run(ctx, sqliteCandleCh)
+	} else {
+		log.Printf("[mdengine] 1s candles not persisted to SQLite (SUBSCRIBE_TOKENS empty)")
+	}
 	if s.redisWriter != nil && redis1sCandleCh != nil {
 		go s.redisWriter.Run(ctx, redis1sCandleCh)
 	}

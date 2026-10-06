@@ -2,8 +2,8 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-  # Build STAGING services: tickserver, mdengine, indengine, api_gateway, stratengine, analyst, exitwatch
-  cmd = "go build -o ./tmp/tickserver ./cmd/tickserver/ && go build -o ./tmp/mdengine ./cmd/mdengine/ && go build -o ./tmp/indengine ./cmd/indengine/ && go build -o ./tmp/api_gateway ./cmd/api_gateway/ && go build -o ./tmp/stratengine ./cmd/stratengine/ && go build -o ./tmp/analyst ./cmd/analyst/ && go build -o ./tmp/exitwatch ./cmd/exitwatch/"
+  # Build STAGING services: tickserver, mdengine, indengine, api_gateway, stratengine, analyst, exitwatch, archiver
+  cmd = "go build -o ./tmp/tickserver ./cmd/tickserver/ && go build -o ./tmp/mdengine ./cmd/mdengine/ && go build -o ./tmp/indengine ./cmd/indengine/ && go build -o ./tmp/api_gateway ./cmd/api_gateway/ && go build -o ./tmp/stratengine ./cmd/stratengine/ && go build -o ./tmp/analyst ./cmd/analyst/ && go build -o ./tmp/exitwatch ./cmd/exitwatch/ && go build -o ./tmp/archiver ./cmd/archiver/"
   bin = "tmp/tickserver"
   full_bin = "bash ./run_staging.sh"
   include_ext = ["go", "toml"]

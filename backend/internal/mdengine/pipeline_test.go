@@ -286,3 +286,20 @@ func TestNewStagingIngest_RecordsSameMetricsAsProduction(t *testing.T) {
 		t.Fatalf("ws_tick drops = %d, want 1", tc.wsDrop.n)
 	}
 }
+
+func TestFilterCandles_KeepsOnlyListedTokens(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	in := make(chan model.Candle, 4)
+	in <- model.Candle{Token: "99926000"}
+	in <- model.Candle{Token: "40714"}
+	in <- model.Candle{Token: "99926000"}
+	close(in)
+	var got []string
+	for c := range filterCandles(ctx, in, map[string]bool{"99926000": true}) {
+		got = append(got, c.Token)
+	}
+	if len(got) != 2 || got[0] != "99926000" || got[1] != "99926000" {
+		t.Fatalf("got %v, want two 99926000 candles", got)
+	}
+}

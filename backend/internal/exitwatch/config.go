@@ -24,7 +24,7 @@ type Config struct {
 // LoadConfig reads all environment variables and returns a Config.
 func LoadConfig() Config {
 	var keys []string
-	for _, k := range strings.Split(config.GetEnv("EXITWATCH_INDEX_KEYS", "NSE:99926000"), ",") {
+	for _, k := range strings.Split(config.GetEnv("EXITWATCH_INDEX_KEYS", config.IndexKey()), ",") {
 		if k = strings.TrimSpace(k); k != "" {
 			keys = append(keys, k)
 		}
