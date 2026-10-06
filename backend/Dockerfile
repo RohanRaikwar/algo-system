@@ -1,4 +1,4 @@
-# Backend image: builds the six services and runs them in one container.
+# Backend image: builds the seven services and runs them in one container.
 # They share one SQLite data dir, so they must live together (a Railway
 # volume can only attach to one service). Redis runs separately.
 
@@ -8,7 +8,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 # CGO is required by go-sqlite3.
-RUN set -e; for svc in mdengine indengine stratengine analyst exitwatch api_gateway; do \
+RUN set -e; for svc in mdengine indengine stratengine analyst exitwatch archiver api_gateway; do \
       CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/$svc ./cmd/$svc/; \
     done
 

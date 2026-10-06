@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Starts all six backend services. If any one exits, stop the rest and
+# Starts all seven backend services. If any one exits, stop the rest and
 # exit non-zero so the platform restarts the container.
 set -uo pipefail
 cd /app
@@ -34,6 +34,9 @@ start stratengine
 start analyst
 # exitwatch: shadow-only exit advice (WATCH_* signals); never places orders.
 start exitwatch
+# archiver: after the close, uploads finished days to MEGA and prunes
+# local SQLite (ARCHIVE_ENABLED=true). Never exits on its own errors.
+start archiver
 start api_gateway
 
 wait -n

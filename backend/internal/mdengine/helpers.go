@@ -1,11 +1,13 @@
 package mdengine
 
 import (
+	"context"
 	"log"
 	"strconv"
 	"strings"
 	"time"
 
+	"trading-systemv1/internal/model"
 	smartconnect "trading-systemv1/pkg/smartconnect"
 )
 
@@ -96,4 +98,44 @@ func minDur(a, b time.Duration) time.Duration {
 		return a
 	}
 	return b
+}
+
+// subscribeTokenSet returns the tokens of a SUBSCRIBE_TOKENS value
+// ("exchangeType:token,...") as a set.
+func subscribeTokenSet(s string) map[string]bool {
+	set := make(map[string]bool)
+	for _, e := range parseTokenList(s) {
+		for _, t := range e.Tokens {
+			set[strings.TrimSpace(t)] = true
+		}
+	}
+	return set
+}
+
+// filterCandles forwards only candles whose token is in tokens. It closes
+// out when in closes or ctx ends.
+func filterCandles(ctx context.Context, in <-chan model.Candle, tokens map[string]bool) <-chan model.Candle {
+	out := make(chan model.Candle, cap(in))
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case c, ok := <-in:
+				if !ok {
+					return
+				}
+				if !tokens[c.Token] {
+					continue
+				}
+				select {
+				case out <- c:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	return out
 }

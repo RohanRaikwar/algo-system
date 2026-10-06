@@ -22,7 +22,7 @@ type Config struct {
 // LoadConfig reads all environment variables and returns a Config.
 func LoadConfig() Config {
 	enabledTFs := parseTFs(config.GetEnv("ENABLED_TFS", "60"))
-	tokenKeys := parseTokenKeys(config.GetEnv("ANALYST_SUBSCRIBE_TOKENS", "NSE:99926000"))
+	tokenKeys := parseTokenKeys(config.GetEnv("ANALYST_SUBSCRIBE_TOKENS", config.IndexKey()))
 
 	return Config{
 		RedisAddr:          config.GetEnv("REDIS_ADDR", "localhost:6379"),

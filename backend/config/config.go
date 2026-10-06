@@ -43,7 +43,7 @@ func Load() *Config {
 		MetricsAddr:   GetEnv("METRICS_ADDR", ":9090"),
 
 		// Default: NIFTY 50 on NSE_CM
-		SubscribeTokens: GetEnv("SUBSCRIBE_TOKENS", "1:99926000"),
+		SubscribeTokens: GetEnv("SUBSCRIBE_TOKENS", IndexSubscribeTokens()),
 
 		// Default TFs: 1m, 5m, 15m
 		EnabledTFs: GetEnv("ENABLED_TFS", "60,120,180,300,3600"),

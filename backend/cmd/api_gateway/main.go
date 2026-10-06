@@ -37,7 +37,7 @@ func main() {
 	redisPassword := getEnv("REDIS_PASSWORD", "")
 	listenAddr := getEnv("GATEWAY_ADDR", ":9090")
 	enabledTFs := getEnv("ENABLED_TFS", "60,120,180,300,3600")
-	subscribeTokens := getEnv("SUBSCRIBE_TOKENS", "1:99926000")
+	subscribeTokens := getEnv("SUBSCRIBE_TOKENS", config.IndexSubscribeTokens())
 
 	// Connect to Redis
 	rdb := goredis.NewClient(&goredis.Options{

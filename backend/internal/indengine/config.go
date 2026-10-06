@@ -31,7 +31,7 @@ type Config struct {
 func LoadConfig() Config {
 	enabledTFs := config.ParseTFString(config.GetEnv("ENABLED_TFS", "60,120,180,300,3600"))
 	indConfigs := BuildIndicatorConfigs(enabledTFs)
-	tokenKeys := config.ParseSubscribeTokenKeys(config.GetEnv("SUBSCRIBE_TOKENS", ""))
+	tokenKeys := config.ParseSubscribeTokenKeys(config.GetEnv("SUBSCRIBE_TOKENS", config.IndexSubscribeTokens()))
 
 	return Config{
 		RedisAddr:          config.GetEnv("REDIS_ADDR", "localhost:6379"),

@@ -40,3 +40,12 @@ func TestConfigValidate_StagingAllowsMissingCredentials(t *testing.T) {
 		t.Fatalf("unexpected validation error: %v", err)
 	}
 }
+
+func TestLoadConfig_Persist1sTokensFromSubscribeTokens(t *testing.T) {
+	t.Setenv("STAGING_MODE", "true")
+	t.Setenv("SUBSCRIBE_TOKENS", "1:99926000,1:99926009")
+	got := LoadConfig().Persist1sTokens
+	if len(got) != 2 || !got["99926000"] || !got["99926009"] {
+		t.Fatalf("Persist1sTokens = %v, want the SUBSCRIBE_TOKENS tokens", got)
+	}
+}

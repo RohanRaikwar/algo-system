@@ -23,6 +23,12 @@ type Config struct {
 	SQLitePath    string
 	MetricsAddr   string
 
+	// Persist1sTokens are the tokens whose 1s candles go to SQLite
+	// candles_1s: the static SUBSCRIBE_TOKENS (the index). Option strikes
+	// subscribed at runtime are left out: ~117 of them wrote ~115 MB per
+	// trading day that nothing reads. TF candles persist for every token.
+	Persist1sTokens map[string]bool
+
 	// ── Subscription ──
 	TokenList    []smartconnect.TokenListEntry // parsed production tokens
 	EnabledTFs   []int                         // timeframe durations in seconds
@@ -54,14 +60,15 @@ func LoadConfig() Config {
 	stagingMode := strings.EqualFold(os.Getenv("STAGING_MODE"), "true")
 
 	c := Config{
-		StagingMode:   stagingMode,
-		RedisAddr:     config.GetEnv("REDIS_ADDR", "localhost:6379"),
-		RedisPassword: config.GetEnv("REDIS_PASSWORD", ""),
-		SQLitePath:    config.GetEnv("SQLITE_PATH", "data/candles.db"),
-		MetricsAddr:   config.GetEnv("METRICS_ADDR", ":9090"),
-		SimWSURL:      config.GetEnv("SIM_WS_URL", "ws://localhost:9001/ws"),
-		CandleTokens:  parseCandleTokens(config.GetEnv("CANDLE_TOKENS", "")),
-		CloseRefToken: config.GetEnv("CLOSE_REF_TOKEN", "99926000"),
+		StagingMode:     stagingMode,
+		RedisAddr:       config.GetEnv("REDIS_ADDR", "localhost:6379"),
+		RedisPassword:   config.GetEnv("REDIS_PASSWORD", ""),
+		SQLitePath:      config.GetEnv("SQLITE_PATH", "data/candles.db"),
+		MetricsAddr:     config.GetEnv("METRICS_ADDR", ":9090"),
+		SimWSURL:        config.GetEnv("SIM_WS_URL", "ws://localhost:9001/ws"),
+		CandleTokens:    parseCandleTokens(config.GetEnv("CANDLE_TOKENS", "")),
+		CloseRefToken:   config.GetEnv("CLOSE_REF_TOKEN", config.IndexToken()),
+		Persist1sTokens: subscribeTokenSet(config.GetEnv("SUBSCRIBE_TOKENS", config.IndexSubscribeTokens())),
 	}
 	c.FeedConnections = parseFeedConnections(config.GetEnv("FEED_CONNECTIONS", "2"))
 

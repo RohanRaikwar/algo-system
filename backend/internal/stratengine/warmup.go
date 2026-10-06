@@ -4,6 +4,7 @@ import (
 	"log"
 	"time"
 
+	"trading-systemv1/config"
 	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/store/sqlite"
 )
@@ -46,7 +47,7 @@ func warmRange(reader model.CandleReader, warmers []rangeWarmer, days int, now t
 		days = 5
 	}
 	after := now.AddDate(0, 0, -days).Unix()
-	candles, err := reader.ReadTFCandles("NSE", "99926000", 60, after)
+	candles, err := reader.ReadTFCandles(config.IndexExchange(), config.IndexToken(), 60, after)
 	if err != nil {
 		log.Printf("[stratengine] range warmup read error: %v — cold start", err)
 		return
