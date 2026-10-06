@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"trading-systemv1/internal/markethours"
+	"trading-systemv1/internal/optionpicker"
 	"trading-systemv1/internal/orderexec"
 	"trading-systemv1/internal/strategy"
 )
@@ -56,10 +57,63 @@ type srContractView struct {
 }
 
 // srSideView is the live pick for one side; Pick is nil when nothing passes.
+// New* is the global option picker's live pick for the same SR intent (only
+// while the picker runs), so the two can be compared before switching.
 type srSideView struct {
 	Pick    *srContractView `json:"pick,omitempty"`
 	Rejects srRejects       `json:"rejects"`
 	Error   string          `json:"error,omitempty"`
+
+	NewPick    *pickerPickView `json:"new_pick,omitempty"`
+	NewRejects string          `json:"new_rejects,omitempty"` // "delta 12, spread 3"
+	NewError   string          `json:"new_error,omitempty"`   // refusal reason
+	Agree      *bool           `json:"agree,omitempty"`       // same strike and expiry as Pick
+}
+
+// pickerPickView is the picker's contract with the quote it was chosen on.
+// Prices are rupees.
+type pickerPickView struct {
+	Strike    int64   `json:"strike"`
+	Option    string  `json:"option"`
+	Symbol    string  `json:"symbol,omitempty"`
+	Token     string  `json:"token,omitempty"`
+	Expiry    string  `json:"expiry"` // YYYY-MM-DD
+	DTE       int     `json:"dte"`
+	Delta     float64 `json:"delta"`
+	IV        float64 `json:"iv"`
+	Bid       float64 `json:"bid"`
+	Ask       float64 `json:"ask"`
+	Mid       float64 `json:"mid"`
+	SpreadPct float64 `json:"spread_pct"` // (ask − bid) / mid × 100
+	QuoteAgeS float64 `json:"quote_age_s"`
+	Score     float64 `json:"score"` // expected return on premium, 0.25 = 25%
+	Liquidity float64 `json:"liquidity"`
+}
+
+// newPickerView fills the picker half of a side from PickSingle's result.
+func newPickerView(side *srSideView, p optionpicker.Pick, rej optionpicker.Rejects, err error, now time.Time) {
+	if len(rej) > 0 {
+		side.NewRejects = rej.String()
+	}
+	if err != nil {
+		side.NewError = err.Error()
+		return
+	}
+	q := p.Quote
+	v := &pickerPickView{
+		Strike: p.Strike, Option: p.Option, Symbol: p.Symbol, Token: p.Token,
+		Expiry: dayStart(p.Expiry).Format("2006-01-02"), DTE: p.DTE,
+		Delta: p.Delta, IV: p.IV, Bid: float64(q.Bid) / 100, Ask: float64(q.Ask) / 100, Mid: float64(q.Mid()) / 100,
+		QuoteAgeS: now.Sub(q.At).Seconds(), Score: p.Score, Liquidity: p.Liquidity,
+	}
+	if m := q.Mid(); m > 0 {
+		v.SpreadPct = float64(q.Ask-q.Bid) * 100 / float64(m)
+	}
+	side.NewPick = v
+	if side.Pick != nil {
+		agree := side.Pick.Strike == v.Strike && side.Pick.Expiry == v.Expiry
+		side.Agree = &agree
+	}
 }
 
 // srLastPickView is the contract bought for the last SR entry signal.
@@ -241,6 +295,15 @@ func (svc *Service) refreshStrikeSel(ctx context.Context, now time.Time) {
 			svc.subscribeSRExpiryLadder(ctx, chain, now)
 			call = svc.liveSRSide(chain, "CE", now)
 			put = svc.liveSRSide(chain, "PE", now)
+		}
+		if svc.picker != nil {
+			for opt, side := range map[string]**srSideView{"CE": &call, "PE": &put} {
+				if *side == nil {
+					*side = &srSideView{}
+				}
+				p, rej, err := svc.picker.PickSingle(svc.srPickerIntent(opt, svc.cfg.SRViewTargetMove), now)
+				newPickerView(*side, p, rej, err, now)
+			}
 		}
 	}
 	svc.strikeSel.mu.Lock()

@@ -110,6 +110,18 @@ func (svc *Service) newPicker() *optionpicker.Picker {
 	return optionpicker.New(svc.pickerConfig(), chainAdapter{svc}, resolverAdapter{sp}, subscriberAdapter{svc})
 }
 
+// srPickerIntent is what the picker buys for an SR entry on opt; the live
+// view uses SRViewTargetMove as the target.
+func (svc *Service) srPickerIntent(opt string, target int64) optionpicker.SingleIntent {
+	name := "NIFTY50_SR"
+	if svc.srStrategy != nil {
+		name = svc.srStrategy.Name()
+	}
+	return optionpicker.SingleIntent{Strategy: name, Option: opt,
+		DeltaMin: svc.cfg.SRDeltaMin, DeltaMax: svc.cfg.SRDeltaMax, MinDTE: svc.cfg.SRMinDTE, TargetMove: target,
+		MaxThetaPct: svc.cfg.SRMaxThetaPct, MaxGamma: svc.cfg.SRMaxGamma}
+}
+
 // intentFor maps a single-leg entry to what the picker should buy.
 func (svc *Service) intentFor(sig strategy.Signal) (optionpicker.SingleIntent, bool) {
 	if sig.Action != strategy.ActionBuy || sig.Leg != "" || len(sig.Legs) > 0 {
@@ -118,9 +130,7 @@ func (svc *Service) intentFor(sig strategy.Signal) (optionpicker.SingleIntent, b
 	opt := optionTypeFor(sig.Side)
 	switch {
 	case svc.isSRSignal(&sig):
-		return optionpicker.SingleIntent{Strategy: sig.StrategyName, Option: opt,
-			DeltaMin: svc.cfg.SRDeltaMin, DeltaMax: svc.cfg.SRDeltaMax, MinDTE: svc.cfg.SRMinDTE, TargetMove: sig.TargetMove,
-			MaxThetaPct: svc.cfg.SRMaxThetaPct, MaxGamma: svc.cfg.SRMaxGamma}, true
+		return svc.srPickerIntent(opt, sig.TargetMove), true
 	case svc.nifty50RangeStrategy != nil && sig.StrategyName == svc.nifty50RangeStrategy.Name():
 		// The range strategy's strike rule (ATM, or OTM in a wide range)
 		// sets the delta band, as in the delta guard.
