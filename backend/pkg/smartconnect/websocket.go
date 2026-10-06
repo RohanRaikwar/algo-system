@@ -844,7 +844,9 @@ func parseBest5BuySell(b []byte) map[string]interface{} {
 		price := int64(binary.LittleEndian.Uint64(append(p[10:18], make([]byte, 0)...)))
 		numOrders := int(binary.LittleEndian.Uint16(p[18:20]))
 		each := map[string]interface{}{"flag": flag, "quantity": quantity, "price": price, "no_of_orders": numOrders}
-		if flag == 0 {
+		// Angel's flag: 1 = buy, 0 = sell. (Reading 0 as buy swapped bid and
+		// ask: live quotes all came out crossed.)
+		if flag == 1 {
 			buy = append(buy, each)
 		} else {
 			sell = append(sell, each)

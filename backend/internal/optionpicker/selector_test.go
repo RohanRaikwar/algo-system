@@ -84,6 +84,16 @@ func TestSelectSingleRefusesWithoutQuotes(t *testing.T) {
 	}
 }
 
+// A crossed book (ask < bid) is named apart from a stale one: on 2026-10-06
+// a swapped depth parse made every live quote crossed.
+func TestSelectSingleNamesCrossedQuotes(t *testing.T) {
+	crossed := func(string) (Quote, bool) { return Quote{Bid: 15010, Ask: 14990, At: now}, true }
+	_, rej, err := SelectSingle(ladder("CE", exp1), callIn, rules, env(crossed))
+	if err == nil || rej["crossed"] == 0 || rej["quote stale"] != 0 {
+		t.Fatalf("err %v rej %v", err, rej)
+	}
+}
+
 func TestSelectSingleNotStreamed(t *testing.T) {
 	c := ladder("CE", exp1)
 	for i := range c {

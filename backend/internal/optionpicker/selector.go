@@ -66,8 +66,11 @@ func baseCheck(c Contract, dte int, r Rules, env Env) evaluated {
 		return evaluated{failed: "not streamed"}
 	}
 	q, ok := env.Quote(c.Token)
-	if !ok || q.Bid <= 0 || q.Ask <= 0 || q.Ask < q.Bid || env.Now.Sub(q.At) > r.MaxQuoteAge {
+	if !ok || q.Bid <= 0 || q.Ask <= 0 || env.Now.Sub(q.At) > r.MaxQuoteAge {
 		return evaluated{failed: "quote stale"}
+	}
+	if q.Ask < q.Bid {
+		return evaluated{failed: "crossed"}
 	}
 	mid := q.Mid()
 	if r.MaxSpreadPct > 0 && float64(q.Ask-q.Bid)*100 > float64(mid)*r.MaxSpreadPct {
