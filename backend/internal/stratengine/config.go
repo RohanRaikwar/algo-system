@@ -80,10 +80,10 @@ type Config struct {
 	SRMaxDayLossPts int64   // stop entries after this many index paise lost today, 0 = off
 	SRDeltaMin      float64 // bought strike |delta| band, from the live chain
 	SRDeltaMax      float64
-	SRMaxThetaPct   float64 // option picker's SR intent only: |theta| per day ≤ this % of premium, 0 = off
-	// SR strike selection: theta over PickHoldMinutes ≤ this % of |delta| ×
-	// target move, 0 = off. SRViewTargetMove (index paise) is the target
-	// for the live strike view, which has no signal.
+	// SR strike selection (old path and option picker): theta over
+	// PickHoldMinutes ≤ this % of |delta| × target move, 0 = off.
+	// SRViewTargetMove (index paise) is the target for the live strike
+	// view, which has no signal.
 	SRThetaMaxGainPct float64
 	SRViewTargetMove  int64
 	SRMaxGamma        float64 // gamma cap within SRGammaDTE days of expiry, 0 = off
@@ -176,7 +176,6 @@ func LoadConfig() Config {
 		SRMaxDayLossPts:       config.GetEnvInt64("STRAT_SR_MAX_DAY_LOSS_PAISE", 6000),
 		SRDeltaMin:            getEnvFloat("STRAT_SR_DELTA_MIN", 0.45),
 		SRDeltaMax:            getEnvFloat("STRAT_SR_DELTA_MAX", 0.60),
-		SRMaxThetaPct:         getEnvFloat("STRAT_SR_MAX_THETA_PCT", 8),
 		SRThetaMaxGainPct:     getEnvFloat("STRAT_SR_THETA_MAX_GAIN_PCT", 25),
 		SRViewTargetMove:      config.GetEnvInt64("STRAT_SR_VIEW_TARGET_PAISE", 3000),
 		SRMaxGamma:            getEnvFloat("STRAT_SR_MAX_GAMMA", 0.005),
@@ -194,7 +193,7 @@ func LoadConfig() Config {
 		PickMaxSpreadPct:      getEnvFloat("STRAT_PICK_MAX_SPREAD_PCT", 2),
 		PickMaxQuoteAge:       getEnvDuration("STRAT_PICK_MAX_QUOTE_AGE", 3*time.Second),
 		PickMaxChainAge:       getEnvDuration("STRAT_PICK_MAX_CHAIN_AGE", 2*time.Minute),
-		PickRank:              config.GetEnv("STRAT_PICK_RANK", "delta"),
+		PickRank:              config.GetEnv("STRAT_PICK_RANK", "return"),
 		PickHoldMinutes:       getEnvFloat("STRAT_PICK_HOLD_MIN", 60),
 		RangePickMaxThetaPct:  getEnvFloat("STRAT_RANGE_PICK_MAX_THETA_PCT", 0),
 		RangePickMaxGamma:     getEnvFloat("STRAT_RANGE_PICK_MAX_GAMMA", 0),

@@ -23,7 +23,9 @@ import (
 //    shadow — the picker decides every SR / RANGE / IC entry and the
 //             decision is recorded, but the entry uses the old path.
 //    on     — the picker's contract is bought; a picker refusal refuses
-//             the entry (never substituted).
+//             the entry (never substituted). The picker refuses only when
+//             no contract is tradable; otherwise it picks the best one and
+//             lists any rules it broke (Waived).
 //  Exits never go through the picker.
 // ════════════════════════════════════════════════════════════════════
 
@@ -119,7 +121,7 @@ func (svc *Service) srPickerIntent(opt string, target int64) optionpicker.Single
 	}
 	return optionpicker.SingleIntent{Strategy: name, Option: opt,
 		DeltaMin: svc.cfg.SRDeltaMin, DeltaMax: svc.cfg.SRDeltaMax, MinDTE: svc.cfg.SRMinDTE, TargetMove: target,
-		MaxThetaPct: svc.cfg.SRMaxThetaPct, MaxGamma: svc.cfg.SRMaxGamma}
+		ThetaMaxGainPct: svc.cfg.SRThetaMaxGainPct, MaxGamma: svc.cfg.SRMaxGamma}
 }
 
 // intentFor maps a single-leg entry to what the picker should buy.
@@ -196,18 +198,19 @@ type pickerLeg struct {
 }
 
 type pickerDecision struct {
-	Strategy string  `json:"strategy"`
-	Mode     string  `json:"mode"`
-	Result   string  `json:"result"` // picked / refused
-	Reason   string  `json:"reason,omitempty"`
-	Strike   int64   `json:"strike,omitempty"`
-	Symbol   string  `json:"symbol,omitempty"`
-	Token    string  `json:"token,omitempty"`
-	Delta    float64 `json:"delta,omitempty"`
-	IV       float64 `json:"iv,omitempty"`
-	Score    float64 `json:"score,omitempty"` // expected return on premium for the target move (0.25 = 25 %)
-	Bid      int64   `json:"bid,omitempty"`
-	Ask      int64   `json:"ask,omitempty"`
+	Strategy string   `json:"strategy"`
+	Mode     string   `json:"mode"`
+	Result   string   `json:"result"` // picked / refused
+	Reason   string   `json:"reason,omitempty"`
+	Strike   int64    `json:"strike,omitempty"`
+	Symbol   string   `json:"symbol,omitempty"`
+	Token    string   `json:"token,omitempty"`
+	Delta    float64  `json:"delta,omitempty"`
+	IV       float64  `json:"iv,omitempty"`
+	Score    float64  `json:"score,omitempty"`  // expected return on premium for the target move (0.25 = 25 %)
+	Waived   []string `json:"waived,omitempty"` // rules the pick breaks (nothing passed them all)
+	Bid      int64    `json:"bid,omitempty"`
+	Ask      int64    `json:"ask,omitempty"`
 
 	// Condor decisions: all four legs and the net credit (paise) the
 	// picker found, so a go/no-go review can see the whole basket instead
@@ -239,7 +242,7 @@ func (svc *Service) recordPickerDecision(d pickerDecision) {
 	}
 	svc.pickerDec.last[d.Strategy] = d
 	svc.pickerDec.mu.Unlock()
-	log.Printf("[stratengine] 🎯 picker %s %s: %s %s %s", d.Mode, d.Strategy, d.Result, d.Symbol, d.Reason)
+	log.Printf("[stratengine] 🎯 picker %s %s: %s %s %s waived=%v", d.Mode, d.Strategy, d.Result, d.Symbol, d.Reason, d.Waived)
 }
 
 func (svc *Service) lastPickerDecision(name string) pickerDecision {
@@ -258,6 +261,7 @@ func decisionFor(name, mode string, p optionpicker.Pick, err error, now time.Tim
 	d.Strike, d.Symbol, d.Token = p.Strike, p.Symbol, p.Token
 	d.Delta, d.IV, d.Bid, d.Ask = math.Round(p.Delta*1000)/1000, p.IV, p.Quote.Bid, p.Quote.Ask
 	d.Score = math.Round(p.Score*1000) / 1000
+	d.Waived = p.Waived
 	return d
 }
 

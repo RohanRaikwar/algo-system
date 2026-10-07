@@ -19,16 +19,17 @@ func near(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 func TestIntentForSRAndRange(t *testing.T) {
 	svc := deltaSvc(&fakeGreeks{}, 2270000)
 	svc.cfg.SRDeltaMin, svc.cfg.SRDeltaMax, svc.cfg.SRMinDTE = 0.45, 0.60, 2
-	svc.cfg.SRMaxThetaPct, svc.cfg.SRMaxGamma = 8, 0.005
+	svc.cfg.SRThetaMaxGainPct, svc.cfg.SRMaxGamma = 25, 0.005
 	svc.srStrategy = strategy.NewNifty50SR(65, strategy.Nifty50SRConfig{})
 	sr := strategy.Signal{StrategyName: svc.srStrategy.Name(), Action: strategy.ActionBuy, Side: strategy.SidePut, Strike: 22700, TargetMove: 2000}
 	in, ok := svc.intentFor(sr)
 	if !ok || in.Option != "PE" || !near(in.DeltaMin, 0.45) || !near(in.DeltaMax, 0.60) || in.MinDTE != 2 || in.TargetMove != 2000 {
 		t.Fatalf("SR intent = %+v ok=%v", in, ok)
 	}
-	// SR carries its configured theta/gamma caps into the intent.
-	if !near(in.MaxThetaPct, 8) || !near(in.MaxGamma, 0.005) {
-		t.Fatalf("SR intent theta/gamma caps = %+v, want 8 / 0.005", in)
+	// SR carries the old path's gain-relative theta rule (not a flat
+	// per-day cap, which refuses ATM weeklies near expiry) and its gamma cap.
+	if in.MaxThetaPct != 0 || !near(in.ThetaMaxGainPct, 25) || !near(in.MaxGamma, 0.005) {
+		t.Fatalf("SR intent theta/gamma caps = %+v, want gain 25 / flat 0 / 0.005", in)
 	}
 
 	svc.nifty50RangeStrategy = strategy.NewNifty50Range(1)
