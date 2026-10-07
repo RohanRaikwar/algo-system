@@ -85,6 +85,7 @@ func (svc *Service) pickSRStrike(sig *strategy.Signal, now time.Time) (orderexec
 	log.Printf("[stratengine] SR strike %d%s (asked %d): delta=%.2f gamma=%.4f theta=%.2f premium=%.2f iv=%.1f",
 		c.Strike, c.OptionType, sig.Strike, c.Delta, c.Gamma, c.Theta, premium(c), normIV(c.IV))
 	svc.recordSRPick(*sig, c, premium(c), now)
+	svc.noteEntryGreeks(sig.StrategyName, c.Delta, c.Theta)
 	sig.Strike = c.Strike
 	return c, nil
 }

@@ -575,3 +575,37 @@ func TestRangeForceExitStaleKeepsTodaysPosition(t *testing.T) {
 		t.Fatalf("previous-day position must exit, got %+v", sigs)
 	}
 }
+
+func TestRangeExitRequested(t *testing.T) {
+	s, f := newWarmRange(t, rangeTestConfig())
+	quiet(t, runUntil(s, f, 10, 29))
+	rs, _ := s.RangeState("NSE:NIFTY")
+	if sig := s.OnTFCandle(tfc(day4(f, 10, 29), hammerAt(rs.Support))); sig == nil {
+		t.Fatal("no entry")
+	}
+	st := s.instruments["NSE:NIFTY"]
+	st.FNOToken = "NFO:111"
+	if s.ProtectArmed(SideCall) {
+		t.Fatal("fresh entry must not be armed")
+	}
+	st.TrailArmed = true
+	if !s.ProtectArmed(SideCall) {
+		t.Fatal("armed trail not reported")
+	}
+	if sig := s.ExitRequested(SideCall, "222", "THETA"); sig != nil || st.Side != SideCall {
+		t.Fatalf("other contract closed the position: %+v", sig)
+	}
+	if sig := s.ExitRequested(SidePut, "", "THETA"); sig != nil {
+		t.Fatalf("wrong side closed: %+v", sig)
+	}
+	sig := s.ExitRequested(SideCall, "111", "THETA CALL flat 60m")
+	if sig == nil || sig.Action != ActionExit || sig.Side != SideCall || sig.Reason != "THETA CALL flat 60m" {
+		t.Fatalf("exit = %+v", sig)
+	}
+	if st.Side != SideNone || st.CooldownLeft == 0 {
+		t.Fatalf("position not reset: side=%s cooldown=%d", st.Side, st.CooldownLeft)
+	}
+	if sig := s.ExitRequested(SideCall, "", "again"); sig != nil {
+		t.Fatalf("flat strategy exited twice: %+v", sig)
+	}
+}
