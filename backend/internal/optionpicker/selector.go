@@ -59,8 +59,9 @@ type evaluated struct {
 	failed string
 }
 
-// baseCheck applies the rules every leg needs: streamed, fresh two-sided
-// quote, spread, IV present. Greeks are computed at the live spot.
+// baseCheck keeps only tradable contracts: streamed, a fresh two-sided
+// quote that is not crossed, and IV for the greeks. Greeks are computed at
+// the live spot.
 func baseCheck(c Contract, dte int, r Rules, env Env) evaluated {
 	if c.Token == "" {
 		return evaluated{failed: "not streamed"}
@@ -72,10 +73,6 @@ func baseCheck(c Contract, dte int, r Rules, env Env) evaluated {
 	if q.Ask < q.Bid {
 		return evaluated{failed: "crossed"}
 	}
-	mid := q.Mid()
-	if r.MaxSpreadPct > 0 && float64(q.Ask-q.Bid)*100 > float64(mid)*r.MaxSpreadPct {
-		return evaluated{failed: "spread"}
-	}
 	if c.IV <= 0 {
 		return evaluated{failed: "no iv"}
 	}
@@ -84,34 +81,64 @@ func baseCheck(c Contract, dte int, r Rules, env Env) evaluated {
 	return evaluated{pick: Pick{Contract: c, Delta: g.Delta, Gamma: g.Gamma, Theta: g.Theta, Vega: g.Vega, Quote: q, DTE: dte}}
 }
 
+func spreadOK(q Quote, r Rules) bool {
+	return r.MaxSpreadPct <= 0 || float64(q.Ask-q.Bid)*100 <= float64(q.Mid())*r.MaxSpreadPct
+}
+
 func liquidityOK(p Pick, r Rules) bool {
 	return r.MinLiquidity <= 0 || math.Max(float64(p.Quote.OI), p.Liquidity) >= r.MinLiquidity
 }
 
-// buyCheck adds the bought-option rules to a base-checked pick.
-func buyCheck(p Pick, in SingleIntent, r Rules) string {
+// buyFailures lists every bought-option rule a tradable pick breaks, in
+// Rejects order. Empty means it passes them all.
+func buyFailures(p Pick, in SingleIntent, r Rules) []string {
 	d := math.Abs(p.Delta)
 	premium := float64(p.Quote.Mid()) / 100 // rupees
-	switch {
-	case d < in.DeltaMin || d > in.DeltaMax:
-		return "delta"
-	case in.MaxThetaPct > 0 && math.Abs(p.Theta)*100 > premium*in.MaxThetaPct:
-		return "theta"
-	case in.MaxGamma > 0 && p.DTE <= r.GammaDTE && p.Gamma > in.MaxGamma:
-		return "gamma"
-	case r.MaxBuyIV > 0 && p.IV > r.MaxBuyIV:
-		return "iv"
-	case !liquidityOK(p, r):
-		return "liquidity"
-	case r.CostMultiple > 0 && in.TargetMove > 0 &&
-		in.TargetMove*int64(math.Round(d*1000))/1000 < r.CostMultiple*(p.Quote.Ask-p.Quote.Bid):
-		return "cost"
+	var f []string
+	if !spreadOK(p.Quote, r) {
+		f = append(f, "spread")
 	}
-	return ""
+	if d < in.DeltaMin || d > in.DeltaMax {
+		f = append(f, "delta")
+	}
+	if (in.MaxThetaPct > 0 && math.Abs(p.Theta)*100 > premium*in.MaxThetaPct) || !thetaGainOK(p, in, r) {
+		f = append(f, "theta")
+	}
+	if in.MaxGamma > 0 && p.DTE <= r.GammaDTE && p.Gamma > in.MaxGamma {
+		f = append(f, "gamma")
+	}
+	if r.MaxBuyIV > 0 && p.IV > r.MaxBuyIV {
+		f = append(f, "iv")
+	}
+	if !liquidityOK(p, r) {
+		f = append(f, "liquidity")
+	}
+	if r.CostMultiple > 0 && in.TargetMove > 0 &&
+		in.TargetMove*int64(math.Round(d*1000))/1000 < r.CostMultiple*(p.Quote.Ask-p.Quote.Bid) {
+		f = append(f, "cost")
+	}
+	return f
 }
 
-// SelectSingle picks the bought option closest to the delta band's middle
-// (tie → tighter spread) on the nearest expiry ≥ MinDTE days out.
+// thetaGainOK: premium lost to theta over the expected hold stays within
+// ThetaMaxGainPct % of the expected gain |delta| × target. Unlike a flat
+// cap on theta per day, it does not refuse every ATM weekly a few days
+// before expiry, where an intraday hold pays only a fraction of the decay.
+func thetaGainOK(p Pick, in SingleIntent, r Rules) bool {
+	if in.ThetaMaxGainPct <= 0 || r.HoldMinutes <= 0 || in.TargetMove <= 0 {
+		return true
+	}
+	decay := math.Abs(p.Theta) * r.HoldMinutes / tradingMinutesPerDay // rupees
+	gain := math.Abs(p.Delta) * float64(in.TargetMove) / 100          // rupees
+	return decay*100 <= gain*in.ThetaMaxGainPct
+}
+
+// SelectSingle picks the best tradable bought option on the nearest expiry
+// ≥ MinDTE days out. Tradable (baseCheck) is the only hard filter; the
+// other rules rank. Best is, in order: fewest rules broken, then |delta|
+// nearest the band, then the Rank (highest expected return, or |delta|
+// nearest the band middle), then the tighter spread. A pick that breaks
+// rules lists them in Waived. It refuses only when nothing is tradable.
 func SelectSingle(chain []Contract, in SingleIntent, r Rules, env Env) (Pick, Rejects, error) {
 	rej := Rejects{}
 	if err := checkEnv(r, env); err != nil {
@@ -125,8 +152,6 @@ func SelectSingle(chain []Contract, in SingleIntent, r Rules, env Env) (Pick, Re
 		}
 		return Pick{}, rej, &Refusal{Reason: fmt.Sprintf("no %s expiry %d+ days out", in.Option, minDTE)}
 	}
-	mid := (in.DeltaMin + in.DeltaMax) / 2
-	byReturn := r.Rank == RankReturn && in.TargetMove > 0
 	var best Pick
 	found := false
 	for _, c := range chain {
@@ -134,34 +159,44 @@ func SelectSingle(chain []Contract, in SingleIntent, r Rules, env Env) (Pick, Re
 			continue
 		}
 		ev := baseCheck(c, dte, r, env)
-		if ev.failed == "" {
-			ev.failed = buyCheck(ev.pick, in, r)
-		}
 		if ev.failed != "" {
 			rej[ev.failed]++
 			continue
 		}
 		p := ev.pick
+		p.Waived = buyFailures(p, in, r)
+		for _, f := range p.Waived {
+			rej[f]++
+		}
 		p.Score = expectedReturn(p, in.TargetMove, r.HoldMinutes)
-		if !found {
+		if !found || betterBuy(p, best, in, r) {
 			best, found = p, true
-			continue
-		}
-		if byReturn && p.Score != best.Score {
-			if p.Score > best.Score {
-				best = p
-			}
-			continue
-		}
-		db, dp := math.Abs(math.Abs(best.Delta)-mid), math.Abs(math.Abs(p.Delta)-mid)
-		if dp < db || (dp == db && p.Quote.Ask-p.Quote.Bid < best.Quote.Ask-best.Quote.Bid) {
-			best = p
 		}
 	}
 	if !found {
-		return Pick{}, rej, &Refusal{Reason: fmt.Sprintf("no %s passes (dte %d; rejected %s)", in.Option, dte, rej), Rejects: rej}
+		return Pick{}, rej, &Refusal{Reason: fmt.Sprintf("no %s tradable (dte %d; rejected %s)", in.Option, dte, rej), Rejects: rej}
 	}
 	return best, rej, nil
+}
+
+// betterBuy reports whether p ranks above best (see SelectSingle).
+func betterBuy(p, best Pick, in SingleIntent, r Rules) bool {
+	if len(p.Waived) != len(best.Waived) {
+		return len(p.Waived) < len(best.Waived)
+	}
+	outside := func(x Pick) float64 {
+		d := math.Abs(x.Delta)
+		return math.Max(0, math.Max(in.DeltaMin-d, d-in.DeltaMax))
+	}
+	if op, ob := outside(p), outside(best); op != ob {
+		return op < ob
+	}
+	if r.Rank == RankReturn && in.TargetMove > 0 && p.Score != best.Score {
+		return p.Score > best.Score
+	}
+	mid := (in.DeltaMin + in.DeltaMax) / 2
+	db, dp := math.Abs(math.Abs(best.Delta)-mid), math.Abs(math.Abs(p.Delta)-mid)
+	return dp < db || (dp == db && p.Quote.Ask-p.Quote.Bid < best.Quote.Ask-best.Quote.Bid)
 }
 
 // tradingMinutesPerDay spreads a calendar day's theta over the session
@@ -207,6 +242,9 @@ func SelectCondor(chain []Contract, in CondorIntent, r Rules, env Env) (CondorPi
 			return Pick{}, false
 		}
 		ev := baseCheck(c, dte, r, env)
+		if ev.failed == "" && !spreadOK(ev.pick.Quote, r) {
+			ev.failed = "spread"
+		}
 		if ev.failed == "" && !liquidityOK(ev.pick, r) {
 			ev.failed = "liquidity"
 		}

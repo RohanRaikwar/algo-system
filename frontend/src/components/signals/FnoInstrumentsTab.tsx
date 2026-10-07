@@ -158,9 +158,13 @@ function NewPickRows({ side }: { side: SRSide }) {
                         <div className="fno-inst-row"><span className="fno-inst-label">Expected return</span>
                             <span className="fno-inst-value">{scoreText(p.score)}</span></div>
                     )}
+                    {p.waived && p.waived.length > 0 && (
+                        <div className="fno-inst-row"><span className="fno-inst-label">Rules waived</span>
+                            <span className="fno-inst-value picker-dec-down">{p.waived.join(', ')}</span></div>
+                    )}
                 </>
             ) : (
-                <div className="fno-inst-row"><span className="fno-na">{side.new_error || 'No contract passes'}</span></div>
+                <div className="fno-inst-row"><span className="fno-na">{side.new_error || 'No tradable contract'}</span></div>
             )}
             {side.new_rejects && (
                 <div className="fno-inst-row"><span className="fno-inst-label">New rejected</span><span className="fno-inst-value">{side.new_rejects}</span></div>
@@ -194,6 +198,7 @@ function NewChoice({ d }: { d: PickerDecision }) {
                 <span>Δ {num(d.delta ?? NaN, 2)}</span>
                 <span>{paise(d.bid)} / {paise(d.ask)}</span>
                 {score && <span className={(d.score ?? 0) > 0 ? 'picker-dec-up' : 'picker-dec-down'}>exp {score}</span>}
+                {d.waived && d.waived.length > 0 && <span className="picker-dec-down">waived {d.waived.join(', ')}</span>}
             </div>
         </>
     );

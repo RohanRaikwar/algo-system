@@ -73,21 +73,22 @@ type srSideView struct {
 // pickerPickView is the picker's contract with the quote it was chosen on.
 // Prices are rupees.
 type pickerPickView struct {
-	Strike    int64   `json:"strike"`
-	Option    string  `json:"option"`
-	Symbol    string  `json:"symbol,omitempty"`
-	Token     string  `json:"token,omitempty"`
-	Expiry    string  `json:"expiry"` // YYYY-MM-DD
-	DTE       int     `json:"dte"`
-	Delta     float64 `json:"delta"`
-	IV        float64 `json:"iv"`
-	Bid       float64 `json:"bid"`
-	Ask       float64 `json:"ask"`
-	Mid       float64 `json:"mid"`
-	SpreadPct float64 `json:"spread_pct"` // (ask − bid) / mid × 100
-	QuoteAgeS float64 `json:"quote_age_s"`
-	Score     float64 `json:"score"` // expected return on premium, 0.25 = 25%
-	Liquidity float64 `json:"liquidity"`
+	Strike    int64    `json:"strike"`
+	Option    string   `json:"option"`
+	Symbol    string   `json:"symbol,omitempty"`
+	Token     string   `json:"token,omitempty"`
+	Expiry    string   `json:"expiry"` // YYYY-MM-DD
+	DTE       int      `json:"dte"`
+	Delta     float64  `json:"delta"`
+	IV        float64  `json:"iv"`
+	Bid       float64  `json:"bid"`
+	Ask       float64  `json:"ask"`
+	Mid       float64  `json:"mid"`
+	SpreadPct float64  `json:"spread_pct"` // (ask − bid) / mid × 100
+	QuoteAgeS float64  `json:"quote_age_s"`
+	Score     float64  `json:"score"`            // expected return on premium, 0.25 = 25%
+	Waived    []string `json:"waived,omitempty"` // rules broken; nothing passed them all
+	Liquidity float64  `json:"liquidity"`
 }
 
 // newPickerView fills the picker half of a side from PickSingle's result.
@@ -104,7 +105,7 @@ func newPickerView(side *srSideView, p optionpicker.Pick, rej optionpicker.Rejec
 		Strike: p.Strike, Option: p.Option, Symbol: p.Symbol, Token: p.Token,
 		Expiry: dayStart(p.Expiry).Format("2006-01-02"), DTE: p.DTE,
 		Delta: p.Delta, IV: p.IV, Bid: float64(q.Bid) / 100, Ask: float64(q.Ask) / 100, Mid: float64(q.Mid()) / 100,
-		QuoteAgeS: now.Sub(q.At).Seconds(), Score: p.Score, Liquidity: p.Liquidity,
+		QuoteAgeS: now.Sub(q.At).Seconds(), Score: p.Score, Liquidity: p.Liquidity, Waived: p.Waived,
 	}
 	if m := q.Mid(); m > 0 {
 		v.SpreadPct = float64(q.Ask-q.Bid) * 100 / float64(m)

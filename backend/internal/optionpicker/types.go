@@ -64,7 +64,11 @@ type SingleIntent struct {
 	MinDTE             int
 	TargetMove         int64   // index paise to target; 0 = no cost rule
 	MaxThetaPct        float64 // |theta|/day ≤ this % of premium, 0 = off
-	MaxGamma           float64 // gamma cap within Rules.GammaDTE days, 0 = off
+	// ThetaMaxGainPct: |theta| over Rules.HoldMinutes ≤ this % of the
+	// expected gain |delta| × TargetMove. 0 = off; also off without a
+	// target or hold time.
+	ThetaMaxGainPct float64
+	MaxGamma        float64 // gamma cap within Rules.GammaDTE days, 0 = off
 }
 
 // CondorIntent asks for a short iron condor anchored at the range edges.
@@ -87,6 +91,10 @@ type Pick struct {
 	// Score is the expected return on premium (0.25 = 25 %) for the
 	// intent's TargetMove; 0 when there is no target.
 	Score float64
+	// Waived lists the rules this pick breaks (Rejects names). Empty when
+	// it passes every rule; set when nothing did and it was the best
+	// tradable contract left.
+	Waived []string
 }
 
 // CondorPick is the four legs of a condor and its net credit (paise).
@@ -116,7 +124,7 @@ func (r Rejects) String() string {
 	return s
 }
 
-// Refusal is returned when nothing passes; Reason names the cause.
+// Refusal is returned when nothing can be picked; Reason names the cause.
 type Refusal struct {
 	Reason  string
 	Rejects Rejects

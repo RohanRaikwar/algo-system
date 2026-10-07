@@ -54,6 +54,8 @@ export interface PickerLivePick {
     quote_age_s: number;
     score: number;
     liquidity: number;
+    /** Rules this pick breaks: nothing passed them all, so the best tradable contract was taken. */
+    waived?: string[];
 }
 
 export interface SRLastPick extends SRContract {
@@ -86,6 +88,8 @@ export interface PickerDecision {
     ask?: number; // paise
     /** Expected return on premium for the target move (0.25 = 25 %). */
     score?: number;
+    /** Rules the pick breaks (nothing passed them all). */
+    waived?: string[];
     /** Condor decisions: all four legs and the net credit (paise). */
     legs?: PickerLeg[];
     credit?: number; // paise

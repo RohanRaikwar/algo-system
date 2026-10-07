@@ -146,9 +146,9 @@ func (e *Engine) pickStrike(t *Trade, rank string) (int64, string, bool) {
 		mid := m.premiumTo(t.Side, k, t.EntryPrice, t.EntryTime, iv, expiry)
 		quotes[tok] = optionpicker.Quote{LTP: mid, Bid: m.slip(false, mid), Ask: m.slip(true, mid), At: t.EntryTime}
 	}
-	lo, hi, maxTheta, maxGamma := e.pickBand(t, atm, step)
+	lo, hi, thetaGain, maxGamma := e.pickBand(t, atm, step)
 	in := optionpicker.SingleIntent{Strategy: e.cfg.StrategyType, Option: opt, DeltaMin: lo, DeltaMax: hi, MinDTE: 1,
-		TargetMove: t.TargetMove, MaxThetaPct: maxTheta, MaxGamma: maxGamma}
+		TargetMove: t.TargetMove, ThetaMaxGainPct: thetaGain, MaxGamma: maxGamma}
 	rules := optionpicker.Rules{MaxSpreadPct: 2, MaxQuoteAge: time.Minute, MaxChainAge: time.Minute, GammaDTE: 1,
 		MaxBuyIV: 25, CostMultiple: 3, RatePct: m.RatePct, Rank: rank, HoldMinutes: 60}
 	env := optionpicker.Env{Spot: t.EntryPrice, Now: t.EntryTime, ChainAt: t.EntryTime,
@@ -175,11 +175,12 @@ func (e *Engine) pickStrike(t *Trade, rank string) (int64, string, bool) {
 }
 
 // pickBand is the live intent's delta band and caps: NIFTY50_SR's
-// configured band with its theta/gamma caps; the range strategy's band for
+// configured band with its theta rule (% of expected gain over the hold)
+// and gamma cap; the range strategy's band for
 // the signal's OTM steps (ATM 0.40–0.60, 1 OTM 0.30–0.50), no caps.
-func (e *Engine) pickBand(t *Trade, atm, step int64) (lo, hi, maxTheta, maxGamma float64) {
+func (e *Engine) pickBand(t *Trade, atm, step int64) (lo, hi, thetaGain, maxGamma float64) {
 	if e.cfg.StrategyType == "nifty50_sr" {
-		return 0.45, 0.60, 8, 0.005
+		return 0.45, 0.60, 25, 0.005
 	}
 	d := t.Strike - atm
 	if t.Side == strategy.SidePut {

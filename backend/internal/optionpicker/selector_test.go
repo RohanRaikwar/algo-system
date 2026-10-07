@@ -152,47 +152,109 @@ func TestSelectSingleStaleChainAndNoSpot(t *testing.T) {
 	}
 }
 
+// waived reports whether p was picked despite breaking rule.
+func waived(p Pick, rule string) bool {
+	for _, w := range p.Waived {
+		if w == rule {
+			return true
+		}
+	}
+	return false
+}
+
+// A rule nothing passes is waived, not a refusal: the best tradable
+// contract is still picked and names the rule it breaks.
 func TestSelectSingleIVAndLiquidityAndCost(t *testing.T) {
 	c := ladder("CE", exp1)
 	for i := range c {
 		c[i].IV = 30
 	}
-	if _, rej, err := SelectSingle(c, callIn, rules, env(quotes(nil))); err == nil || rej["iv"] == 0 {
-		t.Fatalf("high IV accepted: %v", rej)
+	if p, rej, err := SelectSingle(c, callIn, rules, env(quotes(nil))); err != nil || rej["iv"] == 0 || !waived(p, "iv") {
+		t.Fatalf("high IV: pick %+v rej %v err %v", p, rej, err)
 	}
 	thin := func(string) (Quote, bool) { return Quote{Bid: 14990, Ask: 15010, OI: 10, At: now}, true }
 	c = ladder("CE", exp1)
 	for i := range c {
 		c[i].Liquidity = 10
 	}
-	if _, rej, err := SelectSingle(c, callIn, rules, env(thin)); err == nil || rej["liquidity"] == 0 {
-		t.Fatalf("thin contract accepted: %v", rej)
+	if p, rej, err := SelectSingle(c, callIn, rules, env(thin)); err != nil || rej["liquidity"] == 0 || !waived(p, "liquidity") {
+		t.Fatalf("thin: pick %+v rej %v err %v", p, rej, err)
 	}
 	in := callIn
-	in.TargetMove = 1000 // 10 points × 0.5 delta = 500 paise < 3 × 20 spread? no: 500 ≥ 60 passes
-	if _, _, err := SelectSingle(ladder("CE", exp1), in, rules, env(quotes(nil))); err != nil {
-		t.Fatalf("cost rule too strict: %v", err)
+	in.TargetMove = 1000 // 10 points × 0.5 delta = 500 paise ≥ 3 × 20 spread
+	if p, _, err := SelectSingle(ladder("CE", exp1), in, rules, env(quotes(nil))); err != nil || len(p.Waived) != 0 {
+		t.Fatalf("cost rule too strict: %+v %v", p.Waived, err)
 	}
 	in.TargetMove = 100 // 1 point × 0.5 = 50 paise < 3 × 20 = 60 → every candidate fails cost
-	if _, rej, err := SelectSingle(ladder("CE", exp1), in, rules, env(quotes(nil))); err == nil || rej["cost"] == 0 {
-		t.Fatalf("cost rule not applied: %v", rej)
+	if p, rej, err := SelectSingle(ladder("CE", exp1), in, rules, env(quotes(nil))); err != nil || rej["cost"] == 0 || !waived(p, "cost") {
+		t.Fatalf("cost rule not applied: pick %+v rej %v err %v", p.Waived, rej, err)
 	}
 }
 
-// A contract whose theta exceeds the intent's cap is rejected with key
-// "theta". The cap lives on SingleIntent (not Rules): SR and RANGE want
-// different theta tolerances.
+// When rules are waived the pick stays in the delta band: an in-band
+// contract breaking one rule beats an out-of-band one breaking one rule,
+// even if the far contract's expected return is higher.
+func TestSelectSingleWaivedStaysInBand(t *testing.T) {
+	r := rules
+	r.Rank, r.HoldMinutes = RankReturn, 60
+	in := callIn
+	in.MaxThetaPct = 5 // every contract near ATM fails theta
+	in.TargetMove = 3000
+	p, _, err := SelectSingle(ladder("CE", exp1), in, r, env(quotes(nil)))
+	if err != nil || math.Abs(p.Delta) < in.DeltaMin || math.Abs(p.Delta) > in.DeltaMax {
+		t.Fatalf("pick %d delta %.3f waived %v err %v, want in band", p.Strike, p.Delta, p.Waived, err)
+	}
+}
+
+// A contract whose theta exceeds the intent's cap is counted under
+// "theta" and only picked with theta waived. The cap lives on SingleIntent
+// (not Rules): SR and RANGE want different theta tolerances.
 func TestSelectSingleRejectsTheta(t *testing.T) {
 	in := callIn
 	in.MaxThetaPct = 5 // real BS theta here (~15.4/day on a ~150 premium) far exceeds 5%
-	if _, rej, err := SelectSingle(ladder("CE", exp1), in, rules, env(quotes(nil))); err == nil || rej["theta"] == 0 {
-		t.Fatalf("high-theta contract accepted: rej=%v err=%v", rej, err)
+	if p, rej, err := SelectSingle(ladder("CE", exp1), in, rules, env(quotes(nil))); err != nil || rej["theta"] == 0 || !waived(p, "theta") {
+		t.Fatalf("high-theta: pick %+v rej=%v err=%v", p.Waived, rej, err)
 	}
-	// MaxThetaPct 0 (off) must not reject on theta.
+	// MaxThetaPct 0 (off) must not count theta.
 	in.MaxThetaPct = 0
-	if _, rej, err := SelectSingle(ladder("CE", exp1), in, rules, env(quotes(nil))); err != nil || rej["theta"] != 0 {
-		t.Fatalf("theta cap off still rejected: rej=%v err=%v", rej, err)
+	if p, rej, err := SelectSingle(ladder("CE", exp1), in, rules, env(quotes(nil))); err != nil || rej["theta"] != 0 || len(p.Waived) != 0 {
+		t.Fatalf("theta cap off still counted: rej=%v err=%v", rej, err)
 	}
+}
+
+// The gain-relative theta rule caps decay over the hold against the
+// expected gain, not theta per day against premium. On 2026-10-07 a flat
+// 8%/day cap refused every in-band SR CE (22600CE: 13.28/day on 133.85)
+// that the old path accepted. Here the ATM weekly decays ~10% of premium a
+// day: a flat 8% cap breaks it, the gain rule passes it.
+func TestSelectSingleThetaGainRule(t *testing.T) {
+	r := rules
+	r.HoldMinutes = 60
+	in := callIn
+	in.MaxThetaPct = 8
+	in.TargetMove = 3000 // 30 points
+	ok := func(want bool) {
+		t.Helper()
+		p, rej, err := SelectSingle(ladder("CE", exp1), in, r, env(quotes(nil)))
+		if err != nil || waived(p, "theta") == want || (rej["theta"] == 0) == !want {
+			t.Fatalf("theta pass=%v: pick %d waived %v rej %v err %v", want, p.Strike, p.Waived, rej, err)
+		}
+	}
+	ok(false) // flat 8% cap breaks the ATM weekly
+
+	in.MaxThetaPct = 0
+	in.ThetaMaxGainPct = 25 // decay over 60m ≈ 2.5 ≤ 25% × 0.5 × 30 = 3.75
+	ok(true)
+
+	in.ThetaMaxGainPct = 10 // 2.5 > 10% × 15 = 1.5
+	ok(false)
+
+	// Off without a target or a hold time.
+	in.TargetMove = 0
+	ok(true)
+	in.TargetMove = 3000
+	r.HoldMinutes = 0
+	ok(true)
 }
 
 func sameDate(a, b time.Time) bool {

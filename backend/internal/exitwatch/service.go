@@ -522,6 +522,11 @@ func (svc *Service) signalLoop(ctx context.Context) {
 					log.Printf("[exitwatch] signal publish error: %v", err)
 				}
 			}
+			// Only WATCH_EXIT is journaled; HOLD/TIGHTEN are live-only so the
+			// LOG history is not flooded with advisories.
+			if ev.Action != ActionWatchExit {
+				continue
+			}
 			sig := strategy.Signal{
 				StrategyName: ev.StrategyName, Action: strategy.Action(ev.Action),
 				Side: strategy.PositionSide(ev.Side), Token: ev.Token, Exchange: ev.Exchange,
