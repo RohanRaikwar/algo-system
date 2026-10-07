@@ -3,6 +3,7 @@ package strategy
 import (
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -832,6 +833,45 @@ func (s *Nifty50Range) ResetPositions() {
 		st.CooldownLeft = 0
 		st.PendingBreak = SideNone
 	}
+}
+
+// ExitRequested closes the open position on side for an outside reason
+// (the exit policy). fnoToken, when both sides know it, must be the
+// contract held, so a request for an earlier trade cannot close a new one.
+// nil when no such position is open.
+func (s *Nifty50Range) ExitRequested(side PositionSide, fnoToken, reason string) *Signal {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, st := range s.instruments {
+		if st.Side != side {
+			continue
+		}
+		if fnoToken != "" && st.FNOToken != "" && st.FNOToken != fnoToken && !strings.HasSuffix(st.FNOToken, ":"+fnoToken) {
+			log.Printf("[strategy] %s: exit request for %s %s ignored — position holds %s", s.Name(), side, fnoToken, st.FNOToken)
+			return nil
+		}
+		exch, token := splitKey(key)
+		log.Printf("[strategy] %s: %s", s.Name(), reason)
+		s.resetPosition(st)
+		return &Signal{
+			StrategyName: s.Name(), Action: ActionExit, Side: side,
+			Token: token, Exchange: exch, Qty: s.qty, Reason: reason,
+		}
+	}
+	return nil
+}
+
+// ProtectArmed reports whether the open position on side has its trail
+// armed (the trade is working).
+func (s *Nifty50Range) ProtectArmed(side PositionSide) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, st := range s.instruments {
+		if st.Side == side {
+			return st.TrailArmed
+		}
+	}
+	return false
 }
 
 func (s *Nifty50Range) ForceExitAll(reason string) []Signal {

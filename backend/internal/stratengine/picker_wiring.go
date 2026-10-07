@@ -360,6 +360,7 @@ func (svc *Service) pickEntry(sig *strategy.Signal, now time.Time) (bool, error)
 		return true, fmt.Errorf("picker: %w", err)
 	}
 	sig.Strike, sig.FNOToken, sig.FNOSymbol = p.Strike, p.Token, p.Symbol
+	svc.noteEntryGreeks(sig.StrategyName, p.Delta, p.Theta)
 	return true, nil
 }
 

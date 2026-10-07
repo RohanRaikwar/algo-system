@@ -749,6 +749,13 @@ func TestSRExitRequested(t *testing.T) {
 		t.Fatalf("setup entry refused; rejects=%v", s.rejects)
 	}
 	st.LastClose, st.FNOToken = cur.Close, "NFO:45001"
+	if s.ProtectArmed(SideCall) {
+		t.Fatal("fresh entry reported breakeven")
+	}
+	st.Breakeven = true
+	if !s.ProtectArmed(SideCall) || s.ProtectArmed(SidePut) {
+		t.Fatal("ProtectArmed must follow the side's breakeven")
+	}
 
 	if s.ExitRequested(SidePut, "45001", "x") != nil {
 		t.Fatal("closed a CALL on a PUT request")

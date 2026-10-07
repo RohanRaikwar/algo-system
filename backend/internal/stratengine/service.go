@@ -75,6 +75,8 @@ type Service struct {
 	refused            refusedLog           // today's blocked entries (refused.go)
 	refusedPublishHook func(payload string) // test hook for recordRefusedEntry
 
+	exitPol exitPolicyState // unified exit layer (exit_policy.go)
+
 	strikeSel            strikeSelState       // NIFTY50_SR strike selection view (sr_strike_view.go)
 	strikeSelPublishHook func(payload string) // test hook for publishStrikeSel
 	legPriceWait         time.Duration        // 0 = defaultLegPriceWait
@@ -234,6 +236,7 @@ func New(cfg Config) (*Service, error) {
 	svc.srStrategy.SetExpiry(orderexec.NewStrikePicker(nil).NextExpiry(time.Now()))
 
 	svc.syncStrategyFNOTokens(cfg.CallFNOToken, cfg.PutFNOToken)
+	svc.initExitPolicy()
 
 	svc.tfEngine = strategy.NewTFEngine(1000)
 
@@ -410,6 +413,10 @@ func (svc *Service) Run(ctx context.Context) error {
 		go svc.exitRequestLoop(ctx)
 	}
 
+	// ── Unified exit layer: minute evaluation + config reload ──
+	go svc.exitPolicyLoop(ctx)
+	go svc.exitPolicyReloadLoop(ctx)
+
 	// ── NIFTY50_SR strike selection view (pub:strikesel) ──
 	if svc.cfg.SREnabled || svc.picker != nil {
 		go svc.strikeSelLoop(ctx)
@@ -474,6 +481,7 @@ func (svc *Service) tickRouterLoop(ctx context.Context, tfTickCh chan<- model.Ti
 				svc.picker.OnTick(tick)
 			}
 			svc.updateLiveOrdersFromTick(ctx, tick)
+			svc.exitPolicyTick(tick)
 			if tick.Token == niftyToken && (svc.cfg.RangeEnabled || svc.cfg.RangeICEnabled) {
 				svc.refreshStrikeLadder(ctx, tick.Price)
 			}
@@ -694,6 +702,13 @@ func (svc *Service) signalLoop(ctx context.Context) {
 					continue
 				}
 
+				// Index level at the signal, before sig.Price becomes the
+				// option LTP (the exit policy's delta reference).
+				indexAtSignal := svc.orderExecutor.GetLTP(sig.Token)
+				if indexAtSignal <= 0 {
+					indexAtSignal = sig.Price
+				}
+
 				// ── Get current FNO LTP ──
 				var currentFNOPrice int64
 				if fnoToken != "" {
@@ -733,6 +748,7 @@ func (svc *Service) signalLoop(ctx context.Context) {
 					}
 					svc.setStrategyFNOEntryPrice(sig.StrategyName, currentFNOPrice)
 					svc.upsertLiveOrder(sig.StrategyName, sig.Side, fnoToken, currentFNOPrice)
+					svc.openExitPolicy(sig, posKey, fnoToken, currentFNOPrice, indexAtSignal, now)
 					if live, ok := svc.liveOrderPayload(sig.StrategyName, sig.Side); ok {
 						stoplossPrice = live.StoplossPrice
 					}
@@ -780,6 +796,7 @@ func (svc *Service) signalLoop(ctx context.Context) {
 						}
 					}
 					svc.normalizeExitInstrument(&sig, entryInstruments, posKey)
+					svc.closeExitPolicy(posKey)
 					svc.removeLiveOrder(sig.StrategyName, sig.Side)
 					if entryToken, ok := entryFNOTokens[posKey]; ok && entryToken != "" {
 						tradedToken = entryToken

@@ -986,6 +986,19 @@ func (s *Nifty50SR) ExitRequested(side PositionSide, fnoToken, reason string) *S
 	return nil
 }
 
+// ProtectArmed reports whether the open position on side has its stop at
+// breakeven (the trade is working).
+func (s *Nifty50SR) ProtectArmed(side PositionSide) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, st := range s.instruments {
+		if st.Side == side {
+			return st.Breakeven
+		}
+	}
+	return false
+}
+
 func (s *Nifty50SR) forceExit(today, reason string) []Signal {
 	s.mu.Lock()
 	defer s.mu.Unlock()

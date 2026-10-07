@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"trading-systemv1/internal/backtest"
+	"trading-systemv1/internal/exitpolicy"
 	"trading-systemv1/internal/strategy"
 )
 
@@ -84,6 +85,10 @@ func main() {
 	expMinDTE := flag.Int("expiry-min-dte", 0, "With -option-model: buy the next weekly expiry when the nearest is fewer than this many days away (live SR: 2)")
 	minDTE := flag.Int("min-dte", 0, "With -option-model: skip entries whose expiry is fewer than this many calendar days away (0 = off)")
 	cmpStrikes := flag.Bool("compare-strikes", false, "With -option-model: price the same trades at the signal strike and at the option picker's delta and expected-return picks (use -premium-sl 0 for like-for-like exits)")
+	thetaExit := flag.String("theta-exit", "off", "With -option-model: exit policy theta rule off|shadow|act (shadow reports what it would have done)")
+	thetaFile := flag.String("theta-file", "config/exitpolicy.json", "Exit policy file; the strategy's entry (or defaults) supplies the theta settings")
+	thetaFlatMin := flag.Int("theta-max-flat-min", 0, "Theta rule: exit a flat trade after this many minutes (0 = from -theta-file)")
+	thetaDecayPct := flag.Int64("theta-decay-pct", 0, "Theta rule: exit once decay reaches this %% of the expected gain (0 = from -theta-file)")
 	flag.Parse()
 
 	cfg := backtest.Config{
@@ -108,6 +113,7 @@ func main() {
 		PutFNOToken:  *putToken,
 		FNOExchange:  *fnoExchange,
 		CandleTF:     *candleTF,
+		ExitPolicy:   thetaOverrides(*thetaExit, *thetaFile, *stratFlag, *thetaFlatMin, *thetaDecayPct),
 	}
 
 	engine := backtest.New(cfg)
@@ -137,6 +143,7 @@ func main() {
 	}
 
 	printWarnTally(result.Trades)
+	printShadowExits(result.Trades)
 
 	if n := engine.Skipped(); n > 0 {
 		fmt.Printf("\n  Entry gate skipped %d entries (min premium ₹%.0f, min DTE %d)\n", n, *minPrem, *minDTE)
@@ -363,4 +370,57 @@ func printWarnTally(trades []backtest.Trade) {
 		v := by[k]
 		fmt.Printf("  %-16s %6d %7.1f%% %12.2f\n", k, v.n, float64(v.wins)*100/float64(v.n), float64(v.pnl)/100)
 	}
+}
+
+// thetaOverrides builds the backtest's exit policy: the strategy's entry in
+// file (defaults when absent), mode from -theta-exit, then flag overrides.
+func thetaOverrides(mode, file, stratType string, flatMin int, decayPct int64) *exitpolicy.StrategyConfig {
+	if mode == "" || mode == string(exitpolicy.ModeOff) {
+		return nil
+	}
+	if mode != string(exitpolicy.ModeShadow) && mode != string(exitpolicy.ModeAct) {
+		log.Fatalf("[stratbacktest] -theta-exit %q: want off, shadow or act", mode)
+	}
+	cfg, err := exitpolicy.LoadConfig(file)
+	if err != nil {
+		log.Printf("[stratbacktest] exit policy file: %v — using defaults", err)
+		cfg = exitpolicy.DefaultConfig()
+	}
+	sc, ok := cfg.Strategies[strings.ToUpper(stratType)]
+	if !ok {
+		sc = exitpolicy.StrategyConfig{Theta: exitpolicy.DefaultThetaConfig()}
+	}
+	sc.Mode = exitpolicy.Mode(mode)
+	if flatMin > 0 {
+		sc.Theta.MaxFlatMin = flatMin
+	}
+	if decayPct > 0 {
+		sc.Theta.DecayPctOfGain = decayPct
+	}
+	log.Printf("[stratbacktest] theta exit %s: %+v", sc.Mode, sc.Theta)
+	return &sc
+}
+
+// printShadowExits compares, on trades where the shadow exit policy would
+// have exited, its modeled sell price against the actual exit.
+func printShadowExits(trades []backtest.Trade) {
+	var n, better int
+	var actual, shadow int64
+	for _, t := range trades {
+		if t.ShadowExit == "" || t.FNOEntryPrice <= 0 {
+			continue
+		}
+		n++
+		actual += t.FNOExitPrice - t.FNOEntryPrice
+		shadow += t.ShadowExitFNO - t.FNOEntryPrice
+		if t.ShadowExitFNO > t.FNOExitPrice {
+			better++
+		}
+	}
+	if n == 0 {
+		return
+	}
+	fmt.Printf("\n  Theta exit (shadow): would have exited %d of %d trades; better on %d\n", n, len(trades), better)
+	fmt.Printf("  P&L on those trades per unit: actual ₹%.2f, theta exit ₹%.2f (Δ ₹%.2f)\n",
+		float64(actual)/100, float64(shadow)/100, float64(shadow-actual)/100)
 }

@@ -127,6 +127,7 @@ func (svc *Service) resolveEntryStrike(ctx context.Context, sig *strategy.Signal
 
 func (svc *Service) cancelStrategyEntry(ctx context.Context, sig strategy.Signal, reason string, now time.Time) {
 	log.Printf("[stratengine] ENTRY REFUSED %s %s strike=%d: %s", sig.StrategyName, sig.Side, sig.Strike, reason)
+	svc.takeEntryGreeks(sig.StrategyName, 0) // the refused pick's greeks must not reach a later entry
 	if c := svc.entryCancellerFor(sig.StrategyName); c != nil {
 		c.CancelEntry(sig.Side, reason)
 	}

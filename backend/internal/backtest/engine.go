@@ -15,6 +15,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
+	"trading-systemv1/internal/exitpolicy"
 	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/strategy"
 )
@@ -56,6 +57,11 @@ type Config struct {
 	// Option prices each trade's own contract with Black-Scholes when no
 	// real option history exists (expired contracts). See optionmodel.go.
 	Option OptionModel
+
+	// ExitPolicy runs the live exit policy (theta exit) on modeled
+	// premiums; nil = off. Needs Option.Enabled. Shadow mode only records
+	// what it would have done on each trade (Trade.ShadowExit*).
+	ExitPolicy *exitpolicy.StrategyConfig
 }
 
 // ── Trade ─────────────────────────────────────────────────────────────
@@ -81,6 +87,11 @@ type Trade struct {
 	// strike-choice comparison's expected-return rank.
 	TargetMove int64 `json:"target_move,omitempty"`
 	modelMid   int64 // modeled entry premium before slippage (premium SL reference)
+
+	// Exit policy in shadow mode: the first exit it would have taken.
+	ShadowExit     string    `json:"shadow_exit,omitempty"`
+	ShadowExitTime time.Time `json:"shadow_exit_time,omitempty"`
+	ShadowExitFNO  int64     `json:"shadow_exit_fno,omitempty"` // modeled sell price then
 }
 
 // PnLPaise returns the trade P&L in paise.
@@ -690,6 +701,7 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 	var trades []Trade
 	var openTrade *Trade
 	tradeID := 0
+	pol := e.newBTPolicy()
 
 	// Track current trading day for EOD force-close
 	var currentDay string
@@ -786,6 +798,27 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 			continue
 		}
 
+		// Exit policy (live: stratengine's minute evaluation).
+		if openTrade != nil {
+			if d, ok := pol.step(e, strat, openTrade, candle); ok {
+				ts := candle.TS.In(istLoc)
+				if d.Shadow {
+					openTrade.ShadowExit, openTrade.ShadowExitTime = d.Text, ts
+					openTrade.ShadowExitFNO = e.cfg.Option.slip(false, e.modelMidAt(openTrade, candle))
+				} else if ex, ok := strat.(policyExiter); ok && ex.ExitRequested(openTrade.Side, "", d.Text) != nil {
+					openTrade.ExitTime = ts
+					openTrade.ExitPrice = candle.Close
+					openTrade.FNOExitPrice = e.exitFNO(openTrade, candle.TS)
+					openTrade.ExitReason = d.Text
+					trades = append(trades, *openTrade)
+					log.Printf("[backtest] 🚪 POLICY EXIT %s @ %s: %s", openTrade.Side, ts.Format("15:04"), d.Text)
+					openTrade = nil
+					strat.OnTFCandle(candle) // keep indicators warm
+					continue
+				}
+			}
+		}
+
 		sig := strat.OnTFCandle(candle)
 		if sig == nil {
 			continue
@@ -822,6 +855,7 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 			openTrade.TargetMove = sig.TargetMove
 			e.modelEntry(openTrade, sig.Strike, candle.TS)
 			e.armModelTicks(strat, openTrade)
+			pol.open(e, openTrade, candle, sig.TargetMove)
 			log.Printf("[backtest] 🟢 ENTRY %s @ %s index=%d fno=%d reason=%s",
 				sig.Side, candle.TS.In(istLoc).Format("15:04"), candle.Close, openTrade.FNOEntryPrice, sig.Reason)
 
@@ -848,6 +882,7 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 					FNOEntryPrice: e.lookupFNOPrice(sig.ReverseTo, candle.TS.Unix()),
 				}
 				e.modelEntry(openTrade, sig.Strike, candle.TS)
+				pol.open(e, openTrade, candle, 0) // no target on a reverse: time branch only
 				log.Printf("[backtest] 🔁 REVERSE to %s @ %s index=%d", sig.ReverseTo, candle.TS.In(istLoc).Format("15:04"), candle.Close)
 			}
 		}

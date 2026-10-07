@@ -104,6 +104,10 @@ type Config struct {
 	// ExitWatchAuto: strategies exitwatch's exit requests may close
 	// (cmd:exitwatch:exit). NIFTY50_FNO is always refused.
 	ExitWatchAuto []string
+	// Unified exit layer (internal/exitpolicy): per-strategy policy file
+	// and the SQLite file its decisions are recorded to ("" = off).
+	ExitPolicyFile string
+	ExitPolicyDB   string
 
 	// ── Global option picker (internal/optionpicker) ──
 	PickerMode       string        // off | shadow (log decisions only) | on (picker chooses the contract)
@@ -189,6 +193,8 @@ func LoadConfig() Config {
 		SRBoxATRPct:           config.GetEnvInt64("STRAT_SR_BOX_ATR_PCT", 150),
 		SRGateMode:            config.GetEnv("STRAT_SR_GATE_MODE", "warn"),
 		ExitWatchAuto:         splitList(config.GetEnv("STRAT_EXITWATCH_AUTO", "NIFTY50_SR")),
+		ExitPolicyFile:        config.GetEnv("STRAT_EXITPOLICY_FILE", "config/exitpolicy.json"),
+		ExitPolicyDB:          config.GetEnv("STRAT_EXITPOLICY_DB", "data/exitpolicy.db"),
 		PickerMode:            config.GetEnv("STRAT_PICKER_MODE", "shadow"),
 		PickMaxSpreadPct:      getEnvFloat("STRAT_PICK_MAX_SPREAD_PCT", 2),
 		PickMaxQuoteAge:       getEnvDuration("STRAT_PICK_MAX_QUOTE_AGE", 3*time.Second),
