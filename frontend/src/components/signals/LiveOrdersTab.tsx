@@ -54,7 +54,7 @@ function useFNOPrice(side: string): number | null {
  * Exit-watch verdict for the position: reversal probability, HOLD/TIGHTEN/EXIT
  * and the top reasons. SHADOW means stratengine does not act on it yet.
  */
-function ExitWatchCell({ order }: { order: OpenOrder }) {
+export function ExitWatchCell({ order }: { order: OpenOrder }) {
     const payload = useAnalystStore(s => s.reversal);
     const view = order.leg ? null : findReversal(payload, order.strategy, order.side);
     if (!view) return <span className="price-na">—</span>;
@@ -85,21 +85,21 @@ function ExitWatchCell({ order }: { order: OpenOrder }) {
     );
 }
 
-function LiveOrderRow({ order }: { order: OpenOrder }) {
+/** Live premium (rupees) and P&L for an open position; shared with the phone card. */
+export function useOrderLivePnL(order: OpenOrder): { currentPrice: number | null; pnl: number | null } {
     const fallbackPrice = useFNOPrice(order.side);
     // The ATM CE/PE premium is not a basket leg's premium: no fallback for legs.
     const currentPrice = order.currentPrice ?? (order.leg ? null : fallbackPrice);
+    if (order.buyPrice === null || currentPrice === null) return { currentPrice, pnl: null };
+    // Long option: live P&L = current premium − entry premium.
+    // Short leg (sold to open): entry premium − current premium.
+    const diff = order.short ? order.buyPrice - currentPrice : currentPrice - order.buyPrice;
+    return { currentPrice, pnl: +diff.toFixed(2) };
+}
 
-    // P&L calculation using FNO option premium
-    let pnl: number | null = null;
-    let pnlClass = '';
-    if (order.buyPrice !== null && currentPrice !== null) {
-        // Long option: live P&L = current premium − entry premium.
-        // Short leg (sold to open): entry premium − current premium.
-        const diff = order.short ? order.buyPrice - currentPrice : currentPrice - order.buyPrice;
-        pnl = +diff.toFixed(2);
-        pnlClass = pnl > 0 ? 'price-up' : pnl < 0 ? 'price-down' : 'price-flat';
-    }
+function LiveOrderRow({ order }: { order: OpenOrder }) {
+    const { currentPrice, pnl } = useOrderLivePnL(order);
+    const pnlClass = pnl === null ? '' : pnl > 0 ? 'price-up' : pnl < 0 ? 'price-down' : 'price-flat';
 
     return (
         <tr className="signal-row">

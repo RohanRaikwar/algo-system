@@ -52,6 +52,7 @@ export function DashboardPage({ onOpenIndicators }: DashboardPageProps) {
         if (s !== 'closed') rememberSnap(s);
         setSnap(s);
     }, []);
+    const openSR = useCallback(() => onSnap(lastOpenSnap()), [onSnap]);
     useEffect(() => { if (!compactUI) setSnap('closed'); }, [compactUI]);
 
     const panes = layout.panes.slice(0, count - 1);
@@ -79,7 +80,7 @@ export function DashboardPage({ onOpenIndicators }: DashboardPageProps) {
                     </div>
                 </div>
                 <div className={`${styles.grid} ${styles[`grid${count}`]}`}>
-                    <TradingChart onOpenIndicators={onOpenIndicators} />
+                    <TradingChart onOpenIndicators={onOpenIndicators} onOpenSR={compactUI ? openSR : undefined} />
                     {panes.map((tf, i) => (
                         <TradingChart key={i} compact paneTF={tf} onPaneTFChange={t => setPaneTF(i, t)} />
                     ))}

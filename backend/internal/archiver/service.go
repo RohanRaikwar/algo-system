@@ -276,8 +276,9 @@ func (s *Service) archiveSnapshot(ctx context.Context, man *manifest, path strin
 	return s.uploadAndRecord(ctx, man, name, lastDay, raw, 0)
 }
 
-// uploadAndRecord gzips raw, uploads it to <root>/YYYY/MM/, checks the
-// remote size and writes the manifest entry.
+// uploadAndRecord gzips raw, uploads it to <root>/YYYY/MM/DD/, checks the
+// remote size and writes the manifest entry. One folder per trading day holds
+// that day's candles, signals and exitwatch files together.
 func (s *Service) uploadAndRecord(ctx context.Context, man *manifest, source string, day time.Time, raw string, rows int64) error {
 	gz := raw + ".gz"
 	defer os.Remove(gz)
@@ -286,7 +287,7 @@ func (s *Service) uploadAndRecord(ctx context.Context, man *manifest, source str
 		return fmt.Errorf("gzip: %w", err)
 	}
 	ist := day.In(markethours.IST)
-	dir := []string{strings.Trim(s.cfg.MegaRootDir, "/"), ist.Format("2006"), ist.Format("01")}
+	dir := []string{strings.Trim(s.cfg.MegaRootDir, "/"), ist.Format("2006"), ist.Format("01"), ist.Format("02")}
 	name := filepath.Base(gz)
 
 	var remote int64

@@ -23,7 +23,7 @@
     font-family: inherit;
 }
 
-/* ── Header: stats + sound ─────────────────────────────────── */
+/* ── Header: stats ─────────────────────────────────────────── */
 
 .signals-header {
     display: flex;
@@ -104,32 +104,6 @@
     0% { box-shadow: 0 0 0 0 rgba(91, 141, 239, 0.55); }
     70% { box-shadow: 0 0 0 7px rgba(91, 141, 239, 0); }
     100% { box-shadow: 0 0 0 0 rgba(91, 141, 239, 0); }
-}
-
-.audio-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    align-self: center;
-    flex-shrink: 0;
-    margin-right: 6px;
-    padding: 7px 12px;
-    background: var(--sg-raised);
-    border: 1px solid var(--sg-line);
-    border-radius: var(--sg-r-ctrl);
-    color: var(--sg-text-2);
-    font-size: 0.82rem;
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s;
-}
-
-.audio-toggle:hover {
-    background: var(--sg-hover);
-    color: var(--sg-text);
-}
-
-.audio-toggle.muted {
-    color: var(--sg-faint);
 }
 
 /* ── Tab navigation ────────────────────────────────────────── */
@@ -1508,11 +1482,6 @@
         font-size: 1.3rem;
     }
 
-    .audio-toggle {
-        align-self: stretch;
-        justify-content: center;
-        margin: 0;
-    }
 
     .signals-panel {
         padding: 10px;

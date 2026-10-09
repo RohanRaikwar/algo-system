@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Plus, Trash2, X } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
+import { PHONE_PORTRAIT_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
+import { FLICK_SPEED, useSheetDrag } from '../../hooks/useSheetDrag';
+import { useBackToClose } from '../../hooks/useBackToClose';
+import { haptic } from '../../utils/haptic';
 import { useCandleStore } from '../../store/useCandleStore';
 import { sendSubscribe } from '../../hooks/useWebSocket';
 import { tfLabel, getEntryColor, entryKey } from '../../utils/helpers';
@@ -66,6 +70,10 @@ export function SettingsModal({ open, onClose }: Props) {
     const [error, setError] = useState('');
     const periodRef = useRef<HTMLInputElement>(null);
     const returnFocus = useRef<HTMLElement | null>(null);
+    const modalRef = useRef<HTMLDivElement>(null);
+    // Phone portrait: a bottom sheet with a handle, swipe-down close and no autofocus.
+    const isPhone = useMediaQuery(PHONE_PORTRAIT_QUERY);
+    const [kb, setKb] = useState<{ bottom: number; maxH: number } | null>(null);
 
     // Sync draft with the saved list each time the dialog opens
     useEffect(() => {
@@ -75,9 +83,39 @@ export function SettingsModal({ open, onClose }: Props) {
         setIndTF(chartTF);
         setPeriod('');
         setError('');
+        // On a phone the keyboard would cover half the sheet; open it only on tap.
+        if (isPhone) {
+            modalRef.current?.focus();
+            return;
+        }
         const t = setTimeout(() => periodRef.current?.focus(), 30);
         return () => clearTimeout(t);
     }, [open, chartTF]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    useBackToClose(open && isPhone, onClose);
+
+    // Keep the sheet (and its footer) above the on-screen keyboard.
+    useEffect(() => {
+        const vv = window.visualViewport;
+        if (!open || !isPhone || !vv) return;
+        const update = () => {
+            const bottom = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+            setKb(bottom > 0 ? { bottom, maxH: vv.height * 0.92 } : null);
+        };
+        update();
+        vv.addEventListener('resize', update);
+        vv.addEventListener('scroll', update);
+        return () => {
+            vv.removeEventListener('resize', update);
+            vv.removeEventListener('scroll', update);
+            setKb(null);
+        };
+    }, [open, isPhone]);
+
+    const { dragH, startH, handlers } = useSheetDrag(modalRef, () => window.innerHeight, ({ height, startHeight, velocity, moved }) => {
+        if (moved && (velocity <= -FLICK_SPEED || height < startHeight * 0.6)) onClose();
+    });
+    const dragOffset = dragH !== null && startH !== null ? Math.max(0, startH - dragH) : 0;
 
     // Give focus back to whatever opened the dialog
     useEffect(() => {
@@ -107,17 +145,19 @@ export function SettingsModal({ open, onClose }: Props) {
         }
         setDraft((d) => [...d, { name, tf, color: nextColor(d) }]);
         setError('');
+        haptic();
         return true;
     }, [draft]);
 
     const addFromForm = useCallback(() => {
         if (add(indType, Number(period), indTF)) {
             setPeriod('');
-            periodRef.current?.focus();
+            if (!isPhone) periodRef.current?.focus();
         }
-    }, [add, indType, period, indTF]);
+    }, [add, indType, period, indTF, isPhone]);
 
     const removeEntry = useCallback((key: string) => {
+        haptic();
         setDraft((d) => d.filter((e) => entryKey(e) !== key));
         setError('');
     }, []);
@@ -146,6 +186,7 @@ export function SettingsModal({ open, onClose }: Props) {
             sendSubscribe(token, tf, entries);
         }
 
+        haptic();
         onClose();
     }, [draft, setActiveIndicators, onClose]);
 
@@ -172,13 +213,154 @@ export function SettingsModal({ open, onClose }: Props) {
 
     const presets = PRESETS.filter(p => !draft.some(e => e.name === `${p.type}_${p.period}` && e.tf === indTF));
 
+    const listSection = (
+        <section>
+            <h3 className={styles.sectionTitle}>
+                On chart <span className={styles.count}>{draft.length}</span>
+            </h3>
+            {sorted.length === 0 ? (
+                <p className={styles.empty}>No indicators yet. Add one below or pick a quick add.</p>
+            ) : (
+                <ul className={styles.list}>
+                    {sorted.map((entry) => {
+                        const key = entryKey(entry);
+                        const color = getEntryColor(entry);
+                        return (
+                            <li key={key} className={styles.row}>
+                                <label className={styles.swatch} style={{ background: color }} title="Change line colour">
+                                    <input
+                                        type="color"
+                                        value={color}
+                                        onChange={(e) => recolor(key, e.target.value)}
+                                        aria-label={`Colour for ${displayName(entry.name)}`}
+                                    />
+                                </label>
+                                <span className={styles.rowName}>{displayName(entry.name)}</span>
+                                <span className={styles.tfTag}>{tfLabel(entry.tf)}</span>
+                                {entry.tf > chartTF && (
+                                    <span className={styles.hiddenTag} title="Hidden until you switch to this timeframe or higher">
+                                        Hidden on {tfLabel(chartTF)}
+                                    </span>
+                                )}
+                                <button
+                                    className={styles.rowRemove}
+                                    onClick={() => removeEntry(key)}
+                                    aria-label={`Remove ${displayName(entry.name)} ${tfLabel(entry.tf)}`}
+                                >
+                                    <Trash2 size={15} />
+                                </button>
+                            </li>
+                        );
+                    })}
+                </ul>
+            )}
+        </section>
+    );
+
+    const overlaysSection = (
+        <section>
+            <h3 className={styles.sectionTitle}>Overlays</h3>
+            <label className={`${styles.row} ${styles.switchRow}`}>
+                <input
+                    type="checkbox"
+                    className={styles.switchInput}
+                    checked={srOverlay}
+                    onChange={(e) => setOverlay('srSituation', e.target.checked)}
+                />
+                <span className={styles.rowName}>SR situation: supports/resistances, day lines, sideways box</span>
+            </label>
+        </section>
+    );
+
+    const presetsBlock = presets.length > 0 && (
+        <div className={styles.presets}>
+            <span className={styles.presetsLabel}>Quick add on {tfLabel(indTF)}</span>
+            {presets.map(p => (
+                <button
+                    key={`${p.type}_${p.period}`}
+                    type="button"
+                    className={styles.preset}
+                    onClick={() => add(p.type, p.period, indTF)}
+                >
+                    {p.type} {p.period}
+                </button>
+            ))}
+        </div>
+    );
+
+    const addSection = (
+        <section>
+            <h3 className={styles.sectionTitle}>Add indicator</h3>
+            <form
+                className={styles.addRow}
+                onSubmit={(e) => { e.preventDefault(); addFromForm(); }}
+            >
+                <div className={styles.segmented} role="radiogroup" aria-label="Type">
+                    {TYPES.map(t => (
+                        <button
+                            key={t.id}
+                            type="button"
+                            role="radio"
+                            aria-checked={indType === t.id}
+                            className={`${styles.segBtn}${indType === t.id ? ` ${styles.segActive}` : ''}`}
+                            onClick={() => setIndType(t.id)}
+                        >
+                            {t.label}
+                        </button>
+                    ))}
+                </div>
+                <input
+                    ref={periodRef}
+                    className={styles.input}
+                    type="number"
+                    inputMode="numeric"
+                    min={2}
+                    max={500}
+                    placeholder="Period, e.g. 21"
+                    aria-label="Period"
+                    value={period}
+                    onChange={(e) => { setPeriod(e.target.value); setError(''); }}
+                />
+                <select
+                    className={styles.input}
+                    value={indTF}
+                    onChange={(e) => setIndTF(Number(e.target.value))}
+                    aria-label="Compute timeframe"
+                    title="Timeframe the indicator is computed on"
+                >
+                    {allowedTFs.map((t) => (
+                        <option key={t} value={t}>{tfLabel(t)}</option>
+                    ))}
+                </select>
+                <button type="submit" className={styles.addBtn} disabled={!period}>
+                    <Plus size={15} /> Add
+                </button>
+            </form>
+            {error && <p className={styles.error} role="alert">{error}</p>}
+            {/* Phone shows quick adds above the form instead. */}
+            {!isPhone && presetsBlock}
+        </section>
+    );
+
     return (
         <div
             className={`${styles.overlay} ${open ? styles.open : ''}`}
             onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
         >
-            <div className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="ind-title">
-                <div className={styles.header}>
+            <div
+                ref={modalRef}
+                className={`${styles.modal}${dragH !== null ? ` ${styles.dragging}` : ''}`}
+                style={{
+                    ...(dragOffset ? { transform: `translateY(${dragOffset}px)` } : {}),
+                    ...(kb ? { marginBottom: kb.bottom, maxHeight: kb.maxH } : {}),
+                }}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="ind-title"
+                tabIndex={-1}
+            >
+                {isPhone && <span className={styles.handle} aria-hidden {...handlers} />}
+                <div className={styles.header} {...(isPhone ? handlers : {})}>
                     <div>
                         <h2 id="ind-title" className={styles.title}>Indicators</h2>
                         <p className={styles.subtitle}>Lines drawn on the {tfLabel(chartTF)} chart</p>
@@ -189,125 +371,20 @@ export function SettingsModal({ open, onClose }: Props) {
                 </div>
 
                 <div className={styles.body}>
-                    <section>
-                        <h3 className={styles.sectionTitle}>
-                            On chart <span className={styles.count}>{draft.length}</span>
-                        </h3>
-                        {sorted.length === 0 ? (
-                            <p className={styles.empty}>No indicators yet. Add one below or pick a quick add.</p>
-                        ) : (
-                            <ul className={styles.list}>
-                                {sorted.map((entry) => {
-                                    const key = entryKey(entry);
-                                    const color = getEntryColor(entry);
-                                    return (
-                                        <li key={key} className={styles.row}>
-                                            <label className={styles.swatch} style={{ background: color }} title="Change line colour">
-                                                <input
-                                                    type="color"
-                                                    value={color}
-                                                    onChange={(e) => recolor(key, e.target.value)}
-                                                    aria-label={`Colour for ${displayName(entry.name)}`}
-                                                />
-                                            </label>
-                                            <span className={styles.rowName}>{displayName(entry.name)}</span>
-                                            <span className={styles.tfTag}>{tfLabel(entry.tf)}</span>
-                                            {entry.tf > chartTF && (
-                                                <span className={styles.hiddenTag} title="Hidden until you switch to this timeframe or higher">
-                                                    Hidden on {tfLabel(chartTF)}
-                                                </span>
-                                            )}
-                                            <button
-                                                className={styles.rowRemove}
-                                                onClick={() => removeEntry(key)}
-                                                aria-label={`Remove ${displayName(entry.name)} ${tfLabel(entry.tf)}`}
-                                            >
-                                                <Trash2 size={15} />
-                                            </button>
-                                        </li>
-                                    );
-                                })}
-                            </ul>
-                        )}
-                    </section>
-
-                    <section>
-                        <h3 className={styles.sectionTitle}>Overlays</h3>
-                        <label className={styles.row}>
-                            <input
-                                type="checkbox"
-                                checked={srOverlay}
-                                onChange={(e) => setOverlay('srSituation', e.target.checked)}
-                            />
-                            <span className={styles.rowName}>SR situation: supports/resistances, day lines, sideways box</span>
-                        </label>
-                    </section>
-
-                    <section>
-                        <h3 className={styles.sectionTitle}>Add indicator</h3>
-                        <form
-                            className={styles.addRow}
-                            onSubmit={(e) => { e.preventDefault(); addFromForm(); }}
-                        >
-                            <div className={styles.segmented} role="radiogroup" aria-label="Type">
-                                {TYPES.map(t => (
-                                    <button
-                                        key={t.id}
-                                        type="button"
-                                        role="radio"
-                                        aria-checked={indType === t.id}
-                                        className={`${styles.segBtn}${indType === t.id ? ` ${styles.segActive}` : ''}`}
-                                        onClick={() => setIndType(t.id)}
-                                    >
-                                        {t.label}
-                                    </button>
-                                ))}
-                            </div>
-                            <input
-                                ref={periodRef}
-                                className={styles.input}
-                                type="number"
-                                inputMode="numeric"
-                                min={2}
-                                max={500}
-                                placeholder="Period, e.g. 21"
-                                aria-label="Period"
-                                value={period}
-                                onChange={(e) => { setPeriod(e.target.value); setError(''); }}
-                            />
-                            <select
-                                className={styles.input}
-                                value={indTF}
-                                onChange={(e) => setIndTF(Number(e.target.value))}
-                                aria-label="Compute timeframe"
-                                title="Timeframe the indicator is computed on"
-                            >
-                                {allowedTFs.map((t) => (
-                                    <option key={t} value={t}>{tfLabel(t)}</option>
-                                ))}
-                            </select>
-                            <button type="submit" className={styles.addBtn} disabled={!period}>
-                                <Plus size={15} /> Add
-                            </button>
-                        </form>
-                        {error && <p className={styles.error} role="alert">{error}</p>}
-
-                        {presets.length > 0 && (
-                            <div className={styles.presets}>
-                                <span className={styles.presetsLabel}>Quick add on {tfLabel(indTF)}</span>
-                                {presets.map(p => (
-                                    <button
-                                        key={`${p.type}_${p.period}`}
-                                        type="button"
-                                        className={styles.preset}
-                                        onClick={() => add(p.type, p.period, indTF)}
-                                    >
-                                        {p.type} {p.period}
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-                    </section>
+                    {isPhone ? (
+                        <>
+                            {listSection}
+                            {presetsBlock && <section>{presetsBlock}</section>}
+                            {addSection}
+                            {overlaysSection}
+                        </>
+                    ) : (
+                        <>
+                            {listSection}
+                            {overlaysSection}
+                            {addSection}
+                        </>
+                    )}
                 </div>
 
                 <div className={styles.footer}>

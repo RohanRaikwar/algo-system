@@ -1,4 +1,4 @@
-// TradingPulse service worker: Web Push only. It does not cache anything,
+// Levels service worker: Web Push only. It does not cache anything,
 // because every screen shows live market data. The gateway sends the payload
 // built by backend/internal/push (Notification: title, body, tag, url, sticky).
 
@@ -15,9 +15,9 @@ self.addEventListener('push', (event) => {
     try {
         data = event.data ? event.data.json() : {};
     } catch {
-        data = { title: 'TradingPulse', body: event.data ? event.data.text() : '' };
+        data = { title: 'Levels', body: event.data ? event.data.text() : '' };
     }
-    const title = data.title || 'TradingPulse';
+    const title = data.title || 'Levels';
     event.waitUntil(
         self.registration.showNotification(title, {
             body: data.body || '',

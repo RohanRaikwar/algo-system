@@ -1,10 +1,13 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 import { X } from 'lucide-react';
 import { useSRStore } from '../../store/useSRStore';
 import { rejectLabel } from '../signals/SRStatusCard';
 import { KIND_LABEL, REGIME_LABEL, asOf, clock, hhmm, nearestLevels, pnlPaise, points, rupees, sourceLabel, watching } from './srFormat';
 import { DayPosition } from './DayPosition';
 import { useLastNiftyPaise } from './useLastNiftyPaise';
+import { FLICK_SPEED, useSheetDrag } from '../../hooks/useSheetDrag';
+import { useBackToClose } from '../../hooks/useBackToClose';
+import { haptic } from '../../utils/haptic';
 import styles from './SRMobile.module.css';
 
 export type SheetSnap = 'closed' | 'half' | 'full';
@@ -104,8 +107,6 @@ function SheetBody() {
 export function SRSheet({ id, snap, onSnap, returnFocusRef }: SRSheetProps) {
     const v = useSRStore(s => s.view);
     const sheetRef = useRef<HTMLDivElement>(null);
-    const drag = useRef<{ startY: number; startH: number } | null>(null);
-    const [dragH, setDragH] = useState<number | null>(null);
     const open = snap !== 'closed';
     const wasOpen = useRef(open);
 
@@ -129,31 +130,25 @@ export function SRSheet({ id, snap, onSnap, returnFocusRef }: SRSheetProps) {
         return () => document.removeEventListener('keydown', onKey);
     }, [open, onSnap]);
 
-    const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-        if ((e.target as HTMLElement).closest('button')) return;
-        const el = sheetRef.current;
-        if (!el) return;
-        drag.current = { startY: e.clientY, startH: el.getBoundingClientRect().height };
-        e.currentTarget.setPointerCapture(e.pointerId);
-    };
-    const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
-        if (!drag.current) return;
-        const h = drag.current.startH + (drag.current.startY - e.clientY);
-        setDragH(Math.max(0, Math.min(h, window.innerHeight * FULL)));
-    };
-    const onPointerUp = () => {
-        if (!drag.current) return;
-        const moved = dragH !== null && Math.abs(dragH - drag.current.startH) > 8;
-        drag.current = null;
-        if (moved && dragH !== null) {
-            const r = dragH / window.innerHeight;
-            onSnap(r < HALF * 0.6 ? 'closed' : r < (HALF + FULL) / 2 ? 'half' : 'full');
-        } else {
+    const { dragH, handlers } = useSheetDrag(sheetRef, () => window.innerHeight * FULL, ({ height, velocity, moved }) => {
+        let next: SheetSnap;
+        if (!moved) {
             // A tap on the handle toggles between half and full.
-            onSnap(snap === 'full' ? 'half' : 'full');
+            next = snap === 'full' ? 'half' : 'full';
+        } else if (velocity <= -FLICK_SPEED) {
+            next = snap === 'full' && height > window.innerHeight * HALF * 0.6 ? 'half' : 'closed';
+        } else if (velocity >= FLICK_SPEED) {
+            next = 'full';
+        } else {
+            const r = height / window.innerHeight;
+            next = r < HALF * 0.6 ? 'closed' : r < (HALF + FULL) / 2 ? 'half' : 'full';
         }
-        setDragH(null);
-    };
+        if (next !== snap) haptic();
+        onSnap(next);
+    });
+
+    // Android back closes the sheet before leaving the dashboard.
+    useBackToClose(open, () => onSnap('closed'));
 
     const updated = v ? asOf(v.ts) : '';
 
@@ -173,10 +168,7 @@ export function SRSheet({ id, snap, onSnap, returnFocusRef }: SRSheetProps) {
             >
                 <div
                     className={styles.sheetHead}
-                    onPointerDown={onPointerDown}
-                    onPointerMove={onPointerMove}
-                    onPointerUp={onPointerUp}
-                    onPointerCancel={onPointerUp}
+                    {...handlers}
                 >
                     <span className={styles.handle} aria-hidden />
                     <div className={styles.sheetTitleRow}>

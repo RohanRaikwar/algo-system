@@ -1,0 +1,82 @@
+.wrap {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+}
+
+/* 10px dot, 32px tap target. */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    margin-left: -10px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--sg-r-pill);
+    background: transparent;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.btn:active {
+    background: var(--sg-hover);
+}
+
+.btn:focus-visible {
+    outline: none;
+    box-shadow: var(--sg-ring);
+}
+
+.dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--sg-faint);
+}
+
+.live,
+.open {
+    background: var(--sg-profit);
+}
+
+.holiday {
+    background: var(--sg-warn);
+}
+
+.reconnecting {
+    background: var(--sg-loss);
+}
+
+.live {
+    animation: statusPulse 2s ease-in-out infinite;
+}
+
+@keyframes statusPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(62, 207, 142, 0.55); }
+    50% { box-shadow: 0 0 0 5px rgba(62, 207, 142, 0); }
+}
+
+.toast {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: -6px;
+    z-index: 200;
+    padding: 6px 10px;
+    border-radius: var(--sg-r-ctrl);
+    background: var(--sg-raised);
+    border: 1px solid var(--sg-line);
+    box-shadow: var(--shadow);
+    color: var(--sg-text);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .live {
+        animation: none;
+    }
+}

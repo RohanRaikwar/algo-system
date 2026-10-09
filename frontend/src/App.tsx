@@ -8,6 +8,8 @@ import { fetchSignals } from './services/api';
 import { useConfigQuery } from './hooks/useConfigQuery';
 import { initPushOnOpen } from './services/push';
 import { usePushStore } from './store/usePushStore';
+import { startMarketStatusPoll } from './store/useMarketStatusStore';
+import { PHONE_PORTRAIT_QUERY, useMediaQuery } from './hooks/useMediaQuery';
 import { Header } from './components/layout/Header';
 import { StatusBar } from './components/layout/StatusBar';
 import { MobileNav } from './components/layout/MobileNav';
@@ -28,9 +30,14 @@ function AppShell() {
     const setSelectedTF = useAppStore(s => s.setSelectedTF);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const isDashboard = useLocation().pathname === '/';
+    // Phone portrait: each page draws its own top bar (chart bar or PageAppBar).
+    const isPhone = useMediaQuery(PHONE_PORTRAIT_QUERY);
 
     // Connect WebSocket
     useWebSocket();
+
+    // One market-status poller for every status display.
+    useEffect(() => startMarketStatusPoll(), []);
 
     // Ask for notification permission on open, like a native app.
     const setPushState = usePushStore(s => s.setState);
@@ -92,7 +99,7 @@ function AppShell() {
     return (
         <div className={`${styles.shell}${isDashboard ? ` ${styles.shellFixed}` : ''}`}>
             <ReconnectBanner />
-            <Header />
+            {!isPhone && <Header />}
             <main className={`${styles.main}${isDashboard ? ` ${styles.mainFull}` : ''}`}>
                 <Routes>
                     <Route path="/" element={<DashboardPage onOpenIndicators={() => setSettingsOpen(true)} />} />

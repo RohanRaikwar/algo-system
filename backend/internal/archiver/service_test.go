@@ -115,17 +115,17 @@ func TestRunOnce_UploadsThenPrunes(t *testing.T) {
 	}
 
 	want := []string{
-		"algo-archive/2026/09/candles-2026-09-20.db.gz",
-		"algo-archive/2026/10/candles-2026-10-05.db.gz",
-		"algo-archive/2026/10/candles-2026-10-06.db.gz",
-		"algo-archive/2026/10/signals-2026-10-06.db.gz",
+		"algo-archive/2026/09/20/candles-2026-09-20.db.gz",
+		"algo-archive/2026/10/05/candles-2026-10-05.db.gz",
+		"algo-archive/2026/10/06/candles-2026-10-06.db.gz",
+		"algo-archive/2026/10/06/signals-2026-10-06.db.gz",
 	}
 	if strings.Join(up.names, ",") != strings.Join(want, ",") {
 		t.Fatalf("uploads = %v, want %v", up.names, want)
 	}
 
 	// The Oct 6 archive holds exactly that day's rows.
-	gz, err := os.Open(filepath.Join(up.dir, "algo-archive/2026/10/candles-2026-10-06.db.gz"))
+	gz, err := os.Open(filepath.Join(up.dir, "algo-archive/2026/10/06/candles-2026-10-06.db.gz"))
 	if err != nil {
 		t.Fatal(err)
 	}

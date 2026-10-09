@@ -11,9 +11,6 @@ interface SignalState {
     /** Unread count for the nav badge */
     unreadCount: number;
 
-    /** Toggle for audio alert on new signal */
-    audioEnabled: boolean;
-
     /** Add a live signal from WS */
     addLiveSignal: (sig: SignalPayload) => void;
 
@@ -25,9 +22,6 @@ interface SignalState {
 
     /** Clear unread counter (on page visit) */
     clearUnread: () => void;
-
-    /** Toggle audio alerts */
-    toggleAudio: () => void;
 }
 
 /** Convert live WS payload to a SignalRecord shape */
@@ -88,7 +82,6 @@ export function mergeSignalLists(held: SignalRecord[], history: SignalRecord[]):
 export const useSignalStore = create<SignalState>((set) => ({
     signals: [],
     unreadCount: 0,
-    audioEnabled: true,
 
     addLiveSignal: (sig) => set((s) => {
         const record = liveToRecord(sig);
@@ -105,6 +98,4 @@ export const useSignalStore = create<SignalState>((set) => ({
     mergeSignals: (history) => set((s) => ({ signals: mergeSignalLists(s.signals, history) })),
 
     clearUnread: () => set({ unreadCount: 0 }),
-
-    toggleAudio: () => set((s) => ({ audioEnabled: !s.audioEnabled })),
 }));

@@ -1,7 +1,7 @@
 {
-  "name": "TradingPulse",
-  "short_name": "TradingPulse",
-  "description": "Real-time trading dashboard with trade alerts",
+  "name": "Levels",
+  "short_name": "Levels",
+  "description": "NIFTY support/resistance trading: live chart, signals and alerts",
   "id": "/",
   "start_url": "/",
   "scope": "/",

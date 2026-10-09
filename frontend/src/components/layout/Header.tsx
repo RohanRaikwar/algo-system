@@ -1,75 +1,32 @@
-import { useEffect, useState } from 'react';
 import { Zap, LayoutDashboard, BarChart3, Activity } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
-import { useWSStore } from '../../store/useWSStore';
+import { useMarketFeedStatus, type Tone } from '../../hooks/useMarketFeedStatus';
 import { SignalBadge } from '../signals/SignalBadge';
 import { PushToggle } from './PushToggle';
 import styles from './Header.module.css';
 
-interface MarketStatus {
-    isOpen: boolean;
-    isHoliday: boolean;
-    holidayName: string;
-    nextOpenLabel: string;
-}
-
-function isWeekendIST(date: Date = new Date()): boolean {
-    const weekday = new Intl.DateTimeFormat('en-US', {
-        timeZone: 'Asia/Kolkata',
-        weekday: 'short',
-    }).format(date);
-    return weekday === 'Sat' || weekday === 'Sun';
-}
+const TONE_CLASS: Record<Tone, string> = {
+    up: styles.toneUp,
+    down: styles.toneDown,
+    warn: styles.toneWarn,
+    muted: styles.toneMuted,
+};
 
 const navClass = ({ isActive }: { isActive: boolean }) =>
     `${styles.navLink}${isActive ? ` ${styles.navLinkActive}` : ''}`;
 
 export function Header() {
-    const connected = useWSStore(s => s.connected);
-    const reconnectAttempts = useWSStore(s => s.reconnectAttempts);
-    const marketOpen = useWSStore(s => s.marketOpen);
-    const [status, setStatus] = useState<MarketStatus | null>(null);
-
-    useEffect(() => {
-        const apiUrl = import.meta.env.VITE_API_URL || '';
-        const load = () => fetch(`${apiUrl}/api/market-status`)
-            .then(r => r.json())
-            .then((data: MarketStatus) => setStatus(data))
-            .catch(() => { });
-        load();
-        const timer = setInterval(load, 5 * 60 * 1000);
-        return () => clearInterval(timer);
-    }, []);
-
-    const open = marketOpen || status?.isOpen === true;
-    let marketLabel = 'Market closed';
-    let marketTone = styles.toneMuted;
-    if (open) {
-        marketLabel = 'Market open';
-        marketTone = styles.toneUp;
-    } else if (status?.isHoliday) {
-        marketLabel = status.holidayName ? `Holiday: ${status.holidayName}` : 'Market holiday';
-        marketTone = styles.toneWarn;
-    } else if (isWeekendIST()) {
-        marketLabel = 'Weekend';
-    }
-    const nextOpen = !open && status?.nextOpenLabel ? `Opens ${status.nextOpenLabel}` : '';
-
-    const feedLabel = connected ? 'Live' : reconnectAttempts > 0 ? 'Reconnecting' : 'Connecting';
-    const feedTone = connected ? styles.toneUp : reconnectAttempts > 0 ? styles.toneDown : styles.toneMuted;
-
-    // Phones: one pill. Text carries the market state, the dot the feed state.
-    const marketShort = open ? 'Open' : status?.isHoliday ? 'Holiday' : marketLabel === 'Weekend' ? 'Weekend' : 'Closed';
-    const compactLabel = !connected && reconnectAttempts === 0
-        ? 'Connecting…'
-        : open ? `${marketShort} · ${feedLabel}` : marketShort;
-    const compactTone = open ? styles.bgUp : status?.isHoliday ? styles.bgWarn : '';
+    const st = useMarketFeedStatus();
+    const marketTone = TONE_CLASS[st.marketTone];
+    const feedTone = TONE_CLASS[st.feedTone];
+    const { marketLabel, nextOpen, feedLabel, connected, compactLabel } = st;
+    const compactTone = st.open ? styles.bgUp : st.holiday ? styles.bgWarn : '';
 
     return (
         <header className={styles.header}>
             <div className={styles.brand}>
                 <Zap size={16} className={styles.brandIcon} aria-hidden />
-                <span className={styles.logo}>TradingPulse</span>
+                <span className={styles.logo}>Levels</span>
             </div>
 
             <nav className={styles.nav} aria-label="Primary">
@@ -97,7 +54,7 @@ export function Header() {
                 </span>
                 <span
                     className={`${styles.pill} ${styles.compactPill} ${feedTone} ${compactTone}`}
-                    title={[marketLabel, nextOpen, `Feed: ${feedLabel}`].filter(Boolean).join(' · ')}
+                    title={st.summary}
                     aria-label={`${marketLabel}${nextOpen ? `, ${nextOpen}` : ''}. Price feed ${feedLabel.toLowerCase()}.`}
                 >
                     <span className={`${styles.dot}${connected ? ` ${styles.dotLive}` : ''}`} aria-hidden />
