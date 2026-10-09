@@ -17,7 +17,7 @@ export interface SignalPayload {
     stoploss_kind?: string;
     order_mode?: string;
     profit_cap_hit?: boolean;
-    /** Multi-leg (iron condor) fields — paper legs only */
+    /** Multi-leg basket fields — paper legs only */
     leg?: string;
     strike?: number;
     short?: boolean;

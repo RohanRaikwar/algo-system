@@ -9,10 +9,10 @@ import (
 )
 
 // ════════════════════════════════════════════════════════════════════
-//  Range context — multi-timeframe "situation" for range strategies.
+//  Range context — multi-timeframe "situation" under NIFTY50_SR.
 //
 //  Trades trigger on 1m closes; the situation comes from higher TFs
-//  built from the same 1m stream (NIFTY_RANGE_MARKET_GUIDE.md):
+//  built from the same 1m stream:
 //    • 15m: ADX (trend strength), EMA20 slope (flatness), Bollinger
 //      squeeze, swing support/resistance + previous-day high/low.
 //    • 5m:  RSI (entry filter).
@@ -562,29 +562,10 @@ func (rc *rangeContext) lastBars5() (prev, cur ohlcv, ok bool) {
 	return rc.bars5[n-2].ohlcv, rc.bars5[n-1].ohlcv, true
 }
 
-// lastBarsE returns the previous and just-closed EntryMinutes bars.
-func (rc *rangeContext) lastBarsE() (prev, cur ohlcv, ok bool) {
-	n := len(rc.barsE)
-	if n < 2 {
-		return ohlcv{}, ohlcv{}, false
-	}
-	return rc.barsE[n-2].ohlcv, rc.barsE[n-1].ohlcv, true
-}
-
 // volumeAtLeast5 is volumeAtLeast on 5m bars: the just-closed 5m bar
 // against the average of the VolAvgBars5 before it.
 func (rc *rangeContext) volumeAtLeast5(pct int64, required bool) bool {
 	return volumeAtLeastSeries(rc.bars5, rc.cfg.VolAvgBars5, pct, required)
-}
-
-// volumeAtLeastE is volumeAtLeast5 on the EntryMinutes series (same
-// one-hour average window).
-func (rc *rangeContext) volumeAtLeastE(pct int64, required bool) bool {
-	k := 60
-	if m := rc.aggE.Minutes; m > 0 {
-		k = 60 / m
-	}
-	return volumeAtLeastSeries(rc.barsE, k, pct, required)
 }
 
 func volumeAtLeastSeries(bars []tfBar, k int, pct int64, required bool) bool {

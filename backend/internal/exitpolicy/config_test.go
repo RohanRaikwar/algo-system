@@ -21,7 +21,7 @@ func TestShippedConfigFileMatchesDefaults(t *testing.T) {
 
 func TestLoadConfigOverlaysFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "p.json")
-	body := `{"strategies":{"NIFTY50_SR":{"theta":{"max_flat_min":45}},"NIFTY50_GAMMA":{"mode":"shadow"}}}`
+	body := `{"strategies":{"NIFTY50_SR":{"theta":{"max_flat_min":45}},"OTHER":{"mode":"shadow"}}}`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -33,10 +33,21 @@ func TestLoadConfigOverlaysFields(t *testing.T) {
 	if sr.Mode != ModeAct || sr.Theta.MaxFlatMin != 45 || sr.Theta.DecayPctOfGain != 25 {
 		t.Fatalf("SR overlay lost defaults: %+v", sr)
 	}
-	if g := c.Strategies["NIFTY50_GAMMA"]; g.Mode != ModeShadow || g.Theta != DefaultThetaConfig() {
+	if g := c.Strategies["OTHER"]; g.Mode != ModeShadow || g.Theta != DefaultThetaConfig() {
 		t.Fatalf("new strategy must start from default theta: %+v", g)
 	}
-	if _, ok := c.Strategies["NIFTY50_RANGE"]; !ok {
+}
+
+func TestLoadConfigKeepsUnlistedDefault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "p.json")
+	if err := os.WriteFile(path, []byte(`{"strategies":{"OTHER":{"mode":"shadow"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.Strategies["NIFTY50_SR"]; !ok {
 		t.Fatal("unlisted default strategy dropped")
 	}
 }
@@ -66,10 +77,7 @@ func TestPlanFor(t *testing.T) {
 	if p, ok := c.PlanFor("NIFTY50_SR"); !ok || p.Mode != ModeAct || len(p.Rules) != 1 {
 		t.Fatalf("SR plan %+v ok=%v", p, ok)
 	}
-	if p, ok := c.PlanFor("NIFTY50_RANGE"); !ok || p.Mode != ModeShadow {
-		t.Fatalf("RANGE plan %+v ok=%v", p, ok)
-	}
-	if _, ok := c.PlanFor("NIFTY50_RANGE_IC"); ok {
+	if _, ok := c.PlanFor("OTHER"); ok {
 		t.Fatal("unlisted strategy must have no plan")
 	}
 	c.Strategies[model.RealOrderStrategy] = StrategyConfig{Mode: ModeAct, Theta: DefaultThetaConfig()}

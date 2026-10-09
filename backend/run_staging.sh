@@ -19,11 +19,12 @@ fi
 export STAGING_MODE=true
 
 echo "╔═══════════════════════════════════════════════════╗"
-echo "║  STAGING MODE                                    ║"
-echo "║  Services: tickserver + mdengine                 ║"
-echo "║            + api_gateway + stratengine + analyst + indengine + exitwatch ║"
-echo "║  Strategy: NIFTY50_FNO (dry-run)                 ║"
-echo "║  Data: Local Tickserver (simulated)              ║"
+echo "║  STAGING MODE                                     ║"
+echo "║  Services: tickserver + mdengine                  ║"
+echo "║            + api_gateway + stratengine + analyst  ║"
+echo "║            + indengine + exitwatch                ║"
+echo "║  Strategy: NIFTY50_SR (paper)                     ║"
+echo "║  Data: Local Tickserver (simulated)               ║"
 echo "╚═══════════════════════════════════════════════════╝"
 
 ./tmp/tickserver  2>&1 | sed 's/^/[tickserver]  /' &

@@ -148,9 +148,6 @@ func (svc *Service) exitPolicyOwnerFor(name string) exitPolicyOwner {
 	if svc.srStrategy != nil && name == svc.srStrategy.Name() {
 		return svc.srStrategy
 	}
-	if svc.nifty50RangeStrategy != nil && name == svc.nifty50RangeStrategy.Name() {
-		return svc.nifty50RangeStrategy
-	}
 	return nil
 }
 

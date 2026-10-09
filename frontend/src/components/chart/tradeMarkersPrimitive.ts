@@ -10,7 +10,8 @@ import type {
     Time,
 } from 'lightweight-charts';
 
-export type TradeMarkerKind = 'entry' | 'exit' | 'refused';
+// 'watch' is an exitwatch WATCH_EXIT: advice only, the position stays open.
+export type TradeMarkerKind = 'entry' | 'exit' | 'refused' | 'watch';
 
 export interface TradeMarker {
     time: number; // chart time (IST-shifted seconds, TF-aligned)
@@ -25,6 +26,7 @@ export const MARKER_COLORS: Record<TradeMarkerKind, string> = {
     entry: '#3ecf8e', // --sg-profit
     exit: '#f0616d', // --sg-loss
     refused: '#8a94a6', // --sg-text-3
+    watch: '#4fb8d6', // --sg-info, same as the signal log's Shadow badge
 };
 
 const FONT = "600 10px 'Inter', sans-serif";
@@ -213,6 +215,13 @@ function drawIcon(ctx: CanvasRenderingContext2D, kind: TradeMarkerKind, cx: numb
         ctx.moveTo(cx + h * 0.4, cy - h * 0.6);
         ctx.lineTo(cx + h, cy);
         ctx.lineTo(cx + h * 0.4, cy + h * 0.6);
+    } else if (kind === 'watch') {
+        // Eye: almond outline with pupil.
+        ctx.moveTo(cx - h, cy);
+        ctx.quadraticCurveTo(cx, cy - h * 1.3, cx + h, cy);
+        ctx.quadraticCurveTo(cx, cy + h * 1.3, cx - h, cy);
+        ctx.moveTo(cx + h * 0.35, cy);
+        ctx.arc(cx, cy, h * 0.35, 0, Math.PI * 2);
     } else {
         // Ban: circle with slash.
         ctx.arc(cx, cy, h, 0, Math.PI * 2);
@@ -248,7 +257,7 @@ class Renderer implements ISeriesPrimitivePaneRenderer {
         ctx.strokeStyle = color;
         ctx.globalAlpha = 0.7;
         ctx.lineWidth = 1;
-        ctx.setLineDash(m.kind === 'refused' ? [2, 2] : []);
+        ctx.setLineDash(m.kind === 'refused' || m.kind === 'watch' ? [2, 2] : []);
         ctx.beginPath();
         ctx.moveTo(cx, cy);
         if (Math.abs(cx - ax) < 1) {

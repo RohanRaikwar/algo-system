@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"trading-systemv1/internal/orderexec"
 	"trading-systemv1/internal/strategy"
 )
 
@@ -22,7 +23,7 @@ import (
 // ════════════════════════════════════════════════════════════════════
 
 const (
-	ladderStrikes       = 8     // strikes each side of ATM (covers condor wings too)
+	ladderStrikes       = 8     // strikes each side of ATM
 	ladderRecenterPaise = 10000 // re-center once spot moves 100 pts
 	ladderStrikeStep    = 50
 )
@@ -59,9 +60,6 @@ func optionTypeFor(side strategy.PositionSide) string {
 }
 
 func (svc *Service) entryCancellerFor(name string) entryCanceller {
-	if svc.nifty50RangeStrategy != nil && name == svc.nifty50RangeStrategy.Name() {
-		return svc.nifty50RangeStrategy
-	}
 	if svc.srStrategy != nil && name == svc.srStrategy.Name() {
 		return svc.srStrategy
 	}
@@ -69,9 +67,6 @@ func (svc *Service) entryCancellerFor(name string) entryCanceller {
 }
 
 func (svc *Service) positionTokenSetterFor(name string) positionTokenSetter {
-	if svc.nifty50RangeStrategy != nil && name == svc.nifty50RangeStrategy.Name() {
-		return svc.nifty50RangeStrategy
-	}
 	if svc.srStrategy != nil && name == svc.srStrategy.Name() {
 		return svc.srStrategy
 	}
@@ -82,7 +77,7 @@ func (svc *Service) positionTokenSetterFor(name string) positionTokenSetter {
 // It refuses a contract with no premium yet (and subscribes it, so a
 // later signal can use it).
 // NIFTY50_SR entries pick their strike from the chain by greeks first
-// (see sr_strike.go), which replaces the range delta guard.
+// (see sr_strike.go).
 func (svc *Service) resolveEntryStrike(ctx context.Context, sig *strategy.Signal, now time.Time) error {
 	// STRAT_PICKER_MODE=on: the picker's contract (quoted, streamed) or a
 	// refusal. Off/shadow fall through to the selection below unchanged.
@@ -102,11 +97,6 @@ func (svc *Service) resolveEntryStrike(ctx context.Context, sig *strategy.Signal
 	if err != nil {
 		return fmt.Errorf("strike %d%s not resolvable: %w", sig.Strike, optionTypeFor(sig.Side), err)
 	}
-	if svc.cfg.RangeDeltaGuard && !sr {
-		if info, err = svc.deltaChecked(sig, info, now); err != nil {
-			return err
-		}
-	}
 	if svc.orderExecutor.GetLTP(info.Token) <= 0 {
 		svc.subscribeTokens(ctx, info.Token)
 		return fmt.Errorf("no premium yet for %s (%s)", info.Symbol, info.Token)
@@ -121,7 +111,7 @@ func (svc *Service) resolveEntryStrike(ctx context.Context, sig *strategy.Signal
 	// Shadow mode: record what this old path chose against the picker's
 	// decision (recorded earlier in pickEntry), for the go/no-go review.
 	// No-op when there's no picker decision to attach it to (mode "off").
-	svc.recordOldChoice(sig.StrategyName, sig.FNOSymbol, nil)
+	svc.recordOldChoice(sig.StrategyName, sig.FNOSymbol)
 	return nil
 }
 
@@ -209,4 +199,24 @@ func absInt64(x int64) int64 {
 		return -x
 	}
 	return x
+}
+
+// legResolver resolves an option contract at a strike. Satisfied by
+// *orderexec.StrikePicker.
+type legResolver interface {
+	ResolveStrike(now time.Time, strike int64, optionType string) (orderexec.StrikeInfo, error)
+}
+
+func (svc *Service) resolverForLegs() legResolver {
+	if svc.legResolver != nil {
+		return svc.legResolver
+	}
+	if svc.strikePicker != nil {
+		return svc.strikePicker
+	}
+	svc.legPickerOnce.Do(func() {
+		// Offline instrument master first; SearchScrip only with a session.
+		svc.legPicker = orderexec.NewStrikePicker(svc.orderExecutor.GetSmartConnect())
+	})
+	return svc.legPicker
 }

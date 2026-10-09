@@ -47,55 +47,8 @@ func deltaSvc(g *fakeGreeks, spot int64, tokens ...string) *Service {
 }
 
 func buyCall(strike int64) strategy.Signal {
-	return strategy.Signal{StrategyName: "NIFTY50_RANGE", Action: strategy.ActionBuy, Side: strategy.SideCall,
+	return strategy.Signal{StrategyName: "TEST_STRAT", Action: strategy.ActionBuy, Side: strategy.SideCall,
 		Token: "99926000", Exchange: "NSE", Strike: strike}
-}
-
-func TestDeltaGuardAcceptsInBand(t *testing.T) {
-	g := &fakeGreeks{chain: []orderexec.OptionContract{contract(24000, "CE", 0.52)}}
-	svc := deltaSvc(g, 2400000, "CE24000")
-	sig := buyCall(24000)
-	if err := svc.resolveEntryStrike(context.Background(), &sig, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	if sig.FNOToken != "CE24000" {
-		t.Fatalf("token = %s", sig.FNOToken)
-	}
-}
-
-func TestDeltaGuardStepsTowardATMWhenTooFarOTM(t *testing.T) {
-	// Wanted 1 OTM (24050, band 0.30-0.50) but delta 0.22 near expiry → move to 24000 (ATM band 0.40-0.60).
-	g := &fakeGreeks{chain: []orderexec.OptionContract{contract(24050, "CE", 0.22), contract(24000, "CE", 0.48)}}
-	svc := deltaSvc(g, 2400000, "CE24050", "CE24000")
-	sig := buyCall(24050)
-	if err := svc.resolveEntryStrike(context.Background(), &sig, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	if sig.Strike != 24000 || sig.FNOToken != "CE24000" {
-		t.Fatalf("stepped to %d %s, want 24000", sig.Strike, sig.FNOToken)
-	}
-}
-
-func TestDeltaGuardPutUsesAbsDeltaAndStepsUp(t *testing.T) {
-	g := &fakeGreeks{chain: []orderexec.OptionContract{contract(23950, "PE", -0.20), contract(24000, "PE", -0.47)}}
-	svc := deltaSvc(g, 2400000, "PE23950", "PE24000")
-	sig := buyCall(23950)
-	sig.Side = strategy.SidePut
-	if err := svc.resolveEntryStrike(context.Background(), &sig, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	if sig.Strike != 24000 {
-		t.Fatalf("PUT stepped to %d, want 24000", sig.Strike)
-	}
-}
-
-func TestDeltaGuardRefusesWhenStillOutOfBand(t *testing.T) {
-	g := &fakeGreeks{chain: []orderexec.OptionContract{contract(24050, "CE", 0.22), contract(24000, "CE", 0.30)}}
-	svc := deltaSvc(g, 2400000, "CE24050", "CE24000")
-	sig := buyCall(24050)
-	if err := svc.resolveEntryStrike(context.Background(), &sig, time.Now()); err == nil {
-		t.Fatalf("entry accepted with delta out of band: %+v", sig)
-	}
 }
 
 func TestDeltaGuardRefusesWithoutGreeks(t *testing.T) {
@@ -135,15 +88,6 @@ func TestDeltaGuardCachesChain(t *testing.T) {
 	}
 	if g.calls != 1 {
 		t.Fatalf("OptionGreek called %d times, want 1 within the cache window", g.calls)
-	}
-}
-
-func TestDeltaBand(t *testing.T) {
-	if lo, hi := deltaBand(0); lo != 0.40 || hi != 0.60 {
-		t.Fatalf("ATM band %.2f-%.2f", lo, hi)
-	}
-	if lo, hi := deltaBand(1); lo < 0.2999 || lo > 0.3001 || hi < 0.4999 || hi > 0.5001 {
-		t.Fatalf("OTM1 band %.2f-%.2f", lo, hi)
 	}
 }
 
@@ -234,51 +178,4 @@ func TestNormIV(t *testing.T) {
 	if normIV(0.15) != 15 || normIV(15) != 15 || normIV(0) != 0 {
 		t.Fatal("normIV")
 	}
-}
-
-func TestBasketGuardChecksLegs(t *testing.T) {
-	now := marketOpenTime(t)
-	exp := testExpiry
-	mk := func(strike int64, opt string, iv, liq float64) orderexec.OptionContract {
-		return orderexec.OptionContract{Strike: strike, OptionType: orderexec.OptionType(opt), Delta: 0.2, IV: iv, LiquidityScore: liq, Expiry: exp}
-	}
-	chain := []orderexec.OptionContract{
-		mk(24300, "CE", 12, 50000), mk(24200, "CE", 13, 50000), mk(23700, "PE", 12, 50000), mk(23800, "PE", 13, 50000),
-	}
-	run := func(chain []orderexec.OptionContract) string {
-		basket := &fakeBasket{}
-		oe := orderexec.NewOrderExecutor(orderexec.Config{Qty: 1, FNOExchange: "NFO", LogPrefix: "[test]"})
-		svc := &Service{cfg: Config{EODExitTime: "15:20", RangeDeltaGuard: true, RangeMinLiquidity: 5000, RangeMinSellIV: 11},
-			orderExecutor: oe, legResolver: symbolResolver{}}
-		svc.greeks = &fakeGreeks{chain: chain}
-		svc.testBasket = basket
-		svc.legPriceWait = 10 * time.Millisecond
-		svc.orderRunner = func(context.Context, strategy.Signal) {}
-		svc.handleBasketSignal(context.Background(), condorBasket(strategy.ActionBuy), now)
-		waitUntil(t, "basket outcome", func() bool { basket.mu.Lock(); defer basket.mu.Unlock(); return basket.cancelled != "" })
-		return basket.cancelled
-	}
-	// Healthy chain: passes the guard, then cancels only for lack of premium ticks.
-	if r := run(chain); r == "" || !contains(r, "no premium") {
-		t.Fatalf("healthy chain cancelled for %q", r)
-	}
-	low := append([]orderexec.OptionContract(nil), chain...)
-	low[1].LiquidityScore = 100
-	if r := run(low); !contains(r, "liquidity") {
-		t.Fatalf("illiquid leg: %q", r)
-	}
-	cheap := append([]orderexec.OptionContract(nil), chain...)
-	cheap[1].IV, cheap[3].IV = 8, 9
-	if r := run(cheap); !contains(r, "IV") {
-		t.Fatalf("low IV condor: %q", r)
-	}
-}
-
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }

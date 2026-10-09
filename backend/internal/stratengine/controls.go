@@ -245,8 +245,8 @@ func (svc *Service) onFill(f orderexec.FillReport) {
 		qty = sig.Qty
 	}
 	// Single-leg fills are booked on the index instrument that opened them.
-	// A leg of a basket is booked on its own option contract, so the four
-	// legs of a condor never share a cost basis.
+	// A leg of a basket is booked on its own option contract, so legs
+	// never share a cost basis.
 	token, exchange := sig.Token, sig.Exchange
 	opening := f.Direction == "BUY"
 	if sig.Leg != "" && sig.FNOToken != "" {

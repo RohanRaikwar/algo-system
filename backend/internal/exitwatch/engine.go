@@ -437,11 +437,19 @@ func (e *Engine) signal(s *slot, ev Event, now time.Time) {
 	if ph := s.tr.Phase(); ph != PhaseNormal {
 		phase = " " + string(ph)
 	}
+	// WATCH_EXIT is priced at the option premium, like a strategy EXIT, so
+	// the signal log can show the P&L it would have locked in. The index
+	// level moves into the reason; "idx=" marks rows priced this way.
+	price, text := s.tr.idxLTP, ev.Text
+	if ev.Action == ActionWatchExit && s.tr.prem > 0 {
+		price = s.tr.prem
+		text += fmt.Sprintf(" entry=%s idx=%s", pts(p.FNOEntryPrice), pts(s.tr.idxLTP))
+	}
 	e.sink.Signal(SignalEvent{
 		StrategyName: p.Strategy, Action: ev.Action, Side: p.Side,
-		Token: p.IndexToken, Exchange: exch, Price: s.tr.idxLTP,
+		Token: p.IndexToken, Exchange: exch, Price: price,
 		EntryFNOPrice: p.FNOEntryPrice, CurrentFNOPrice: s.tr.prem,
-		Reason:   fmt.Sprintf("EXITWATCH %s%s %s: %s", mode, phase, ev.Reason, ev.Text),
+		Reason:   fmt.Sprintf("EXITWATCH %s%s %s: %s", mode, phase, ev.Reason, text),
 		FNOToken: p.FNOToken, OrderMode: mode,
 		TS: now.UTC().Format(time.RFC3339Nano), at: now,
 	})

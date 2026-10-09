@@ -10,8 +10,8 @@ const view = (strategy: string, side: string): ReversalView => ({
 
 describe('exit watch reversal store', () => {
     it('matches a live order by strategy and side', () => {
-        const p: ReversalPayload = { shadow: true, ts: '', positions: [view('NIFTY50_SR', 'CALL'), view('NIFTY50_RANGE', 'PUT')] };
-        expect(findReversal(p, 'NIFTY50_RANGE', 'put')?.side).toBe('PUT');
+        const p: ReversalPayload = { shadow: true, ts: '', positions: [view('NIFTY50_SR', 'CALL'), view('PAPER_OTHER', 'PUT')] };
+        expect(findReversal(p, 'PAPER_OTHER', 'put')?.side).toBe('PUT');
         expect(findReversal(p, 'NIFTY50_SR', 'PUT')).toBeNull();
         expect(findReversal(null, 'NIFTY50_SR', 'CALL')).toBeNull();
         expect(findReversal({ shadow: true, ts: '', positions: null as unknown as ReversalView[] }, 'X', 'CALL')).toBeNull();

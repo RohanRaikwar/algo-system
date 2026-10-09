@@ -3,7 +3,13 @@ import { LineStyle, type IPriceLine, type ISeriesApi } from 'lightweight-charts'
 import { useSRStore } from '../../../store/useSRStore';
 import type { SRView } from '../../../types/sr';
 import { nearestN, sourceLabel } from '../../sr/srFormat';
-import type { RangeLine } from './useRangeLines';
+
+export interface PriceLine {
+    price: number; // rupees
+    color: string;
+    style: LineStyle;
+    title: string;
+}
 
 const C = {
     support: '#3ecf8e', // --sg-profit
@@ -20,9 +26,9 @@ const C = {
  * supports (S1 closest) and resistances (R1 closest) around price, today's
  * high/low/open, the previous day's high/low, and SR's open position.
  */
-export function srLines(v: SRView | null, price: number | null): RangeLine[] {
+export function srLines(v: SRView | null, price: number | null): PriceLine[] {
     if (!v) return [];
-    const out: RangeLine[] = [];
+    const out: PriceLine[] = [];
     const add = (paise: number | undefined, color: string, style: LineStyle, title: string) => {
         if (paise && paise > 0) out.push({ price: paise / 100, color, style, title });
     };

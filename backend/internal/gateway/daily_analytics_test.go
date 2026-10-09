@@ -236,9 +236,9 @@ func TestPairCompletedTrades_CarriesFNOSymbol(t *testing.T) {
 		{ID: 2, Strategy: "NIFTY50_SR", Action: "EXIT", Side: "PUT", Exchange: "NSE", Token: "99926000",
 			Price: 15865, Qty: 65, EventTime: at(50)},
 		// Older journal rows: no symbol on the entry, the exit names it.
-		{ID: 3, Strategy: "NIFTY50_RANGE", Action: "BUY", Side: "CALL", Exchange: "NSE", Token: "99926000",
+		{ID: 3, Strategy: "PAPER_OTHER", Action: "BUY", Side: "CALL", Exchange: "NSE", Token: "99926000",
 			Price: 100, Qty: 1, EventTime: at(51)},
-		{ID: 4, Strategy: "NIFTY50_RANGE", Action: "EXIT", Side: "CALL", Exchange: "NSE", Token: "99926000",
+		{ID: 4, Strategy: "PAPER_OTHER", Action: "EXIT", Side: "CALL", Exchange: "NSE", Token: "99926000",
 			Price: 110, Qty: 1, FNOSymbol: "NIFTY06OCT2622600CE", EventTime: at(55)},
 	}
 	trades := pairCompletedTrades(rows)

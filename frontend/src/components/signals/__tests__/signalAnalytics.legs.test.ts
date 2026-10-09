@@ -7,7 +7,7 @@ let id = 0;
 function sig(p: Partial<SignalRecord>): SignalRecord {
     id += 1;
     return {
-        id, strategy: 'NIFTY50_RANGE_IC', action: 'BUY', side: 'CALL', token: '302', exchange: 'NFO',
+        id, strategy: 'PAPER_BASKET', action: 'BUY', side: 'CALL', token: '302', exchange: 'NFO',
         reason: '', ema_values: '', candle_ts: '', created_at: `2026-09-28T10:0${id % 10}:00Z`, ...p,
     };
 }
@@ -33,8 +33,8 @@ describe('multi-leg signals', () => {
             sig({ token: '304', side: 'PUT', reason: '[SHORT_PE 23800] IC ENTRY', price: 10000 }),
         ].reverse(); // store is newest-first
         const open = buildOpenOrders(signals, {
-            [buildLiveOrderKey('NIFTY50_RANGE_IC', 'CALL', 'SHORT_CE')]: {
-                strategy_name: 'NIFTY50_RANGE_IC', side: 'CALL', leg: 'SHORT_CE', short: true, current_fno_price: 6000,
+            [buildLiveOrderKey('PAPER_BASKET', 'CALL', 'SHORT_CE')]: {
+                strategy_name: 'PAPER_BASKET', side: 'CALL', leg: 'SHORT_CE', short: true, current_fno_price: 6000,
             },
         });
         expect(open).toHaveLength(4);
@@ -59,8 +59,8 @@ describe('multi-leg signals', () => {
 
     it('leaves single-leg pairing unchanged', () => {
         const signals = [
-            sig({ strategy: 'NIFTY50_RANGE', token: '99926000', exchange: 'NSE', reason: 'RANGE entry', price: 10000 }),
-            sig({ strategy: 'NIFTY50_RANGE', token: '99926000', exchange: 'NSE', action: 'EXIT', reason: 'RANGE TARGET', price: 12000 }),
+            sig({ strategy: 'PAPER_OTHER', token: '99926000', exchange: 'NSE', reason: 'RANGE entry', price: 10000 }),
+            sig({ strategy: 'PAPER_OTHER', token: '99926000', exchange: 'NSE', action: 'EXIT', reason: 'RANGE TARGET', price: 12000 }),
         ].reverse();
         const [e] = buildCompletedEvents(signals);
         expect(e.move).toBe(20);

@@ -53,7 +53,7 @@ func TestTFEngine_FormingCandleRejection(t *testing.T) {
 // TestTFEngine_RoutesCorrectTFs verifies only TF=60 candles reach the 1m strategy.
 func TestTFEngine_RoutesCorrectTFs(t *testing.T) {
 	engine := NewTFEngine(100)
-	strat := NewNifty50Range(1)
+	strat := NewNifty50SR(1, DefaultNifty50SRConfig())
 	engine.Register(strat)
 
 	ch := make(chan model.TFCandle, 20)

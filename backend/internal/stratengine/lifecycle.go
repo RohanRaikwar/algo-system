@@ -54,21 +54,6 @@ func (svc *Service) persistSnapshot(ctx context.Context) error {
 	defer svc.snapshotMu.Unlock()
 	snapshots := make(map[string]json.RawMessage, 4)
 
-	rangeSnap, err := svc.nifty50RangeStrategy.Snapshot()
-	if err != nil {
-		log.Printf("[stratengine] NIFTY50_RANGE snapshot error: %v", err)
-	} else {
-		snapshots["nifty50_range"] = rangeSnap
-	}
-
-	if svc.nifty50RangeICStrategy != nil {
-		if icSnap, err := svc.nifty50RangeICStrategy.Snapshot(); err != nil {
-			log.Printf("[stratengine] NIFTY50_RANGE_IC snapshot error: %v", err)
-		} else {
-			snapshots["nifty50_range_ic"] = icSnap
-		}
-	}
-
 	if svc.srStrategy != nil {
 		if srSnap, err := svc.srStrategy.Snapshot(); err != nil {
 			log.Printf("[stratengine] NIFTY50_SR snapshot error: %v", err)
@@ -152,22 +137,6 @@ func (svc *Service) restoreState(ctx context.Context) {
 	if err := json.Unmarshal(data, &snapshots); err != nil {
 		log.Printf("[stratengine] snapshot unmarshal error: %v", err)
 		return
-	}
-
-	if rangeData, ok := snapshots["nifty50_range"]; ok {
-		if err := svc.nifty50RangeStrategy.Restore(rangeData); err != nil {
-			log.Printf("[stratengine] NIFTY50_RANGE restore error: %v", err)
-		} else {
-			log.Println("[stratengine] ✅ NIFTY50_RANGE strategy state restored")
-		}
-	}
-
-	if icData, ok := snapshots["nifty50_range_ic"]; ok && svc.nifty50RangeICStrategy != nil {
-		if err := svc.nifty50RangeICStrategy.Restore(icData); err != nil {
-			log.Printf("[stratengine] NIFTY50_RANGE_IC restore error: %v", err)
-		} else {
-			log.Println("[stratengine] ✅ NIFTY50_RANGE_IC strategy state restored")
-		}
 	}
 
 	if srData, ok := snapshots["nifty50_sr"]; ok && svc.srStrategy != nil {
@@ -325,12 +294,6 @@ func (svc *Service) clearStalePositionsAt(now time.Time) {
 // not from today (IST "2006-01-02").
 func (svc *Service) forceExitStaleStrategies(today, reason string) []strategy.Signal {
 	var sigs []strategy.Signal
-	if svc.nifty50RangeStrategy != nil {
-		sigs = append(sigs, svc.nifty50RangeStrategy.ForceExitStale(today, reason)...)
-	}
-	if svc.nifty50RangeICStrategy != nil {
-		sigs = append(sigs, svc.nifty50RangeICStrategy.ForceExitStale(today, reason)...)
-	}
 	if svc.srStrategy != nil {
 		sigs = append(sigs, svc.srStrategy.ForceExitStale(today, reason)...)
 	}
@@ -504,12 +467,6 @@ func (svc *Service) runEODExit(ctx context.Context) {
 // forceExitAllStrategies collects every strategy's exit signals.
 func (svc *Service) forceExitAllStrategies(reason string) []strategy.Signal {
 	var sigs []strategy.Signal
-	if svc.nifty50RangeStrategy != nil {
-		sigs = append(sigs, svc.nifty50RangeStrategy.ForceExitAll(reason)...)
-	}
-	if svc.nifty50RangeICStrategy != nil {
-		sigs = append(sigs, svc.nifty50RangeICStrategy.ForceExitAll(reason)...)
-	}
 	if svc.srStrategy != nil {
 		sigs = append(sigs, svc.srStrategy.ForceExitAll(reason)...)
 	}

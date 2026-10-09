@@ -40,9 +40,6 @@ func (svc *Service) collectPosContexts() []model.PositionContext {
 	if svc.srStrategy != nil {
 		srcs = append(srcs, svc.srStrategy)
 	}
-	if svc.nifty50RangeStrategy != nil {
-		srcs = append(srcs, svc.nifty50RangeStrategy)
-	}
 	out := []model.PositionContext{}
 	for _, s := range srcs {
 		out = append(out, s.PositionContexts()...)

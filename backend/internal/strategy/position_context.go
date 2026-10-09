@@ -30,31 +30,6 @@ func (s *Nifty50SR) PositionContexts() []model.PositionContext {
 	return out
 }
 
-// PositionContexts reports the open NIFTY50_RANGE positions.
-func (s *Nifty50Range) PositionContexts() []model.PositionContext {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var out []model.PositionContext
-	for key, st := range s.instruments {
-		if st.Side == SideNone || st.TargetLevel == 0 {
-			continue
-		}
-		token := st.FNOToken
-		if token == "" {
-			token = s.cfg.FNOPutToken
-			if st.Side == SideCall {
-				token = s.cfg.FNOCallToken
-			}
-		}
-		out = append(out, model.PositionContext{
-			Strategy: s.Name(), Side: string(st.Side), IndexToken: bareToken(key),
-			IndexEntry: st.IndexEntry, TargetLevel: st.TargetLevel, StopLevel: st.StopLevel,
-			FNOToken: bareToken(token), FNOEntryPrice: st.FNOEntryPrice,
-		})
-	}
-	return out
-}
-
 // bareToken strips an "EXCH:" prefix.
 func bareToken(t string) string {
 	if i := strings.LastIndexByte(t, ':'); i >= 0 {

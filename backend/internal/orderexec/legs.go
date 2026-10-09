@@ -8,10 +8,10 @@ import (
 	"trading-systemv1/internal/strategy"
 )
 
-// executeLegPaper runs one leg of a multi-leg (basket) signal, e.g. an
-// iron-condor wing. Legs are paper-only by construction: this path never
-// touches the broker, the real-order gate, GTTs, the rate limiter or the
-// circuit breaker, whatever the strategy name or session state.
+// executeLegPaper runs one leg of a multi-leg (basket) signal. Legs are
+// paper-only by construction: this path never touches the broker, the
+// real-order gate, GTTs, the rate limiter or the circuit breaker, whatever
+// the strategy name or session state.
 //
 // A long leg opens with BUY and closes with SELL. A short leg (sig.Short)
 // opens with SELL and closes with BUY. Each leg is its own position under

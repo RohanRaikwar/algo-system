@@ -35,19 +35,17 @@ var istLoc = func() *time.Location {
 
 // Config holds all parameters for a backtest run.
 type Config struct {
-	DBPath           string                       // path to historical SQLite DB
-	Exchange         string                       // e.g. "NSE"
-	Token            string                       // e.g. "99926000"
-	Qty              int64                        // trade quantity for P&L
-	From             string                       // optional start date "YYYY-MM-DD" (empty = all)
-	To               string                       // optional end date "YYYY-MM-DD" (empty = all)
-	Output           string                       // "console", "json", "csv"
-	OutDir           string                       // output directory for file exports
-	StrategyType     string                       // "nifty50_range" (default), "nifty50_gamma"
-	StrategyCfgRange *strategy.Nifty50RangeConfig // optional override for nifty50_range
-	StrategyCfgGamma *strategy.Nifty50GammaConfig // optional override for nifty50_gamma
-	StrategyCfgSR    *strategy.Nifty50SRConfig    // optional override for nifty50_sr
-	CandleTF         int                          // candle timeframe in minutes (1=1m, 2=2m, 5=5m; default=1)
+	DBPath        string                    // path to historical SQLite DB
+	Exchange      string                    // e.g. "NSE"
+	Token         string                    // e.g. "99926000"
+	Qty           int64                     // trade quantity for P&L
+	From          string                    // optional start date "YYYY-MM-DD" (empty = all)
+	To            string                    // optional end date "YYYY-MM-DD" (empty = all)
+	Output        string                    // "console", "json", "csv"
+	OutDir        string                    // output directory for file exports
+	StrategyType  string                    // "nifty50_sr" (default, also "")
+	StrategyCfgSR *strategy.Nifty50SRConfig // optional override for nifty50_sr
+	CandleTF      int                       // candle timeframe in minutes (1=1m, 2=2m, 5=5m; default=1)
 
 	// ── FNO option price tracking ──
 	CallFNOToken string // NFO token for CALL option (e.g. "57709")
@@ -186,6 +184,8 @@ type Metrics struct {
 type Engine struct {
 	cfg Config
 
+	strat backtestStrategy // test hook: replayed instead of StrategyType
+
 	// FNO candle price maps: unix timestamp → close price (paise)
 	callPrices map[int64]int64
 	putPrices  map[int64]int64
@@ -210,9 +210,9 @@ func New(cfg Config) *Engine {
 // Run executes the backtest: load candles → replay strategy → compute metrics.
 func (e *Engine) Run() (*Result, error) {
 	switch strings.ToLower(strings.TrimSpace(e.cfg.StrategyType)) {
-	case "", "nifty50_range", "nifty50_gamma", "nifty50_sr":
+	case "", "nifty50_sr":
 	default:
-		return nil, fmt.Errorf("unknown strategy %q (want nifty50_range, nifty50_gamma or nifty50_sr)", e.cfg.StrategyType)
+		return nil, fmt.Errorf("unknown strategy %q (want nifty50_sr)", e.cfg.StrategyType)
 	}
 
 	// ── Open DB ──
@@ -656,46 +656,25 @@ type backtestStrategy interface {
 }
 
 func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
-	var strat backtestStrategy
-
-	switch strings.ToLower(strings.TrimSpace(e.cfg.StrategyType)) {
-	case "", "nifty50_range":
-		// Range-market S1 mean reversion + S2 breakout. The iron condor
-		// (nifty50_range_ic) is not replayable here: its legs are priced
-		// from per-strike option ticks this engine does not load.
-		rangeCfg := strategy.DefaultNifty50RangeConfig()
-		if e.cfg.StrategyCfgRange != nil {
-			rangeCfg = *e.cfg.StrategyCfgRange
+	strat := e.strat
+	if strat == nil {
+		switch strings.ToLower(strings.TrimSpace(e.cfg.StrategyType)) {
+		case "", "nifty50_sr":
+			// Regime-aware S/R. Live strikes come from the option chain by
+			// greeks; here the ATM strike is priced by -option-model. The index
+			// has no volume, so VWAP is a session TWAP.
+			srCfg := strategy.DefaultNifty50SRConfig()
+			if e.cfg.StrategyCfgSR != nil {
+				srCfg = *e.cfg.StrategyCfgSR
+			}
+			srCfg.IndexToken = e.cfg.Exchange + ":" + e.cfg.Token
+			strat = strategy.NewNifty50SR(e.cfg.Qty, srCfg)
+			log.Printf("[backtest] Using NIFTY50_SR strategy (range ADX<%.0f, trend ADX>%.0f, %d/4 confirmations, %d trades/day)",
+				srCfg.Context.RangeMaxADX, srCfg.Context.TrendMinADX, srCfg.MinConfirmations, srCfg.MaxTradesPerDay)
+		default:
+			// Run rejects unknown strategy types before replay starts.
+			return nil
 		}
-		rangeCfg.IndexToken = e.cfg.Exchange + ":" + e.cfg.Token
-		strat = strategy.NewNifty50RangeWithConfig(e.cfg.Qty, rangeCfg)
-		log.Printf("[backtest] Using NIFTY50_RANGE strategy (maxADX=%.0f, 15m levels, 5m RSI)", rangeCfg.Range.MaxADX)
-	case "nifty50_gamma":
-		// Expiry-day gamma blast. Holiday-shifted expiries aren't modeled
-		// (Tuesday only); run with -option-model for premium P&L.
-		gCfg := strategy.DefaultNifty50GammaConfig()
-		if e.cfg.StrategyCfgGamma != nil {
-			gCfg = *e.cfg.StrategyCfgGamma
-		}
-		gCfg.IndexToken = e.cfg.Exchange + ":" + e.cfg.Token
-		strat = strategy.NewNifty50Gamma(e.cfg.Qty, gCfg)
-		log.Printf("[backtest] Using NIFTY50_GAMMA strategy (range≤%dbps, adx<%.0f, SL %d%%, target %d%%)",
-			gCfg.MaxRangeBps, gCfg.MaxADX, gCfg.PremiumSLPct, gCfg.PremiumTargetPct)
-	case "nifty50_sr":
-		// Regime-aware S/R. Live strikes come from the option chain by
-		// greeks; here the ATM strike is priced by -option-model. The index
-		// has no volume, so VWAP is a session TWAP.
-		srCfg := strategy.DefaultNifty50SRConfig()
-		if e.cfg.StrategyCfgSR != nil {
-			srCfg = *e.cfg.StrategyCfgSR
-		}
-		srCfg.IndexToken = e.cfg.Exchange + ":" + e.cfg.Token
-		strat = strategy.NewNifty50SR(e.cfg.Qty, srCfg)
-		log.Printf("[backtest] Using NIFTY50_SR strategy (range ADX<%.0f, trend ADX>%.0f, %d/4 confirmations, %d trades/day)",
-			srCfg.Context.RangeMaxADX, srCfg.Context.TrendMinADX, srCfg.MinConfirmations, srCfg.MaxTradesPerDay)
-	default:
-		// Run rejects unknown strategy types before replay starts.
-		return nil
 	}
 
 	var trades []Trade
@@ -1330,7 +1309,7 @@ func (e *Engine) modelMidAt(t *Trade, c model.TFCandle) int64 {
 }
 
 // premiumTickStrategy exits on option-premium ticks (it knows its contract
-// token and entry premium), like NIFTY50_GAMMA.
+// token and entry premium).
 type premiumTickStrategy interface {
 	SetPositionToken(token string)
 	SetFNOEntryPrice(price int64)

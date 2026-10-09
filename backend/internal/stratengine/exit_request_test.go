@@ -46,7 +46,7 @@ func TestExitRequestRefusals(t *testing.T) {
 	svc := &Service{cfg: Config{ExitWatchAuto: []string{"NIFTY50_SR", "NIFTY50_FNO"}}, srStrategy: strategy.NewNifty50SR(65, strategy.DefaultNifty50SRConfig())}
 	cases := map[string]model.ExitRequest{
 		"real orders":  {Strategy: "NIFTY50_FNO", Side: "CALL", TS: now},
-		"not allowed":  {Strategy: "NIFTY50_RANGE", Side: "CALL", TS: now},
+		"not allowed":  {Strategy: "PAPER_OTHER", Side: "CALL", TS: now},
 		"stale":        {Strategy: "NIFTY50_SR", Side: "CALL", TS: now.Add(-time.Minute)},
 		"no timestamp": {Strategy: "NIFTY50_SR", Side: "CALL"},
 	}

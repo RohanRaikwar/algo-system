@@ -184,10 +184,11 @@ export function SignalsPage() {
 
     const openOrders = useMemo(() => buildOpenOrders(stratFiltered, liveOrdersByKey), [stratFiltered, liveOrdersByKey]);
 
-    // Build entry-price lookup: for each EXIT signal, find the matching BUY
-    // from the same day (IST) so SignalRow can display P&L.
+    // Build entry-price lookup: for each EXIT and WATCH_EXIT signal, find the
+    // matching BUY from the same day (IST) so SignalRow can display P&L. Keyed
+    // by signalKey: exitwatch rows come from a separate journal, so ids collide.
     const entryPriceMap = useMemo(() => {
-        const map = new Map<number, { price: number; time: string }>();
+        const map = new Map<string, { price: number; time: string }>();
         // Process oldest-first (signals are newest-first from store)
         const chronological = [...signals].reverse();
         const pending = new Map<string, { price: number; time: string; day: string }>();
@@ -203,12 +204,13 @@ export function SignalsPage() {
                 if (price > 0) {
                     pending.set(key, { price, time: ts, day });
                 }
-            } else if (sig.action === 'EXIT') {
+            } else if (sig.action === 'EXIT' || sig.action === 'WATCH_EXIT') {
                 const entry = pending.get(key);
                 if (entry && entry.day === day && entry.price > 0) {
-                    map.set(sig.id, { price: entry.price, time: entry.time });
+                    map.set(signalKey(sig), { price: entry.price, time: entry.time });
                 }
-                pending.delete(key);
+                // WATCH_EXIT is advice: the position stays open for the strategy EXIT.
+                if (sig.action === 'EXIT') pending.delete(key);
             }
         }
         return map;
@@ -410,7 +412,7 @@ export function SignalsPage() {
                                                         </thead>
                                                         <tbody>
                                                             {group.signals.map((sig) => {
-                                                                const entry = entryPriceMap.get(sig.id);
+                                                                const entry = entryPriceMap.get(signalKey(sig));
                                                                 return (
                                                                     <SignalRow
                                                                         key={signalKey(sig)}

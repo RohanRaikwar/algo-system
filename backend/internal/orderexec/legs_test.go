@@ -9,7 +9,7 @@ import (
 
 func legSig(action strategy.Action, leg, token string, side strategy.PositionSide, short bool) strategy.Signal {
 	return strategy.Signal{
-		StrategyName: "NIFTY50_RANGE_IC", Action: action, Side: side,
+		StrategyName: "PAPER_BASKET", Action: action, Side: side,
 		Token: "99926000", Exchange: "NSE", Qty: 75,
 		Leg: leg, FNOToken: token, FNOSymbol: "SYM" + token, Short: short,
 	}
@@ -25,7 +25,7 @@ func setLTP(oe *OrderExecutor, token string, p int64) {
 	oe.UpdateLTP(model.Tick{Token: token, Exchange: "NFO", Price: p})
 }
 
-func condorLegs() []strategy.Signal {
+func basketLegs() []strategy.Signal {
 	return []strategy.Signal{
 		legSig(strategy.ActionBuy, "LONG_CE", "301", strategy.SideCall, false),
 		legSig(strategy.ActionBuy, "SHORT_CE", "302", strategy.SideCall, true),
@@ -37,7 +37,7 @@ func condorLegs() []strategy.Signal {
 func TestLegs_FourLegsOpenUnderDistinctKeys(t *testing.T) {
 	oe := NewOrderExecutor(Config{Qty: 75, FNOExchange: "NFO", LogPrefix: "[test]"})
 	fills := captureFills(oe)
-	for i, s := range condorLegs() {
+	for i, s := range basketLegs() {
 		setLTP(oe, s.FNOToken, int64(1000*(i+1)))
 		oe.ExecuteSignal(s)
 	}
@@ -45,7 +45,7 @@ func TestLegs_FourLegsOpenUnderDistinctKeys(t *testing.T) {
 	if len(entries) != 4 {
 		t.Fatalf("entries = %d, want 4: %+v", len(entries), entries)
 	}
-	for _, s := range condorLegs() {
+	for _, s := range basketLegs() {
 		rec, ok := entries[oe.positionKey(s)]
 		if !ok || rec.Token != s.FNOToken || rec.Leg != s.Leg || rec.Short != s.Short || rec.Real {
 			t.Errorf("leg %s entry = %+v ok=%v", s.Leg, rec, ok)
@@ -114,15 +114,15 @@ func TestLegs_ExitWithNothingOpenIsNoop(t *testing.T) {
 func TestLegs_DontBlockSingleLegPositions(t *testing.T) {
 	oe := NewOrderExecutor(Config{Qty: 75, FNOExchange: "NFO", LogPrefix: "[test]",
 		CallFNOToken: "111", CallFNOSymbol: "CE", PutFNOToken: "222", PutFNOSymbol: "PE"})
-	for _, s := range condorLegs() {
+	for _, s := range basketLegs() {
 		setLTP(oe, s.FNOToken, 1000)
 		oe.ExecuteSignal(s)
 	}
 	// Same strategy name, single-leg PUT: legs must not count as an opposite-side conflict.
-	single := strategy.Signal{StrategyName: "NIFTY50_RANGE_IC", Action: strategy.ActionBuy, Side: strategy.SidePut, Token: "99926000", Exchange: "NSE"}
+	single := strategy.Signal{StrategyName: "PAPER_BASKET", Action: strategy.ActionBuy, Side: strategy.SidePut, Token: "99926000", Exchange: "NSE"}
 	setLTP(oe, "222", 1000)
 	oe.ExecuteSignal(single)
-	if _, ok := oe.GetEntryOrder("NIFTY50_RANGE_IC", strategy.SidePut); !ok {
+	if _, ok := oe.GetEntryOrder("PAPER_BASKET", strategy.SidePut); !ok {
 		t.Fatal("single-leg entry blocked by leg positions")
 	}
 }
@@ -167,16 +167,16 @@ func TestSingleLegEntryUsesSignalContract(t *testing.T) {
 	oe := NewOrderExecutor(Config{Qty: 75, FNOExchange: "NFO", LogPrefix: "[test]",
 		CallFNOToken: "ATM", CallFNOSymbol: "NIFTY_ATM_CE"})
 	fills := captureFills(oe)
-	s := strategy.Signal{StrategyName: "NIFTY50_RANGE", Action: strategy.ActionBuy, Side: strategy.SideCall,
+	s := strategy.Signal{StrategyName: "PAPER_OTHER", Action: strategy.ActionBuy, Side: strategy.SideCall,
 		Token: "99926000", Exchange: "NSE", FNOToken: "OTM1", FNOSymbol: "NIFTY_OTM1_CE", Strike: 24050}
 	setLTP(oe, "OTM1", 8000)
 	oe.ExecuteSignal(s)
-	rec, ok := oe.GetEntryOrder("NIFTY50_RANGE", strategy.SideCall)
+	rec, ok := oe.GetEntryOrder("PAPER_OTHER", strategy.SideCall)
 	if !ok || rec.Token != "OTM1" || rec.Symbol != "NIFTY_OTM1_CE" || rec.Price != 8000 {
 		t.Fatalf("entry = %+v ok=%v", rec, ok)
 	}
 	// The exit closes the locked contract even if it names none.
-	exit := strategy.Signal{StrategyName: "NIFTY50_RANGE", Action: strategy.ActionExit, Side: strategy.SideCall, Token: "99926000", Exchange: "NSE"}
+	exit := strategy.Signal{StrategyName: "PAPER_OTHER", Action: strategy.ActionExit, Side: strategy.SideCall, Token: "99926000", Exchange: "NSE"}
 	setLTP(oe, "OTM1", 9000)
 	oe.ExecuteSignal(exit)
 	got := fills.get()

@@ -1,7 +1,6 @@
 import type { SignalRecord } from '../../types/signal';
 import { inferSide } from './signalAnalytics';
-import { RANGE_KIND_LABEL, rangeEntryKind } from './rangeKind';
-import { isWatchAction, watchBadgeClass } from './watch';
+import { isWatchAction, watchBadgeClass, watchExitPricedAtPremium } from './watch';
 
 interface SignalRowProps {
     signal: SignalRecord;
@@ -90,10 +89,10 @@ function formatPrice(price?: number): string {
 export function SignalRow({ signal, isNew, entryPrice, entryTime }: SignalRowProps) {
     const side = inferSide(signal);
     const marketState = normalizeMarketState(signal.market_state, signal.reason);
-    const entryKind = rangeEntryKind(signal.reason);
 
-    // Compute P&L for EXIT signals when entry price is available
-    const isExit = signal.action === 'EXIT';
+    // Compute P&L for EXIT signals when entry price is available. A WATCH_EXIT
+    // shows the P&L exiting there would have locked in.
+    const isExit = signal.action === 'EXIT' || watchExitPricedAtPremium(signal);
     const exitPrice = signal.price;
     const hasPnL = isExit && entryPrice && entryPrice > 0 && exitPrice && exitPrice > 0;
     const pnlPaise = hasPnL ? exitPrice - entryPrice : 0;
@@ -148,11 +147,6 @@ export function SignalRow({ signal, isNew, entryPrice, entryTime }: SignalRowPro
             </td>
             <td className="strategy-cell" title={signal.strategy}>
                 {signal.strategy}
-                {entryKind && (
-                    <span className={`range-kind-badge ${entryKind.toLowerCase()}`} title="Range strategy entry type">
-                        {RANGE_KIND_LABEL[entryKind]}
-                    </span>
-                )}
             </td>
             <td>
                 <span className={`order-type-badge ${badgeClass}`} title={badgeTitle}>

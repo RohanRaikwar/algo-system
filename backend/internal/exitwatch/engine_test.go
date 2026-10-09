@@ -182,7 +182,8 @@ func TestEngineEmitsRunnerSignalsInPubSignalShape(t *testing.T) {
 	}
 	x := exits[0]
 	if x.StrategyName != "NIFTY50_SR" || x.Side != "CALL" || x.Token != "99926000" || x.Exchange != "NSE" ||
-		x.OrderMode != "SHADOW" || x.FNOToken != "OPT1" || x.EntryFNOPrice != entryPrem || x.Price <= entryIdx+40*pt ||
+		x.OrderMode != "SHADOW" || x.FNOToken != "OPT1" || x.EntryFNOPrice != entryPrem || x.Price != x.CurrentFNOPrice || x.Price <= entryPrem ||
+		!strings.Contains(x.Reason, " idx=") ||
 		!strings.HasPrefix(x.Reason, "EXITWATCH SHADOW RUNNER SR_REJECT: rejected at resistance") {
 		t.Fatalf("bad exit signal: %+v", x)
 	}

@@ -1005,15 +1005,6 @@
 .picker-dec-up { color: var(--sg-profit); font-weight: 600; }
 .picker-dec-down { color: var(--sg-loss); font-weight: 600; }
 
-.picker-dec-leg {
-    display: flex;
-    justify-content: space-between;
-    gap: 8px;
-    font-size: 0.8rem;
-}
-
-.picker-dec-leg .mono { overflow-wrap: anywhere; text-align: right; }
-
 .picker-dec-refused {
     font-size: 0.8rem;
     color: var(--sg-loss);
@@ -1573,21 +1564,6 @@
         transition: none !important;
     }
 }
-
-/* Range strategy entry type (Breakout / Flag / Mean rev.) */
-.range-kind-badge {
-    display: inline-block;
-    margin-left: 6px;
-    padding: 0 6px;
-    border-radius: var(--sg-r-pill);
-    font-size: 10px;
-    font-weight: 600;
-    vertical-align: 1px;
-    color: var(--sg-info);
-    background: var(--sg-info-soft);
-}
-.range-kind-badge.flag { color: var(--sg-warn); background: var(--sg-warn-soft); }
-.range-kind-badge.mean_reversion { color: var(--sg-muted); background: var(--sg-line-soft); }
 
 /* Traded option symbol (NIFTY06OCT2622500PE) in table rows. */
 .signal-row .mono {

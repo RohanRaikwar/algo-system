@@ -65,14 +65,11 @@ type Config struct {
 	EODExitTime string // "HH:MM" IST: auto-exit all positions and stop entries (default 15:15)
 
 	// ── Signal-Time Option Automation ──
-	// ── Range-market strategies (NIFTY_RANGE_MARKET_GUIDE.md), paper only ──
-	RangeEnabled    bool // NIFTY50_RANGE: S1 mean reversion + S2 breakout
-	RangeICEnabled  bool // NIFTY50_RANGE_IC: iron condor (multi-leg paper path)
-	RangeDeltaGuard bool // check the entry strike's delta via OptionGreek; refuse if out of band or unavailable
-	// Checks that run with the delta guard (they need the option chain). 0 = off.
+	// ── Entry quality checks (need the option chain; env names keep their
+	// historical STRAT_RANGE_ prefix). 0 = off.
+	RangeDeltaGuard   bool    // run entryQualityCheck on bought options; refuse if greeks unavailable
 	RangeMinLiquidity int64   // min max(volume, OI) of any contract traded
 	RangeMaxBuyIV     float64 // max IV % for a bought option
-	RangeMinSellIV    float64 // min average IV % of the condor's short legs
 	RangeCostMultiple int64   // expected option gain at target ≥ this × round-trip slippage
 
 	// ── NIFTY50_SR: regime-aware support/resistance, paper only ──
@@ -116,11 +113,6 @@ type Config struct {
 	PickMaxChainAge  time.Duration // greeks snapshot older than this refuses selection
 	PickRank         string        // delta (closest to band middle) | return (highest expected return on premium)
 	PickHoldMinutes  float64       // expected holding time for the return rank's decay term
-	// RANGE's picker intent has no theta/gamma cap by default (0 = off);
-	// unlike SR, RANGE's strike rule already targets a delta band, so a
-	// cap is opt-in via these envs.
-	RangePickMaxThetaPct float64
-	RangePickMaxGamma    float64
 
 	PaperSlippageBps      int64 // paper fills cross the spread: LTP ± max(LTP×bps/10000, min)
 	PaperSlippageMinPaise int64
@@ -168,13 +160,10 @@ func LoadConfig() Config {
 		// Dynamic strikes
 		DynamicStrikes: config.GetEnvBool("STRAT_DYNAMIC_STRIKES", false),
 		EODExitTime:    config.GetEnv("STRAT_EOD_EXIT_TIME", "15:15"),
-		// Range-market strategies
-		RangeEnabled:          config.GetEnvBool("STRAT_RANGE_ENABLED", true),
-		RangeICEnabled:        config.GetEnvBool("STRAT_RANGE_IC_ENABLED", true),
+		// Entry quality checks
 		RangeDeltaGuard:       config.GetEnvBool("STRAT_RANGE_DELTA_GUARD", true),
 		RangeMinLiquidity:     config.GetEnvInt64("STRAT_RANGE_MIN_LIQUIDITY", 5000),
 		RangeMaxBuyIV:         getEnvFloat("STRAT_RANGE_MAX_BUY_IV", 25),
-		RangeMinSellIV:        getEnvFloat("STRAT_RANGE_MIN_SELL_IV", 11),
 		RangeCostMultiple:     config.GetEnvInt64("STRAT_RANGE_COST_MULTIPLE", 3),
 		SREnabled:             config.GetEnvBool("STRAT_SR_ENABLED", true),
 		SRMaxDayLossPts:       config.GetEnvInt64("STRAT_SR_MAX_DAY_LOSS_PAISE", 6000),
@@ -192,7 +181,7 @@ func LoadConfig() Config {
 		SRBoxBars:             config.GetEnvInt("STRAT_SR_BOX_BARS", 6),
 		SRBoxATRPct:           config.GetEnvInt64("STRAT_SR_BOX_ATR_PCT", 150),
 		SRGateMode:            config.GetEnv("STRAT_SR_GATE_MODE", "warn"),
-		ExitWatchAuto:         splitList(config.GetEnv("STRAT_EXITWATCH_AUTO", "NIFTY50_SR")),
+		ExitWatchAuto:         splitList(config.GetEnv("STRAT_EXITWATCH_AUTO", "")),
 		ExitPolicyFile:        config.GetEnv("STRAT_EXITPOLICY_FILE", "config/exitpolicy.json"),
 		ExitPolicyDB:          config.GetEnv("STRAT_EXITPOLICY_DB", "data/exitpolicy.db"),
 		PickerMode:            config.GetEnv("STRAT_PICKER_MODE", "shadow"),
@@ -201,8 +190,6 @@ func LoadConfig() Config {
 		PickMaxChainAge:       getEnvDuration("STRAT_PICK_MAX_CHAIN_AGE", 2*time.Minute),
 		PickRank:              config.GetEnv("STRAT_PICK_RANK", "return"),
 		PickHoldMinutes:       getEnvFloat("STRAT_PICK_HOLD_MIN", 60),
-		RangePickMaxThetaPct:  getEnvFloat("STRAT_RANGE_PICK_MAX_THETA_PCT", 0),
-		RangePickMaxGamma:     getEnvFloat("STRAT_RANGE_PICK_MAX_GAMMA", 0),
 		PaperSlippageBps:      config.GetEnvInt64("STRAT_PAPER_SLIPPAGE_BPS", 50),
 		PaperSlippageMinPaise: config.GetEnvInt64("STRAT_PAPER_SLIPPAGE_MIN_PAISE", 50),
 		WarmupDays:            config.GetEnvInt("STRAT_RANGE_WARMUP_DAYS", 5),
@@ -272,7 +259,7 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// 15:15: after the strategies' own time exits (RANGE 15:00, SR 15:10),
+// 15:15: after NIFTY50_SR's own time exit (15:10),
 // with 15 minutes left before the 15:30 close.
 const defaultEODExitHour, defaultEODExitMin = 15, 15
 
