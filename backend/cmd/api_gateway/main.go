@@ -16,6 +16,7 @@ import (
 	"trading-systemv1/internal/heartbeat"
 	"trading-systemv1/internal/markethours"
 	"trading-systemv1/internal/model"
+	"trading-systemv1/internal/push"
 	"trading-systemv1/internal/store/sqlite"
 	"trading-systemv1/pkg/smartconnect"
 
@@ -118,6 +119,11 @@ func main() {
 	// Register all HTTP routes
 	mux := http.NewServeMux()
 	gateway.RegisterRoutes(mux, hub, rdb, ctx, tfs, tokenKeys, indicators, processStart, accountSvc)
+
+	// Web Push: subscription routes + pub:signal/pub:refused listener.
+	pushSender := push.NewSender(push.ConfigFromEnv(), rdb)
+	gateway.RegisterPushRoutes(mux, pushSender)
+	go push.NewService(pushSender, rdb).Run(ctx)
 
 	srv := &http.Server{Addr: listenAddr, Handler: mux}
 

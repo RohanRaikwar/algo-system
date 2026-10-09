@@ -3,6 +3,7 @@ import { Zap, LayoutDashboard, BarChart3, Activity } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { useWSStore } from '../../store/useWSStore';
 import { SignalBadge } from '../signals/SignalBadge';
+import { PushToggle } from './PushToggle';
 import styles from './Header.module.css';
 
 interface MarketStatus {
@@ -84,6 +85,7 @@ export function Header() {
             </nav>
 
             <div className={styles.status}>
+                <PushToggle />
                 <span className={`${styles.pill} ${styles.widePill} ${marketTone}`} title={nextOpen || marketLabel}>
                     <span className={styles.dot} aria-hidden />
                     {marketLabel}

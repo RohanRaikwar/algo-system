@@ -6,6 +6,8 @@ import { useWebSocket } from './hooks/useWebSocket';
 import { useSignalStore } from './store/useSignalStore';
 import { fetchSignals } from './services/api';
 import { useConfigQuery } from './hooks/useConfigQuery';
+import { initPushOnOpen } from './services/push';
+import { usePushStore } from './store/usePushStore';
 import { Header } from './components/layout/Header';
 import { StatusBar } from './components/layout/StatusBar';
 import { MobileNav } from './components/layout/MobileNav';
@@ -29,6 +31,10 @@ function AppShell() {
 
     // Connect WebSocket
     useWebSocket();
+
+    // Ask for notification permission on open, like a native app.
+    const setPushState = usePushStore(s => s.setState);
+    useEffect(() => initPushOnOpen(setPushState), [setPushState]);
 
     // Preload signal history so chart markers show without visiting Signals.
     const mergeSignals = useSignalStore(s => s.mergeSignals);
