@@ -79,8 +79,8 @@ func TestExitPolicyActsThroughOwner(t *testing.T) {
 
 func TestExitPolicyShadowDoesNotExit(t *testing.T) {
 	rg := &fakeOwner{fakeExiter: fakeExiter{open: true}}
-	svc, sent := policySvc(t, map[string]*fakeOwner{"NIFTY50_RANGE": rg})
-	openFlatCrushed(svc, "NIFTY50_RANGE")
+	svc, sent := policySvc(t, map[string]*fakeOwner{"PAPER_OTHER": rg})
+	openFlatCrushed(svc, "PAPER_OTHER")
 	svc.evaluateExitPolicy(epT0.Add(15 * time.Minute))
 	if rg.calls != 0 || len(*sent) != 0 {
 		t.Fatalf("shadow acted: calls=%d sent=%+v", rg.calls, *sent)
@@ -131,7 +131,7 @@ func TestExitPolicyGreeksAreConsumedOnce(t *testing.T) {
 
 func TestExitPolicyUnlistedAndLegsUntracked(t *testing.T) {
 	svc, _ := policySvc(t, nil)
-	svc.openExitPolicy(srEntry("NIFTY50_RANGE_IC", strategy.SideCall), "NIFTY50_RANGE_IC|CALL", "NFO:1", 10000, 2500000, epT0)
+	svc.openExitPolicy(srEntry("PAPER_BASKET", strategy.SideCall), "PAPER_BASKET|CALL", "NFO:1", 10000, 2500000, epT0)
 	leg := srEntry("NIFTY50_SR", strategy.SideCall)
 	leg.Leg = "CE_SHORT"
 	svc.openExitPolicy(leg, "NIFTY50_SR|CALL", "NFO:1", 10000, 2500000, epT0)

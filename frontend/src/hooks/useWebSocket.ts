@@ -19,7 +19,6 @@ import type {
     SubscribeMsg, IndicatorSpecMsg,
 } from '../types/ws';
 import type { LiveOrdersPayload, SignalPayload } from '../types/signal';
-import { useRangeStore, parseRangeView } from '../store/useRangeStore';
 import { useSRStore, parseSRView } from '../store/useSRStore';
 import { useOptionLTPStore } from '../store/useOptionLTPStore';
 import { useRefusedStore, parseRefusedView } from '../store/useRefusedStore';
@@ -366,13 +365,6 @@ export function useWebSocket() {
                 return;
             }
 
-            // ── Range strategy view (pub:range channel, full state) ──
-            if (envelope.channel === 'pub:range' && envelope.data) {
-                const view = parseRangeView(envelope.data);
-                if (view) useRangeStore.getState().setView(view);
-                return;
-            }
-
             // ── SR strategy view (pub:sr channel, full state) ──
             if (envelope.channel === 'pub:sr' && envelope.data) {
                 const view = parseSRView(envelope.data);
@@ -636,9 +628,6 @@ export function useWebSocket() {
                     if (u.channel === 'pub:orders') {
                         const orders = (u.data as LiveOrdersPayload)?.orders;
                         useLiveOrderStore.getState().setOrders(Array.isArray(orders) ? orders : []);
-                    } else if (u.channel === 'pub:range') {
-                        const view = parseRangeView(u.data);
-                        if (view) useRangeStore.getState().setView(view);
                     } else if (u.channel === 'pub:sr') {
                         const view = parseSRView(u.data);
                         if (view) useSRStore.getState().setView(view);

@@ -139,11 +139,6 @@ func (p *Picker) PickSingle(in SingleIntent, now time.Time) (Pick, Rejects, erro
 	return SelectSingle(c, in, p.cfg.Rules, p.env(now, at))
 }
 
-func (p *Picker) PickCondor(in CondorIntent, now time.Time) (CondorPick, Rejects, error) {
-	c, at := p.candidates()
-	return SelectCondor(c, in, p.cfg.Rules, p.env(now, at))
-}
-
 func (p *Picker) Status(now time.Time) Status {
 	_, at := p.chain.Snapshot()
 	st := Status{ChainAt: at, Streamed: p.univ.Size(), Spot: p.spot.Load()}

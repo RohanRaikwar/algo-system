@@ -11,7 +11,7 @@ export interface OpenOrder {
     entryTime: string;
     stoplossPrice: number | null;
     stoplossKind: string | null;
-    /** Multi-leg (iron condor) leg id, strike and whether it was sold to open */
+    /** Multi-leg basket leg id, strike and whether it was sold to open */
     leg?: string;
     strike?: number;
     short?: boolean;
@@ -120,7 +120,7 @@ export function buildOpenOrders(
 
     for (const sig of chronological) {
         // Legs are journaled under their own option token, so this key
-        // keeps the four legs of a condor apart.
+        // keeps the legs of a basket apart.
         const key = `${sig.strategy}|${sig.exchange}:${sig.token}`;
         const side = inferSide(sig);
         const li = legInfo(sig);

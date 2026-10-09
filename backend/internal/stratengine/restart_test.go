@@ -35,8 +35,8 @@ func TestExitAfterRestartUsesHeldContract(t *testing.T) {
 	if !ok || token != "SRCE" || price != 18405 {
 		t.Fatalf("restoredEntryFNO = %q %d %v, want SRCE 18405 true", token, price, ok)
 	}
-	if _, _, ok := svc.restoredEntryFNO("NIFTY50_RANGE|CALL"); ok {
-		t.Fatal("no entry for NIFTY50_RANGE|CALL, want ok=false")
+	if _, _, ok := svc.restoredEntryFNO("PAPER_OTHER|CALL"); ok {
+		t.Fatal("no entry for PAPER_OTHER|CALL, want ok=false")
 	}
 }
 

@@ -2,7 +2,6 @@ package stratengine
 
 import (
 	"fmt"
-	"log"
 	"math"
 	"strings"
 	"sync"
@@ -13,14 +12,10 @@ import (
 )
 
 // ════════════════════════════════════════════════════════════════════
-//  Delta guard for range entries — no fallback.
+//  Option-chain greeks for entry checks.
 //
-//  The strike rule (ATM, 1 OTM in a wide range) targets the guide's
-//  delta band. Near expiry an OTM strike's delta collapses, so the chosen
-//  contract's delta is checked against OptionGreek:
-//    band = [0.40, 0.60] − 0.10 × OTM steps  (ATM 0.40-0.60, OTM1 0.30-0.50)
-//  Out of band → one strike toward the band is tried; still out, or no
-//  greeks at all → the entry is refused. Nothing is guessed.
+//  The NIFTY chain with greeks (OptionGreek) backs NIFTY50_SR's strike
+//  pick and entryQualityCheck. No greeks → the check refuses the entry.
 // ════════════════════════════════════════════════════════════════════
 
 const deltaChainTTL = 60 * time.Second
@@ -36,11 +31,6 @@ type deltaState struct {
 	chainMu sync.Mutex
 	chain   []orderexec.OptionContract
 	chainAt time.Time
-}
-
-// deltaBand is the accepted |delta| range for a strike otm steps out of the money.
-func deltaBand(otm int) (lo, hi float64) {
-	return 0.40 - 0.10*float64(otm), 0.60 - 0.10*float64(otm)
 }
 
 func (svc *Service) greeksFor() (greeksSource, error) {
@@ -119,15 +109,6 @@ func findContract(chain []orderexec.OptionContract, info orderexec.StrikeInfo, o
 	return orderexec.OptionContract{}, false
 }
 
-// contractDelta finds |delta| for a strike/type/expiry in the chain.
-func contractDelta(chain []orderexec.OptionContract, info orderexec.StrikeInfo, opt string) (float64, bool) {
-	c, ok := findContract(chain, info, opt)
-	if !ok || c.Delta == 0 {
-		return 0, false
-	}
-	return math.Abs(c.Delta), true
-}
-
 // normIV returns IV in percent; a feed reporting a fraction (0.15) is scaled.
 func normIV(iv float64) float64 {
 	if iv > 0 && iv < 1.5 {
@@ -165,100 +146,4 @@ func (svc *Service) entryQualityCheck(sig *strategy.Signal, info orderexec.Strik
 		}
 	}
 	return nil
-}
-
-// basketQualityCheck applies liquidity to every leg and an IV floor to the
-// short legs (a condor sells premium; too little IV means too little credit).
-func (svc *Service) basketQualityCheck(legs []strategy.Signal, now time.Time) error {
-	chain, err := svc.optionChain(now)
-	if err != nil {
-		return fmt.Errorf("quality check: no option chain (%v)", err)
-	}
-	var ivSum float64
-	var ivN int
-	for _, l := range legs {
-		info := orderexec.StrikeInfo{Token: l.FNOToken, Symbol: l.FNOSymbol, Strike: l.Strike}
-		c, ok := findContract(chain, info, optionTypeFor(l.Side))
-		if !ok {
-			return fmt.Errorf("quality check: leg %s %s not in option chain", l.Leg, l.FNOSymbol)
-		}
-		if min := svc.cfg.RangeMinLiquidity; min > 0 && c.LiquidityScore < float64(min) {
-			return fmt.Errorf("leg %s liquidity %.0f below %d (volume/OI)", l.Leg, c.LiquidityScore, min)
-		}
-		if iv := normIV(c.IV); l.Short && iv > 0 {
-			ivSum += iv
-			ivN++
-		}
-	}
-	if min := svc.cfg.RangeMinSellIV; min > 0 && ivN > 0 && ivSum/float64(ivN) < min {
-		return fmt.Errorf("short-leg IV %.1f%% below %.1f%% — too little premium to sell", ivSum/float64(ivN), min)
-	}
-	return nil
-}
-
-// deltaChecked returns the contract to buy after the delta guard: info
-// itself, or one strike toward the band. Errors mean refuse the entry.
-func (svc *Service) deltaChecked(sig *strategy.Signal, info orderexec.StrikeInfo, now time.Time) (orderexec.StrikeInfo, error) {
-	chain, err := svc.optionChain(now)
-	if err != nil {
-		return info, fmt.Errorf("delta guard: no greeks (%v)", err)
-	}
-	opt := optionTypeFor(sig.Side)
-	spot := svc.orderExecutor.GetLTP(sig.Token)
-	if spot <= 0 {
-		spot = parseSignalClose(sig.Reason)
-	}
-	if spot <= 0 {
-		return info, fmt.Errorf("delta guard: no spot price")
-	}
-	atm := nearestStrike(spot, ladderStrikeStep)
-	// dir: +1 moves a strike further OTM, −1 toward ATM/ITM.
-	dir := int64(1)
-	if sig.Side == strategy.SidePut {
-		dir = -1
-	}
-	steps := func(strike int64) int {
-		n := int((strike - atm) * dir / ladderStrikeStep)
-		if n < 0 {
-			return 0
-		}
-		return n
-	}
-
-	check := func(c orderexec.StrikeInfo) (float64, bool, error) {
-		d, ok := contractDelta(chain, c, opt)
-		if !ok {
-			return 0, false, fmt.Errorf("delta guard: %s not in option chain", c.Symbol)
-		}
-		lo, hi := deltaBand(steps(c.Strike))
-		return d, d >= lo && d <= hi, nil
-	}
-
-	d, ok, err := check(info)
-	if err != nil {
-		return info, err
-	}
-	if ok {
-		return info, nil
-	}
-	// One strike toward the band: too far OTM (delta low) → toward ATM,
-	// too deep (delta high) → further OTM.
-	lo, _ := deltaBand(steps(info.Strike))
-	next := info.Strike + dir*ladderStrikeStep
-	if d < lo {
-		next = info.Strike - dir*ladderStrikeStep
-	}
-	alt, err := svc.resolverForLegs().ResolveStrike(now, next, opt)
-	if err != nil {
-		return info, fmt.Errorf("delta guard: %d%s delta %.2f out of band, %d%s unavailable: %v", info.Strike, opt, d, next, opt, err)
-	}
-	d2, ok2, err := check(alt)
-	if err != nil {
-		return info, err
-	}
-	if !ok2 {
-		return info, fmt.Errorf("delta guard: %d%s delta %.2f and %d%s delta %.2f both out of band", info.Strike, opt, d, next, opt, d2)
-	}
-	log.Printf("[stratengine] Δ guard: %d%s delta %.2f out of band → %d%s delta %.2f", info.Strike, opt, d, next, opt, d2)
-	return alt, nil
 }

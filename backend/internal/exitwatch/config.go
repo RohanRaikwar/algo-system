@@ -30,7 +30,7 @@ func LoadConfig() Config {
 		}
 	}
 	var auto []string
-	for _, s := range strings.Split(config.GetEnv("EXITWATCH_AUTO_EXIT", "NIFTY50_SR"), ",") {
+	for _, s := range strings.Split(config.GetEnv("EXITWATCH_AUTO_EXIT", ""), ",") {
 		if s = strings.TrimSpace(s); s != "" {
 			auto = append(auto, s)
 		}

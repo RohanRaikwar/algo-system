@@ -20,7 +20,7 @@ import (
 //
 //  STRAT_PICKER_MODE:
 //    off    — no picker; entries choose contracts as before.
-//    shadow — the picker decides every SR / RANGE / IC entry and the
+//    shadow — the picker decides every SR entry and the
 //             decision is recorded, but the entry uses the old path.
 //    on     — the picker's contract is bought; a picker refusal refuses
 //             the entry (never substituted). The picker refuses only when
@@ -30,19 +30,15 @@ import (
 // ════════════════════════════════════════════════════════════════════
 
 func (svc *Service) pickerConfig() optionpicker.Config {
-	strikes := 8
-	if svc.cfg.RangeICEnabled {
-		strikes = 12 // condor shorts sit past the range edges, wings 100 pts further
-	}
 	return optionpicker.Config{
 		Rules: optionpicker.Rules{
 			MaxSpreadPct: svc.cfg.PickMaxSpreadPct, MaxQuoteAge: svc.cfg.PickMaxQuoteAge, MaxChainAge: svc.cfg.PickMaxChainAge,
-			GammaDTE: svc.cfg.SRGammaDTE,
-			MaxBuyIV: svc.cfg.RangeMaxBuyIV, MinSellIV: svc.cfg.RangeMinSellIV,
+			GammaDTE:     svc.cfg.SRGammaDTE,
+			MaxBuyIV:     svc.cfg.RangeMaxBuyIV,
 			MinLiquidity: float64(svc.cfg.RangeMinLiquidity), CostMultiple: svc.cfg.RangeCostMultiple, RatePct: 6.5,
 			Rank: svc.cfg.PickRank, HoldMinutes: svc.cfg.PickHoldMinutes,
 		},
-		LadderStrikes: strikes, StrikeStep: ladderStrikeStep,
+		LadderStrikes: 8, StrikeStep: ladderStrikeStep,
 		ChainEvery: 15 * time.Second, ChainBackoff: 60 * time.Second, SearchEvery: time.Second,
 	}
 }
@@ -97,14 +93,14 @@ func (svc *Service) pickerEnabled() bool {
 	return svc.cfg.PickerMode == "shadow" || svc.cfg.PickerMode == "on"
 }
 
-// newPicker builds the picker; nil when the mode is off, or when SR, RANGE
-// and RANGE_IC are all disabled (no strategy would ever consume a decision,
-// so running the picker's background refresh would only add broker load).
+// newPicker builds the picker; nil when the mode is off, or when SR is
+// disabled (no strategy would ever consume a decision, so running the
+// picker's background refresh would only add broker load).
 func (svc *Service) newPicker() *optionpicker.Picker {
 	if !svc.pickerEnabled() || svc.orderExecutor == nil {
 		return nil
 	}
-	if !svc.cfg.SREnabled && !svc.cfg.RangeEnabled && !svc.cfg.RangeICEnabled {
+	if !svc.cfg.SREnabled {
 		return nil
 	}
 	sp := orderexec.NewStrikePicker(svc.orderExecutor.GetSmartConnect())
@@ -133,68 +129,8 @@ func (svc *Service) intentFor(sig strategy.Signal) (optionpicker.SingleIntent, b
 	switch {
 	case svc.isSRSignal(&sig):
 		return svc.srPickerIntent(opt, sig.TargetMove), true
-	case svc.nifty50RangeStrategy != nil && sig.StrategyName == svc.nifty50RangeStrategy.Name():
-		// The range strategy's strike rule (ATM, or OTM in a wide range)
-		// sets the delta band, as in the delta guard.
-		var spot int64
-		if svc.orderExecutor != nil {
-			spot = svc.orderExecutor.GetLTP(optionpicker.SpotToken)
-		}
-		if spot <= 0 {
-			spot = parseSignalClose(sig.Reason)
-		}
-		otm := 0
-		if spot > 0 && sig.Strike > 0 {
-			atm := nearestStrike(spot, ladderStrikeStep)
-			d := sig.Strike - atm
-			if sig.Side == strategy.SidePut {
-				d = -d
-			}
-			if d > 0 {
-				otm = int(d / ladderStrikeStep)
-			}
-		}
-		lo, hi := deltaBand(otm)
-		return optionpicker.SingleIntent{Strategy: sig.StrategyName, Option: opt, DeltaMin: lo, DeltaMax: hi, MinDTE: 1, TargetMove: sig.TargetMove,
-			MaxThetaPct: svc.cfg.RangePickMaxThetaPct, MaxGamma: svc.cfg.RangePickMaxGamma}, true
 	}
 	return optionpicker.SingleIntent{}, false
-}
-
-// condorIntentFor maps an iron-condor basket to the picker's condor intent.
-func (svc *Service) condorIntentFor(sig strategy.Signal) (optionpicker.CondorIntent, bool) {
-	var sCE, lCE, sPE, lPE int64
-	for _, l := range sig.Legs {
-		switch {
-		case l.OptionType == "CE" && l.Short:
-			sCE = l.Strike
-		case l.OptionType == "CE":
-			lCE = l.Strike
-		case l.OptionType == "PE" && l.Short:
-			sPE = l.Strike
-		default:
-			lPE = l.Strike
-		}
-	}
-	if len(sig.Legs) != 4 || sCE == 0 || sPE == 0 || lCE <= sCE || lPE >= sPE {
-		return optionpicker.CondorIntent{}, false
-	}
-	var minCreditPct int64
-	if svc.nifty50RangeICStrategy != nil {
-		minCreditPct = svc.nifty50RangeICStrategy.Config().MinCreditPct
-	}
-	return optionpicker.CondorIntent{Strategy: sig.StrategyName, ShortCEAtLeast: sCE, ShortPEAtMost: sPE,
-		MaxShortDelta: 0.25, WingWidth: lCE - sCE, MinDTE: 1, MinCreditPct: minCreditPct}, true
-}
-
-// pickerLeg is one leg of a condor decision, for the shadow/on dashboard.
-type pickerLeg struct {
-	Leg    string  `json:"leg"` // LONG_CE / SHORT_CE / LONG_PE / SHORT_PE
-	Strike int64   `json:"strike"`
-	Symbol string  `json:"symbol"`
-	Bid    int64   `json:"bid,omitempty"`
-	Ask    int64   `json:"ask,omitempty"`
-	Delta  float64 `json:"delta,omitempty"`
 }
 
 type pickerDecision struct {
@@ -212,20 +148,12 @@ type pickerDecision struct {
 	Bid      int64    `json:"bid,omitempty"`
 	Ask      int64    `json:"ask,omitempty"`
 
-	// Condor decisions: all four legs and the net credit (paise) the
-	// picker found, so a go/no-go review can see the whole basket instead
-	// of just the short CE leg mirrored into the fields above.
-	Legs   []pickerLeg `json:"legs,omitempty"`
-	Credit int64       `json:"credit,omitempty"`
-
 	// What the old (non-picker) path chose for the same entry, recorded by
 	// recordOldChoice after it runs — shadow mode never substitutes it, this
-	// is purely for comparison. OldSymbol is set for a single-leg entry,
-	// OldLegs for a basket. Agree reports whether the old choice matches
-	// the picker's pick (false when the picker refused).
-	OldSymbol string   `json:"old_symbol,omitempty"`
-	OldLegs   []string `json:"old_legs,omitempty"`
-	Agree     bool     `json:"agree,omitempty"`
+	// is purely for comparison. Agree reports whether the old choice
+	// matches the picker's pick (false when the picker refused).
+	OldSymbol string `json:"old_symbol,omitempty"`
+	Agree     bool   `json:"agree,omitempty"`
 
 	TS string `json:"ts"`
 }
@@ -265,78 +193,21 @@ func decisionFor(name, mode string, p optionpicker.Pick, err error, now time.Tim
 	return d
 }
 
-// legFrom converts one condor leg to its dashboard shape.
-func legFrom(leg string, p optionpicker.Pick) pickerLeg {
-	return pickerLeg{Leg: leg, Strike: p.Strike, Symbol: p.Symbol, Bid: p.Quote.Bid, Ask: p.Quote.Ask, Delta: math.Round(p.Delta*1000) / 1000}
-}
-
-// decisionForCondor is decisionFor for a condor: all four legs and the net
-// credit, so a refusal or a pick shows the whole basket. The short CE leg's
-// fields are mirrored into the flat Strike/Symbol/Token/Delta/IV/Bid/Ask so
-// existing single-leg-shaped consumers keep something sensible to show.
-func decisionForCondor(name, mode string, cp optionpicker.CondorPick, err error, now time.Time) pickerDecision {
-	d := pickerDecision{Strategy: name, Mode: mode, TS: now.UTC().Format(time.RFC3339)}
-	if err != nil {
-		d.Result, d.Reason = "refused", err.Error()
-		return d
-	}
-	d.Result = "picked"
-	d.Legs = []pickerLeg{
-		legFrom(strategy.LegLongCE, cp.LongCE),
-		legFrom(strategy.LegShortCE, cp.ShortCE),
-		legFrom(strategy.LegLongPE, cp.LongPE),
-		legFrom(strategy.LegShortPE, cp.ShortPE),
-	}
-	d.Credit = cp.Credit
-	d.Strike, d.Symbol, d.Token = cp.ShortCE.Strike, cp.ShortCE.Symbol, cp.ShortCE.Token
-	d.Delta, d.IV, d.Bid, d.Ask = math.Round(cp.ShortCE.Delta*1000)/1000, cp.ShortCE.IV, cp.ShortCE.Quote.Bid, cp.ShortCE.Quote.Ask
-	return d
-}
-
 // recordOldChoice attaches what the old (non-picker) path chose to the most
 // recently recorded picker decision for name, so a shadow/on-mode review
-// can see agree/disagree without the old path itself changing at all. A
-// single-leg entry passes symbol (legSymbols nil); a basket passes
-// legSymbols (symbol ""). No-op when there's no decision to attach to
-// (e.g. PickerMode "off", where the picker never runs).
-func (svc *Service) recordOldChoice(strategyName, symbol string, legSymbols []string) {
+// can see agree/disagree without the old path itself changing at all.
+// No-op when there's no decision to attach to (e.g. PickerMode "off",
+// where the picker never runs).
+func (svc *Service) recordOldChoice(strategyName, symbol string) {
 	svc.pickerDec.mu.Lock()
 	defer svc.pickerDec.mu.Unlock()
 	d, ok := svc.pickerDec.last[strategyName]
-	if !ok {
+	if !ok || symbol == "" {
 		return
 	}
-	picked := d.Result == "picked"
-	switch {
-	case len(legSymbols) > 0:
-		d.OldLegs = legSymbols
-		d.Agree = picked && legSymbolsMatch(d.Legs, legSymbols)
-	case symbol != "":
-		d.OldSymbol = symbol
-		d.Agree = picked && d.Symbol == symbol
-	default:
-		return
-	}
+	d.OldSymbol = symbol
+	d.Agree = d.Result == "picked" && d.Symbol == symbol
 	svc.pickerDec.last[strategyName] = d
-}
-
-// legSymbolsMatch reports whether old (the old path's leg symbols) is the
-// same set of contracts as the picker's legs, order not mattering.
-func legSymbolsMatch(legs []pickerLeg, old []string) bool {
-	if len(legs) != len(old) {
-		return false
-	}
-	want := make(map[string]int, len(old))
-	for _, s := range old {
-		want[s]++
-	}
-	for _, l := range legs {
-		if want[l.Symbol] == 0 {
-			return false
-		}
-		want[l.Symbol]--
-	}
-	return true
 }
 
 // pickEntry runs the picker on a single-leg entry. decided=false means the
@@ -361,38 +232,6 @@ func (svc *Service) pickEntry(sig *strategy.Signal, now time.Time) (bool, error)
 	}
 	sig.Strike, sig.FNOToken, sig.FNOSymbol = p.Strike, p.Token, p.Symbol
 	svc.noteEntryGreeks(sig.StrategyName, p.Delta, p.Theta)
-	return true, nil
-}
-
-// pickBasket is pickEntry for a condor basket; in "on" mode a success
-// sets every leg's strike and token.
-func (svc *Service) pickBasket(sig *strategy.Signal, now time.Time) (bool, error) {
-	if svc.picker == nil || !svc.pickerEnabled() || sig.Action != strategy.ActionBuy {
-		return false, nil
-	}
-	in, ok := svc.condorIntentFor(*sig)
-	if !ok {
-		return false, nil
-	}
-	cp, _, err := svc.picker.PickCondor(in, now)
-	svc.recordPickerDecision(decisionForCondor(sig.StrategyName, svc.cfg.PickerMode, cp, err, now))
-	if svc.cfg.PickerMode != "on" {
-		return false, nil
-	}
-	if err != nil {
-		return true, fmt.Errorf("picker: %w", err)
-	}
-	legs := map[bool]map[string]optionpicker.Pick{
-		true:  {"CE": cp.ShortCE, "PE": cp.ShortPE},
-		false: {"CE": cp.LongCE, "PE": cp.LongPE},
-	}
-	out := make([]strategy.LegSpec, len(sig.Legs)) // never write through to the strategy's slice
-	for i, l := range sig.Legs {
-		p := legs[l.Short][l.OptionType]
-		l.Strike, l.Token, l.Symbol = p.Strike, p.Token, p.Symbol
-		out[i] = l
-	}
-	sig.Legs = out
 	return true, nil
 }
 

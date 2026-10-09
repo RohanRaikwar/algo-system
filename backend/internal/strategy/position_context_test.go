@@ -22,17 +22,3 @@ func TestSRPositionContexts(t *testing.T) {
 		t.Fatalf("bad context: %+v", c)
 	}
 }
-
-func TestRangePositionContextsFallsBackToCfgToken(t *testing.T) {
-	cfg := DefaultNifty50RangeConfig()
-	cfg.FNOPutToken = "NFO:555"
-	s := NewNifty50RangeWithConfig(65, cfg)
-	st := newNifty50RangeState(cfg)
-	st.Side, st.IndexEntry, st.TargetLevel, st.StopLevel = SidePut, 2400000, 2396000, 2402000
-	s.instruments["NSE:99926000"] = st
-
-	got := s.PositionContexts()
-	if len(got) != 1 || got[0].FNOToken != "555" || got[0].Side != "PUT" {
-		t.Fatalf("bad contexts: %+v", got)
-	}
-}

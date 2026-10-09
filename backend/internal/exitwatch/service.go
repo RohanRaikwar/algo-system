@@ -517,15 +517,15 @@ func (svc *Service) signalLoop(ctx context.Context) {
 			return
 		case ev := <-svc.sigCh:
 			log.Printf("[exitwatch] signal %s %s %s: %s", ev.StrategyName, ev.Side, ev.Action, ev.Reason)
+			// Only WATCH_EXIT reaches pub:signal and the journal; HOLD/TIGHTEN
+			// stay in this log so the dashboard signal log is not flooded.
+			if ev.Action != ActionWatchExit {
+				continue
+			}
 			if b, err := json.Marshal(ev); err == nil {
 				if err := svc.rdb.Publish(ctx, signalChannel, string(b)).Err(); err != nil {
 					log.Printf("[exitwatch] signal publish error: %v", err)
 				}
-			}
-			// Only WATCH_EXIT is journaled; HOLD/TIGHTEN are live-only so the
-			// LOG history is not flooded with advisories.
-			if ev.Action != ActionWatchExit {
-				continue
 			}
 			sig := strategy.Signal{
 				StrategyName: ev.StrategyName, Action: strategy.Action(ev.Action),

@@ -21,3 +21,12 @@ export function watchBadgeClass(action: string): string {
     if (a === 'WATCH_TIGHTEN') return 'action-badge watch-tighten';
     return 'action-badge watch-hold';
 }
+
+/**
+ * True for a WATCH_EXIT priced at the option premium. Exitwatch tags those
+ * with "idx=" in the reason; older rows carry the index LTP as price, which
+ * cannot be compared with the entry premium.
+ */
+export function watchExitPricedAtPremium(sig: { action: string; reason?: string }): boolean {
+    return sig.action === 'WATCH_EXIT' && / idx=/.test(sig.reason ?? '');
+}

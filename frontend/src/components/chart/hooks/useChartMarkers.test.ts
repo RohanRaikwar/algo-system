@@ -202,7 +202,7 @@ describe('autoscaleMargins', () => {
 
 describe('signal dedupe across REST and WS', () => {
     const rest = {
-        ...entry, id: 42, strategy: 'NIFTY50_RANGE', side: 'PUT', price: 11040, qty: 65,
+        ...entry, id: 42, strategy: 'PAPER_OTHER', side: 'PUT', price: 11040, qty: 65,
         candle_ts: '2026-10-01T06:45:01Z', created_at: '2026-10-01T06:45:01Z',
     } as SignalRecord;
 
@@ -223,10 +223,10 @@ describe('signal dedupe across REST and WS', () => {
 describe('live P&L on open entries', () => {
     const now = new Date().toISOString();
     const buy = {
-        ...entry, strategy: 'NIFTY50_RANGE', side: 'PUT', price: 11040, qty: 65, candle_ts: now, created_at: now,
+        ...entry, strategy: 'PAPER_OTHER', side: 'PUT', price: 11040, qty: 65, candle_ts: now, created_at: now,
     } as SignalRecord;
-    const live = { NIFTY50_RANGE: { strategy_name: 'NIFTY50_RANGE', side: 'PUT', entry_fno_price: 11040, current_fno_price: 11230 } };
-    const orders = { 'NIFTY50_RANGE|PUT': live.NIFTY50_RANGE };
+    const live = { PAPER_OTHER: { strategy_name: 'PAPER_OTHER', side: 'PUT', entry_fno_price: 11040, current_fno_price: 11230 } };
+    const orders = { 'PAPER_OTHER|PUT': live.PAPER_OTHER };
 
     it('adds a live P&L row and OPEN label while the position is open', () => {
         const [m] = buildChartMarkers([buy], [], 'NSE:99926000', 60, false, orders);

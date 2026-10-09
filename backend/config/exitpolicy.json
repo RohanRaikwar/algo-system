@@ -9,16 +9,6 @@
         "fallback_flat_prem_pct": 10,
         "confirm_min": 2
       }
-    },
-    "NIFTY50_RANGE": {
-      "mode": "shadow",
-      "theta": {
-        "max_flat_min": 75,
-        "decay_pct_of_gain": 25,
-        "flat_progress_pct": 30,
-        "fallback_flat_prem_pct": 10,
-        "confirm_min": 2
-      }
     }
   }
 }

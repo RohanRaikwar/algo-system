@@ -33,7 +33,7 @@ describe('picker decisions', () => {
     it('formats picked and refused decisions', () => {
         expect(decisionLine({ strategy: 'NIFTY50_SR', mode: 'shadow', result: 'picked', symbol: 'NIFTY06OCT2622700CE', delta: 0.52, bid: 20280, ask: 20320, ts: '' }))
             .toBe('picked NIFTY06OCT2622700CE · Δ 0.52 · ₹202.80 / ₹203.20');
-        expect(decisionLine({ strategy: 'NIFTY50_RANGE', mode: 'on', result: 'refused', reason: 'no CE passes (dte 6; rejected spread 3)', ts: '' }))
+        expect(decisionLine({ strategy: 'NIFTY50_SR', mode: 'on', result: 'refused', reason: 'no CE passes (dte 6; rejected spread 3)', ts: '' }))
             .toBe('refused: no CE passes (dte 6; rejected spread 3)');
     });
 
@@ -45,22 +45,6 @@ describe('picker decisions', () => {
             .toBe('picked SYM · Δ 0.50 · ₹1.00 / ₹1.10 · old OTHER ✗ disagree');
         // No old choice recorded (e.g. "on" mode, or "off"): unchanged, no suffix.
         expect(decisionLine(base)).toBe('picked SYM · Δ 0.50 · ₹1.00 / ₹1.10');
-    });
-
-    it('shows all four legs and the credit for a condor decision', () => {
-        const legs = [
-            { leg: 'LONG_CE', strike: 23000, symbol: 'LCE' },
-            { leg: 'SHORT_CE', strike: 22900, symbol: 'SCE' },
-            { leg: 'LONG_PE', strike: 22400, symbol: 'LPE' },
-            { leg: 'SHORT_PE', strike: 22500, symbol: 'SPE' },
-        ];
-        expect(decisionLine({
-            strategy: 'NIFTY50_RANGE_IC', mode: 'shadow', result: 'picked', legs, credit: 4600,
-            old_legs: ['SCE', 'LCE', 'SPE', 'LPE'], agree: true, ts: '',
-        })).toBe('picked LONG_CE LCE, SHORT_CE SCE, LONG_PE LPE, SHORT_PE SPE · credit ₹46.00 · old SCE, LCE, SPE, LPE ✓ agree');
-
-        expect(decisionLine({ strategy: 'NIFTY50_RANGE_IC', mode: 'shadow', result: 'refused', reason: 'no condor legs pass', ts: '' }))
-            .toBe('refused: no condor legs pass');
     });
 });
 
@@ -78,7 +62,6 @@ describe('decision cards', () => {
         expect(comparison({ strategy: 'S', mode: 'shadow', result: 'picked', old_symbol: 'X', agree: true, ts: '' })).toBe('agree');
         expect(comparison({ strategy: 'S', mode: 'shadow', result: 'picked', old_symbol: 'X', agree: false, ts: '' })).toBe('disagree');
         expect(comparison({ strategy: 'S', mode: 'on', result: 'picked', ts: '' })).toBe('none');
-        expect(comparison({ strategy: 'IC', mode: 'shadow', result: 'picked', legs: [{ leg: 'SHORT_CE', strike: 1, symbol: 'A' }], old_legs: ['A'], agree: true, ts: '' })).toBe('agree');
     });
 
     it('formats the expected return', () => {
@@ -86,16 +69,6 @@ describe('decision cards', () => {
         expect(scoreText(-0.031)).toBe('−3.1%');
         expect(scoreText(undefined)).toBe('');
         expect(scoreText(0)).toBe('');
-    });
-});
-
-import { shortSymbol } from '../FnoInstrumentsTab';
-
-describe('shortSymbol', () => {
-    it('reduces an option symbol to strike and type', () => {
-        expect(shortSymbol('NIFTY06OCT2623050CE')).toBe('23050 CE');
-        expect(shortSymbol('NIFTY13OCT2622450PE')).toBe('22450 PE');
-        expect(shortSymbol('SOMETHING')).toBe('SOMETHING');
     });
 });
 

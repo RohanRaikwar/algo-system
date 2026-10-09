@@ -64,16 +64,6 @@ export interface SRLastPick extends SRContract {
     ts: string;
 }
 
-/** One leg of a condor decision. */
-export interface PickerLeg {
-    leg: string; // LONG_CE / SHORT_CE / LONG_PE / SHORT_PE
-    strike: number;
-    symbol: string;
-    bid?: number; // paise
-    ask?: number; // paise
-    delta?: number;
-}
-
 export interface PickerDecision {
     strategy: string;
     mode: string;
@@ -90,13 +80,9 @@ export interface PickerDecision {
     score?: number;
     /** Rules the pick breaks (nothing passed them all). */
     waived?: string[];
-    /** Condor decisions: all four legs and the net credit (paise). */
-    legs?: PickerLeg[];
-    credit?: number; // paise
     /** What the old (non-picker) path chose for the same entry — shadow
      *  mode never substitutes it, this is only for comparison. */
     old_symbol?: string;
-    old_legs?: string[];
     agree?: boolean;
     ts: string;
 }

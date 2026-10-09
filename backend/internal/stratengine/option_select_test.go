@@ -89,55 +89,20 @@ func TestRefreshLadderRecentersOnlyAfterMove(t *testing.T) {
 	}
 }
 
-type fakeCanceller struct {
-	side   strategy.PositionSide
-	reason string
-}
-
-func (f *fakeCanceller) CancelEntry(side strategy.PositionSide, reason string) { f.side, f.reason = side, reason }
-
 func TestResolveEntryStrikeUsesSignalStrike(t *testing.T) {
 	oe := orderexec.NewOrderExecutor(orderexec.Config{Qty: 1, FNOExchange: "NFO", LogPrefix: "[test]"})
 	oe.UpdateLTP(model.Tick{Token: "CE24050", Exchange: "NFO", Price: 9000})
 	svc := &Service{orderExecutor: oe, legResolver: &ladderResolver{}}
-	sig := strategy.Signal{StrategyName: "NIFTY50_RANGE", Action: strategy.ActionBuy, Side: strategy.SideCall, Strike: 24050}
+	sig := strategy.Signal{StrategyName: "TEST_STRAT", Action: strategy.ActionBuy, Side: strategy.SideCall, Strike: 24050}
 	if err := svc.resolveEntryStrike(context.Background(), &sig, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if sig.FNOToken != "CE24050" || sig.FNOSymbol != "NIFTYCE24050" {
 		t.Fatalf("sig = %+v", sig)
 	}
-	put := strategy.Signal{StrategyName: "NIFTY50_RANGE", Action: strategy.ActionBuy, Side: strategy.SidePut, Strike: 23950}
+	put := strategy.Signal{StrategyName: "TEST_STRAT", Action: strategy.ActionBuy, Side: strategy.SidePut, Strike: 23950}
 	if err := svc.resolveEntryStrike(context.Background(), &put, time.Now()); err == nil {
 		t.Fatal("a strike with no premium yet must be refused, not bought blind")
-	}
-}
-
-func TestBasketBelowMinCreditIsCancelled(t *testing.T) {
-	now := marketOpenTime(t)
-	oe := orderexec.NewOrderExecutor(orderexec.Config{Qty: 1, FNOExchange: "NFO", LogPrefix: "[test]"})
-	basket := &fakeBasket{minCredit: 2000}
-	var mu sync.Mutex
-	var dispatched []strategy.Signal
-	svc := &Service{cfg: Config{EODExitTime: "15:20"}, orderExecutor: oe, legResolver: fakeResolver{}}
-	svc.orderRunner = func(_ context.Context, s strategy.Signal) { mu.Lock(); dispatched = append(dispatched, s); mu.Unlock() }
-	svc.testBasket = basket
-	sig := condorBasket(strategy.ActionBuy)
-	legs, _ := svc.expandLegSignals(sig, now)
-	// Shorts 27.50, longs 20.00 → credit 2×2750 − 2×2000 = 1500 paise < 2000 minimum.
-	for _, l := range legs {
-		p := int64(2000)
-		if l.Short {
-			p = 2750
-		}
-		oe.UpdateLTP(model.Tick{Token: l.FNOToken, Exchange: "NFO", Price: p})
-	}
-	svc.handleBasketSignal(context.Background(), sig, now)
-	waitUntil(t, "basket cancelled", func() bool { basket.mu.Lock(); defer basket.mu.Unlock(); return basket.cancelled != "" })
-	mu.Lock()
-	defer mu.Unlock()
-	if len(dispatched) != 0 {
-		t.Fatalf("low-credit condor dispatched %d legs", len(dispatched))
 	}
 }
 

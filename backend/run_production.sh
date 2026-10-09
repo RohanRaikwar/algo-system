@@ -22,10 +22,11 @@ fi
 trap 'kill $(jobs -p) 2>/dev/null; exit 0' SIGINT SIGTERM
 
 echo "╔═══════════════════════════════════════════════════╗"
-echo "║  PRODUCTION MODE                                 ║"
-echo "║  Services: mdengine + api_gateway + stratengine + analyst + indengine + exitwatch ║"
-echo "║  Strategy: NIFTY50_FNO (live orders)             ║"
-echo "║  Data: Angel One Live Feed                       ║"
+echo "║  PRODUCTION MODE                                  ║"
+echo "║  Services: mdengine + api_gateway + stratengine   ║"
+echo "║            + analyst + indengine + exitwatch      ║"
+echo "║  Strategy: NIFTY50_SR (paper)                     ║"
+echo "║  Data: Angel One Live Feed                        ║"
 echo "╚═══════════════════════════════════════════════════╝"
 
 ./tmp/mdengine    2>&1 | sed 's/^/[mdengine]    /' &

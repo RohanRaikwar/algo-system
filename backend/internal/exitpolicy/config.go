@@ -36,11 +36,10 @@ func DefaultThetaConfig() ThetaConfig {
 	return ThetaConfig{MaxFlatMin: 75, DecayPctOfGain: 25, FlatProgressPct: 30, FallbackFlatPremPct: 10, ConfirmMin: 2}
 }
 
-// DefaultConfig: SR acts (paper only), RANGE runs shadow.
+// DefaultConfig: SR acts (paper only).
 func DefaultConfig() Config {
 	return Config{Strategies: map[string]StrategyConfig{
-		"NIFTY50_SR":    {Mode: ModeAct, Theta: DefaultThetaConfig()},
-		"NIFTY50_RANGE": {Mode: ModeShadow, Theta: DefaultThetaConfig()},
+		"NIFTY50_SR": {Mode: ModeAct, Theta: DefaultThetaConfig()},
 	}}
 }
 

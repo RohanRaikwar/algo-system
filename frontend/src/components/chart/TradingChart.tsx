@@ -10,7 +10,6 @@ import { useChartInteraction } from './hooks/useChartInteraction';
 import { useChartSubscription, usePaneSubscription } from './hooks/useChartSubscription';
 import { useChartLazyLoad } from './hooks/useChartLazyLoad';
 import { useChartMarkers } from './hooks/useChartMarkers';
-import { useRangeLines } from './hooks/useRangeLines';
 import { useSRLines } from './hooks/useSRLines';
 import { useSRBox } from './hooks/useSRBox';
 import { SRSituationCard } from './SRSituationCard';
@@ -106,7 +105,6 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
     usePaneSubscription(compact ? selectedToken : null, selectedTF);
     useChartLazyLoad(chartApi, selectedTF, selectedToken);
     useChartMarkers(candleSeries, selectedToken, selectedTF);
-    useRangeLines(candleSeries, selectedToken);
     const lastPaise = quote ? Math.round(quote.price * 100) : null;
     useSRLines(candleSeries, selectedToken, lastPaise, srOverlay);
     useSRBox(candleSeries, selectedToken, srOverlay);

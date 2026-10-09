@@ -19,14 +19,11 @@ type volumeTokenSetter interface {
 	SetVolumeToken(token string)
 }
 
-// refreshVolumeToken points NIFTY50_RANGE's and NIFTY50_SR's volume (and SR's VWAP) at the nearest
+// refreshVolumeToken points NIFTY50_SR's volume (and SR's VWAP) at the nearest
 // NIFTY future (the index has no volume) and subscribes its ticks. Without
 // a future the volume checks stay inactive (RequireVolume=false).
 func (svc *Service) refreshVolumeToken(ctx context.Context, now time.Time) {
 	var setters []volumeTokenSetter
-	if svc.cfg.RangeEnabled && svc.nifty50RangeStrategy != nil {
-		setters = append(setters, svc.nifty50RangeStrategy)
-	}
 	if svc.cfg.SREnabled && svc.srStrategy != nil {
 		setters = append(setters, svc.srStrategy)
 	}

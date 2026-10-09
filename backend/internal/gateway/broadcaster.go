@@ -118,7 +118,6 @@ var latestWinsChannels = map[string]bool{
 	"pub:orders":    true,
 	"pub:pnl":       true,
 	"pub:strike":    true,
-	"pub:range":     true,
 	"pub:sr":        true,
 	"pub:refused":   true,
 	"pub:strikesel": true,

@@ -87,7 +87,7 @@ function ExitWatchCell({ order }: { order: OpenOrder }) {
 
 function LiveOrderRow({ order }: { order: OpenOrder }) {
     const fallbackPrice = useFNOPrice(order.side);
-    // The ATM CE/PE premium is not a condor leg's premium: no fallback for legs.
+    // The ATM CE/PE premium is not a basket leg's premium: no fallback for legs.
     const currentPrice = order.currentPrice ?? (order.leg ? null : fallbackPrice);
 
     // P&L calculation using FNO option premium

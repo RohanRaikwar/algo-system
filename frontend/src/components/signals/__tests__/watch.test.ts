@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isWatchAction, matchesActionFilter, watchBadgeClass } from '../watch';
+import { isWatchAction, matchesActionFilter, watchBadgeClass, watchExitPricedAtPremium } from '../watch';
 import { buildCompletedEvents, buildOpenOrders } from '../signalAnalytics';
 import { buildChartMarkers } from '../../chart/hooks/useChartMarkers';
 import type { SignalRecord } from '../../../types/signal';
@@ -15,6 +15,13 @@ function sig(p: Partial<SignalRecord>): SignalRecord {
 }
 
 describe('exit watch signals', () => {
+    it('shows P&L only on WATCH_EXIT rows priced at the premium', () => {
+        expect(watchExitPricedAtPremium({ action: 'WATCH_EXIT', reason: 'EXITWATCH SHADOW SCORE: p=0.84 entry=153.65 idx=22191.95' })).toBe(true);
+        expect(watchExitPricedAtPremium({ action: 'WATCH_EXIT', reason: 'EXITWATCH AUTO SCORE: p=0.84 [velocity]' })).toBe(false);
+        expect(watchExitPricedAtPremium({ action: 'WATCH_TIGHTEN', reason: 'x idx=1' })).toBe(false);
+        expect(watchExitPricedAtPremium({ action: 'EXIT', reason: 'x idx=1' })).toBe(false);
+    });
+
     it('recognises WATCH_* actions and filters them', () => {
         expect(isWatchAction('WATCH_EXIT')).toBe(true);
         expect(isWatchAction('watch_hold')).toBe(true);
@@ -41,9 +48,22 @@ describe('exit watch signals', () => {
         expect(buildCompletedEvents(newestFirst)).toHaveLength(0);
     });
 
-    it('draws no chart marker', () => {
+    it('draws a watch card for WATCH_EXIT only, without closing the entry', () => {
         const markers = buildChartMarkers(newestFirst, [], 'NSE:99926000', 60, false);
-        expect(markers).toHaveLength(1);
-        expect(markers[0].kind).toBe('entry');
+        expect(markers.map(m => m.kind)).toEqual(['entry', 'watch']);
+        expect(markers[1].label).toBe('WATCH EXIT CALL');
+        // Old-format row (index price, no idx= tag): no premium, no P&L.
+        expect(markers[1].pnl).toBeUndefined();
+    });
+
+    it('shows would-be P&L on a premium-priced WATCH_EXIT and keeps the entry for the strategy EXIT', () => {
+        const b = sig({ action: 'BUY', price: 15365, qty: 65 });
+        const w = sig({ action: 'WATCH_EXIT', price: 16765, reason: 'EXITWATCH SHADOW SCORE: p=0.84 entry=153.65 idx=22191.95' });
+        const x = sig({ action: 'EXIT', price: 16000 });
+        const markers = buildChartMarkers([x, w, b], [], 'NSE:99926000', 60, false);
+        expect(markers.map(m => m.kind)).toEqual(['entry', 'watch', 'exit']);
+        expect(markers[1].pnl).toBe((16765 - 15365) * 65);
+        expect(markers[1].lines).toContain('@ ₹167.65');
+        expect(markers[2].pnl).toBe((16000 - 15365) * 65);
     });
 });

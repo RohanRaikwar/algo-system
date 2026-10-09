@@ -83,31 +83,25 @@ function ContractRows({ c, live = false }: { c: SRContract; live?: boolean }) {
 
 const paise = (v?: number) => (v && v > 0 ? `₹${(v / 100).toFixed(2)}` : '—');
 
-/** " · old <symbol(s)> ✓ agree" / "✗ disagree" — what the old (non-picker)
+/** " · old <symbol> ✓ agree" / "✗ disagree" — what the old (non-picker)
  * path chose for the same entry, blank when there's nothing to compare yet
  * (e.g. "on" mode or no entry signal). */
 function oldChoiceSuffix(d: PickerDecision): string {
-    const old = d.legs && d.legs.length ? (d.old_legs ?? []).join(', ') : (d.old_symbol ?? '');
+    const old = d.old_symbol ?? '';
     if (!old) return '';
     return ` · old ${old} ${d.agree ? '✓ agree' : '✗ disagree'}`;
 }
 
 export function decisionLine(d: PickerDecision): string {
-    if (d.legs && d.legs.length) {
-        if (d.result !== 'picked') return `refused: ${d.reason ?? ''}${oldChoiceSuffix(d)}`;
-        const legs = d.legs.map(l => `${l.leg} ${l.symbol}`).join(', ');
-        return `picked ${legs} · credit ${paise(d.credit)}${oldChoiceSuffix(d)}`;
-    }
     if (d.result !== 'picked') return `refused: ${d.reason ?? ''}${oldChoiceSuffix(d)}`;
     const score = d.score ? ` · exp ${d.score > 0 ? '+' : ''}${(d.score * 100).toFixed(1)}%` : '';
     return `picked ${d.symbol ?? d.strike} · Δ ${num(d.delta ?? NaN, 2)} · ${paise(d.bid)} / ${paise(d.ask)}${score}${oldChoiceSuffix(d)}`;
 }
 
 /** Old-vs-new comparison for a decision: nothing to compare in "on" mode or
- * before the old path chose (no old symbol/legs). */
+ * before the old path chose (no old symbol). */
 export function comparison(d: PickerDecision): 'agree' | 'disagree' | 'none' {
-    const hasOld = d.legs && d.legs.length ? (d.old_legs ?? []).length > 0 : !!d.old_symbol;
-    if (!hasOld) return 'none';
+    if (!d.old_symbol) return 'none';
     return d.agree ? 'agree' : 'disagree';
 }
 
@@ -116,12 +110,6 @@ export function scoreText(score?: number): string {
     if (!score) return '';
     const pct = (Math.abs(score) * 100).toFixed(1);
     return `${score > 0 ? '+' : '−'}${pct}%`;
-}
-
-/** "NIFTY06OCT2623050CE" → "23050 CE"; anything else unchanged. */
-export function shortSymbol(sym: string): string {
-    const m = /^NIFTY\d{2}[A-Z]{3}\d{2}(\d+)(CE|PE)$/.exec(sym);
-    return m ? `${m[1]} ${m[2]}` : sym;
 }
 
 const COMPARISON_LABEL = { agree: 'Agree', disagree: 'Disagree', none: 'No comparison' } as const;
@@ -177,19 +165,6 @@ function NewChoice({ d }: { d: PickerDecision }) {
     if (d.result !== 'picked') {
         return <div className="picker-dec-refused">Refused: {d.reason ?? '—'}</div>;
     }
-    if (d.legs && d.legs.length) {
-        return (
-            <>
-                {d.legs.map(l => (
-                    <div key={l.leg} className="picker-dec-leg" title={l.symbol}>
-                        <span className="fno-inst-label">{l.leg.replace('_', ' ')}</span>
-                        <span className="mono">{shortSymbol(l.symbol)}</span>
-                    </div>
-                ))}
-                <div className="picker-dec-leg"><span className="fno-inst-label">Credit</span><b>{paise(d.credit)}</b></div>
-            </>
-        );
-    }
     const score = scoreText(d.score);
     return (
         <>
@@ -205,22 +180,10 @@ function NewChoice({ d }: { d: PickerDecision }) {
 }
 
 function OldChoice({ d }: { d: PickerDecision }) {
-    const old = d.legs && d.legs.length ? d.old_legs ?? [] : d.old_symbol ? [d.old_symbol] : [];
-    if (old.length === 0) {
+    if (!d.old_symbol) {
         return <div className="fno-na">{d.mode === 'on' ? 'Picker decides (on mode)' : 'Not chosen yet'}</div>;
     }
-    if (d.legs && d.legs.length) {
-        return (
-            <>
-                {old.map(o => (
-                    <div key={o} className="picker-dec-leg" title={o}>
-                        <span className="mono">{shortSymbol(o)}</span>
-                    </div>
-                ))}
-            </>
-        );
-    }
-    return <>{old.map(o => <div key={o} className="mono picker-dec-symbol">{o}</div>)}</>;
+    return <div className="mono picker-dec-symbol">{d.old_symbol}</div>;
 }
 
 function DecisionCard({ d }: { d: PickerDecision }) {

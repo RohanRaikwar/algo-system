@@ -8,13 +8,14 @@ import (
 )
 
 // NIFTY50_SR dashboard state: regime, levels, what it waits for and why the
-// last entry bar was refused. Same pattern as publishRangeState: the full
+// last entry bar was refused. Same pattern as publishPnLSummary: the full
 // view is written to a Redis key (REST / SNAPSHOT after a gateway restart)
 // and published on a full-state channel for WS push.
 const (
 	srStateKey     = "sr:state"
 	srStateChannel = "pub:sr"
 	srStateEvery   = 5 * time.Second
+	srIndexKey     = "NSE:99926000"
 )
 
 // srStateLoop publishes NIFTY50_SR's view whenever it changes.
@@ -38,7 +39,7 @@ func (svc *Service) publishSRState(ctx context.Context, last string) string {
 	if svc.srStrategy == nil {
 		return last
 	}
-	v, ok := svc.srStrategy.View(rangeIndexKey)
+	v, ok := svc.srStrategy.View(srIndexKey)
 	if !ok {
 		return last
 	}

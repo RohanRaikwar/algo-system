@@ -19,21 +19,21 @@ func (f fakeFutures) NearestFuture(string, time.Time) (*orderexec.Instrument, er
 
 func TestRefreshVolumeToken(t *testing.T) {
 	var sent []string
-	svc := &Service{cfg: Config{RangeEnabled: true, FNOExchange: "NFO"}, nifty50RangeStrategy: strategy.NewNifty50Range(1)}
+	svc := &Service{cfg: Config{SREnabled: true, FNOExchange: "NFO"}, srStrategy: strategy.NewNifty50SR(1, strategy.DefaultNifty50SRConfig())}
 	svc.futures = fakeFutures{inst: &orderexec.Instrument{Token: "35001", Symbol: "NIFTY28OCT26FUT"}}
 	svc.subscribeHook = func(t []string) { sent = append(sent, t...) }
 	svc.refreshVolumeToken(context.Background(), time.Now())
-	if got := svc.nifty50RangeStrategy.Config().VolumeToken; got != "NFO:35001" {
+	if got := svc.srStrategy.Config().VolumeToken; got != "NFO:35001" {
 		t.Fatalf("volume token = %q", got)
 	}
 	if len(sent) != 1 || sent[0] != "35001" {
 		t.Fatalf("subscribed %v", sent)
 	}
 
-	svc2 := &Service{cfg: Config{RangeEnabled: true}, nifty50RangeStrategy: strategy.NewNifty50Range(1)}
+	svc2 := &Service{cfg: Config{SREnabled: true}, srStrategy: strategy.NewNifty50SR(1, strategy.DefaultNifty50SRConfig())}
 	svc2.futures = fakeFutures{err: errors.New("not loaded")}
 	svc2.refreshVolumeToken(context.Background(), time.Now())
-	if svc2.nifty50RangeStrategy.Config().VolumeToken != "" {
+	if svc2.srStrategy.Config().VolumeToken != "" {
 		t.Fatal("no future must leave volume unset")
 	}
 }

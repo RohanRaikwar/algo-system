@@ -10,7 +10,7 @@ import type { LiveOrderStatePayload, SignalRecord } from '../../../types/signal'
 import type { RefusedEntry } from '../../../types/refused';
 import { inferSide, legInfo } from '../../signals/signalAnalytics';
 import { TradeMarkersPrimitive, type TradeMarker } from '../tradeMarkersPrimitive';
-import { isWatchAction } from '../../signals/watch';
+import { isWatchAction, watchExitPricedAtPremium } from '../../signals/watch';
 
 function matchesToken(token: string, exchange: string, selectedToken: string): boolean {
     const full = exchange ? `${exchange}:${token}` : token;
@@ -124,6 +124,30 @@ function entryLines(s: SignalRecord): string[] {
     return lines;
 }
 
+/**
+ * Card for an exitwatch WATCH_EXIT: premium and the P&L exiting there would
+ * have locked in versus the open entry. Older rows carry the index LTP as
+ * price, so they show only the reason.
+ */
+function watchExitMarker(
+    s: SignalRecord, time: number, day: string,
+    entry: { price: number; qty: number; day: string } | undefined, compact: boolean,
+): TradeMarker {
+    const marker: TradeMarker = { time, kind: 'watch', label: label('WATCH EXIT', s.side, compact), side: sideShort(s.side), lines: [] };
+    const lines: string[] = [metaLine(s.strategy, s.created_at || s.candle_ts, 'advice')];
+    if (watchExitPricedAtPremium(s) && s.price && s.price > 0) {
+        lines.push(`@ ${rupees(s.price)}`);
+        if (entry && entry.price > 0 && entry.day === day) {
+            const qty = s.qty && s.qty > 0 ? s.qty : entry.qty > 0 ? entry.qty : 1;
+            marker.pnl = (s.price - entry.price) * qty;
+            lines.push(`P&L ${marker.pnl > 0 ? '+' : ''}${rupees(marker.pnl)} if exited`);
+        }
+    }
+    lines.push(...reasonLines(s.reason));
+    if (!compact) marker.lines = lines;
+    return marker;
+}
+
 function label(verb: string, side: string | undefined, compact: boolean, warned = false): string {
     return compact ? '' : [verb, sideLong(side), warned ? '⚠' : ''].filter(Boolean).join(' ');
 }
@@ -147,9 +171,10 @@ export function buildChartMarkers(
     const out: TradeMarker[] = [];
 
     // Oldest first so each EXIT pairs with the BUY before it (same key, same IST day).
-    // WATCH_* exit-watch advice is not a trade: no marker, no pairing.
+    // WATCH_* exit-watch advice is not a trade: only WATCH_EXIT gets a card,
+    // and it reads the open entry without closing it.
     const mine = signals
-        .filter(s => !isWatchAction(s.action) && matchesToken(s.token, s.exchange, selectedToken))
+        .filter(s => (!isWatchAction(s.action) || s.action === 'WATCH_EXIT') && matchesToken(s.token, s.exchange, selectedToken))
         .sort((a, b) => Date.parse(signalTs(a)) - Date.parse(signalTs(b)));
     const open = new Map<string, { price: number; qty: number; day: string; marker: TradeMarker; signal: SignalRecord }>();
 
@@ -160,6 +185,11 @@ export function buildChartMarkers(
         const isBuy = s.action.toUpperCase() === 'BUY';
         const key = `${s.strategy}|${inferSide(s)}|${legInfo(s)?.leg ?? ''}`;
         const day = IST_DAY.format(new Date(ts));
+
+        if (s.action === 'WATCH_EXIT') {
+            out.push(watchExitMarker(s, time, day, open.get(key), compact));
+            continue;
+        }
         const marker: TradeMarker = {
             time,
             kind: isBuy ? 'entry' : 'exit',

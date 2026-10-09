@@ -91,12 +91,6 @@ const (
 // tf1m is the 1-minute timeframe value in seconds.
 const tf1m = 60
 
-// tf2m is the 2-minute timeframe value in seconds.
-const tf2m = 120
-
-// tf3m is the 3-minute timeframe value in seconds.
-const tf3m = 180
-
 // Strategy is the interface that all trading strategies must implement.
 type Strategy interface {
 	// Name returns the unique name of the strategy.
@@ -309,45 +303,10 @@ func (e *TFEngine) RunTicks(ctx context.Context, tickCh <-chan model.Tick) {
 	}
 }
 
-// sortSignals sorts a batch of simultaneous signals.
-// Rule 1: Exits always come before Entries.
-// Rule 2: Strategy Priority (5M3M > SL2 > 10PTS > RANGE > FNO > SL).
+// sortSignals sorts a batch of simultaneous signals: exits before entries,
+// otherwise keeping arrival order.
 func sortSignals(batch []Signal) {
-	strategyPriority := func(name string) int {
-		switch name {
-		case "NIFTY50_FNO_5M3M":
-			return 1
-		case "NIFTY50_FNO_SL2":
-			return 2
-		case "NIFTY50_10PTS":
-			return 3
-		case "NIFTY50_RANGE":
-			return 4
-		case "NIFTY50_RANGE_IC":
-			return 4
-		case "NIFTY50_GAMMA":
-			return 4
-		case "NIFTY50_FNO":
-			return 5
-		case "NIFTY50_FNO_SL":
-			return 6
-		default:
-			return 7
-		}
-	}
-
 	sort.SliceStable(batch, func(i, j int) bool {
-		// Rule 1: Exits first
-		isExitI := batch[i].Action == ActionExit
-		isExitJ := batch[j].Action == ActionExit
-		if isExitI && !isExitJ {
-			return true
-		}
-		if !isExitI && isExitJ {
-			return false
-		}
-
-		// Rule 2: Strategy Tier
-		return strategyPriority(batch[i].StrategyName) < strategyPriority(batch[j].StrategyName)
+		return batch[i].Action == ActionExit && batch[j].Action != ActionExit
 	})
 }

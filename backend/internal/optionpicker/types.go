@@ -39,7 +39,6 @@ type Rules struct {
 	MaxChainAge  time.Duration // required (> 0)
 	GammaDTE     int           // window (days to expiry) an intent's MaxGamma applies within
 	MaxBuyIV     float64       // percent
-	MinSellIV    float64       // percent, average of sold legs
 	MinLiquidity float64       // max(live OI, chain liquidity)
 	CostMultiple int64         // bought: |delta| × TargetMove ≥ k × (ask − bid)
 	RatePct      float64       // risk-free rate for greeks, e.g. 6.5
@@ -71,17 +70,6 @@ type SingleIntent struct {
 	MaxGamma        float64 // gamma cap within Rules.GammaDTE days, 0 = off
 }
 
-// CondorIntent asks for a short iron condor anchored at the range edges.
-type CondorIntent struct {
-	Strategy       string
-	ShortCEAtLeast int64 // index points
-	ShortPEAtMost  int64
-	MaxShortDelta  float64
-	WingWidth      int64 // index points
-	MinDTE         int
-	MinCreditPct   int64 // net credit ≥ this % of the wing width
-}
-
 // Pick is a chosen contract with the greeks and quote it was chosen on.
 type Pick struct {
 	Contract
@@ -97,18 +85,12 @@ type Pick struct {
 	Waived []string
 }
 
-// CondorPick is the four legs of a condor and its net credit (paise).
-type CondorPick struct {
-	ShortCE, LongCE, ShortPE, LongPE Pick
-	Credit                           int64
-}
-
 // Rejects counts candidates dropped per rule name.
 type Rejects map[string]int
 
 // String lists rejects as "delta 12, spread 1" in rule order.
 func (r Rejects) String() string {
-	order := []string{"not streamed", "quote stale", "crossed", "spread", "no iv", "delta", "theta", "gamma", "iv", "liquidity", "cost", "credit", "sell iv"}
+	order := []string{"not streamed", "quote stale", "crossed", "spread", "no iv", "delta", "theta", "gamma", "iv", "liquidity", "cost"}
 	s := ""
 	for _, k := range order {
 		if n := r[k]; n > 0 {

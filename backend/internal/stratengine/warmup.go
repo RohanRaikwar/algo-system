@@ -15,18 +15,12 @@ type rangeWarmer interface {
 	Warmup(candles []model.TFCandle) int
 }
 
-// warmupRangeStrategies replays recent 1m NIFTY candles into the range
-// strategies so 15m ADX and support/resistance are ready at the open.
+// warmupRangeStrategies replays recent 1m NIFTY candles into NIFTY50_SR
+// so 15m ADX and support/resistance are ready at the open.
 // Strategies dedupe on candle time, so candles a restored snapshot
 // already holds are skipped. A missing store means a cold start.
 func (svc *Service) warmupRangeStrategies() {
 	var warmers []rangeWarmer
-	if svc.cfg.RangeEnabled && svc.nifty50RangeStrategy != nil {
-		warmers = append(warmers, svc.nifty50RangeStrategy)
-	}
-	if svc.cfg.RangeICEnabled && svc.nifty50RangeICStrategy != nil {
-		warmers = append(warmers, svc.nifty50RangeICStrategy)
-	}
 	if svc.cfg.SREnabled && svc.srStrategy != nil {
 		warmers = append(warmers, svc.srStrategy)
 	}

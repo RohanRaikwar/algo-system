@@ -15,7 +15,7 @@ func TestJournalRecordsTradedOption(t *testing.T) {
 	defer j.Close()
 
 	sig := Signal{
-		StrategyName: "NIFTY50_RANGE", Action: ActionBuy, Side: SidePut,
+		StrategyName: "NIFTY50_SR", Action: ActionBuy, Side: SidePut,
 		Token: "99926000", Exchange: "NSE", Price: 11040, Qty: 65,
 		FNOToken: "45678", FNOSymbol: "NIFTY06OCT2622500PE",
 	}

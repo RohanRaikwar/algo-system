@@ -10,17 +10,17 @@ import (
 
 func TestServiceSyncStrategyFNOTokensQualifiesExchange(t *testing.T) {
 	svc := &Service{
-		cfg:                  Config{FNOExchange: "NFO"},
-		nifty50RangeStrategy: strategy.NewNifty50Range(1),
+		cfg:        Config{FNOExchange: "NFO"},
+		srStrategy: strategy.NewNifty50SR(1, strategy.DefaultNifty50SRConfig()),
 	}
 
 	svc.syncStrategyFNOTokens("62582", "62587")
 
-	if got := svc.nifty50RangeStrategy.Config().FNOCallToken; got != "NFO:62582" {
-		t.Fatalf("nifty50 range call token = %q, want %q", got, "NFO:62582")
+	if got := svc.srStrategy.Config().FNOCallToken; got != "NFO:62582" {
+		t.Fatalf("nifty50 sr call token = %q, want %q", got, "NFO:62582")
 	}
-	if got := svc.nifty50RangeStrategy.Config().FNOPutToken; got != "NFO:62587" {
-		t.Fatalf("nifty50 range put token = %q, want %q", got, "NFO:62587")
+	if got := svc.srStrategy.Config().FNOPutToken; got != "NFO:62587" {
+		t.Fatalf("nifty50 sr put token = %q, want %q", got, "NFO:62587")
 	}
 }
 

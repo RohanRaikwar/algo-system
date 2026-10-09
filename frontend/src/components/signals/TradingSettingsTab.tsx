@@ -154,7 +154,7 @@ export function TradingSettingsTab() {
                 <ul className="settings-list">
                     <li><span>Live or paper orders</span><code>STRAT_LIVE_ORDERS</code></li>
                     <li><span>Quantity (lots)</span><code>STRAT_QTY</code></li>
-                    <li><span>Range strategies on/off</span><code>STRAT_RANGE_ENABLED</code> <code>STRAT_RANGE_IC_ENABLED</code></li>
+                    <li><span>NIFTY50_SR on/off</span><code>STRAT_SR_ENABLED</code></li>
                     <li><span>End-of-day exit time</span><code>STRAT_EOD_EXIT_TIME</code></li>
                     <li><span>Targets and stop losses</span><span>Defined in strategy code</span></li>
                 </ul>
