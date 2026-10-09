@@ -69,14 +69,15 @@ function formatPricePaise(paise: number): string {
     return `₹${(paise / 100).toFixed(2)}`;
 }
 
-interface DateGroup {
+export interface DateGroup {
     date: string;
     orders: DailyCompletedOrder[];
     netPnl: number;
     totalProfitPts: number;
 }
 
-export function EventPriceTab({ strategyFilter }: EventPriceTabProps) {
+/** Completed trades grouped by IST day (90 days), for the table and the phone cards. */
+export function useDailyOrders(strategyFilter?: string) {
     const [data, setData] = useState<DailyOrdersResponse | null>(null);
     const [loading, setLoading] = useState(true);
     const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
@@ -124,6 +125,12 @@ export function EventPriceTab({ strategyFilter }: EventPriceTabProps) {
     }, [groups]);
 
     const totalTrades = data?.items.reduce((sum, item) => sum + item.trades, 0) ?? 0;
+
+    return { data, loading, groups, expandedDates, setExpandedDates, totalTrades, activeStrategy, reload: loadData };
+}
+
+export function EventPriceTab({ strategyFilter }: EventPriceTabProps) {
+    const { loading, groups, expandedDates, setExpandedDates, totalTrades, activeStrategy } = useDailyOrders(strategyFilter);
 
     if (loading) {
         return (

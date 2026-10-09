@@ -14,7 +14,7 @@ type Config struct {
 
 	MegaEmail    string
 	MegaPassword string
-	MegaRootDir  string // top-level MEGA folder; archives land in <root>/YYYY/MM/
+	MegaRootDir  string // top-level MEGA folder; archives land in <root>/YYYY/MM/DD/
 
 	TmpDir       string // export/gzip scratch, deleted after each upload
 	ManifestPath string // SQLite record of what has been uploaded

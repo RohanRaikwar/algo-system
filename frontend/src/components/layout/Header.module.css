@@ -205,3 +205,67 @@
         animation: none;
     }
 }
+
+/* Push alerts bell + its small menu. */
+.pushWrap {
+    position: relative;
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.pushBtn {
+    gap: 5px;
+    padding: 0 9px;
+    border: none;
+    cursor: pointer;
+    font: inherit;
+}
+
+.pushBtn:hover:not(:disabled) { background: var(--sg-hover); }
+.pushBtn:focus-visible { outline: none; box-shadow: var(--sg-ring); }
+.pushBtn:disabled { opacity: 0.6; cursor: progress; }
+.pushBtn.toneUp { color: var(--sg-profit); }
+
+.pushMenu,
+.pushNote {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 50;
+    background: var(--sg-raised);
+    border: 1px solid var(--sg-line);
+    border-radius: var(--sg-r-ctrl);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.pushMenu {
+    display: flex;
+    flex-direction: column;
+    min-width: 170px;
+    padding: 4px;
+}
+
+.pushMenu button {
+    padding: 8px 10px;
+    border: none;
+    border-radius: 6px;
+    background: none;
+    color: var(--sg-text);
+    font: inherit;
+    font-size: 0.82rem;
+    text-align: left;
+    cursor: pointer;
+}
+
+.pushMenu button:hover:not(:disabled) { background: var(--sg-hover); }
+
+.pushNote {
+    width: max-content;
+    max-width: min(280px, calc(100vw - 32px));
+    padding: 8px 10px;
+    color: var(--sg-text-2);
+    font-size: 0.78rem;
+    line-height: 1.4;
+    cursor: pointer;
+}

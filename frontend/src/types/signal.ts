@@ -2,7 +2,7 @@
 
 export interface SignalPayload {
     strategy_name: string;
-    action: 'BUY' | 'EXIT';
+    action: 'BUY' | 'EXIT' | 'WATCH_EXIT';
     side?: string;
     market_state?: string;
     token: string;

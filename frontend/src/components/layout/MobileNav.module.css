@@ -39,6 +39,15 @@
     color: var(--sg-accent);
 }
 
+.link:active .iconWrap {
+    transform: scale(0.92);
+}
+
+/* Active tab: soft pill behind the icon, like native tab bars. */
+.active .iconWrap {
+    background: var(--sg-accent-soft);
+}
+
 .link:focus-visible {
     outline: none;
     box-shadow: inset 0 0 0 2px var(--sg-accent);
@@ -47,12 +56,30 @@
 .iconWrap {
     position: relative;
     display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 52px;
+    height: 28px;
+    border-radius: var(--sg-r-pill);
+    transition: background 0.15s, transform 0.1s;
+}
+
+.link {
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .iconWrap {
+        transition: none;
+    }
 }
 
 /* Unread count sits on the icon's top-right corner. */
 .iconWrap :global(.signal-badge) {
     position: absolute;
-    top: -6px;
-    left: 12px;
+    top: -4px;
+    left: 30px;
     margin: 0;
 }

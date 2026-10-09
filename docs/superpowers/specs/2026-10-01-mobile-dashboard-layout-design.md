@@ -1,6 +1,7 @@
 # Mobile Dashboard Layout — UX/UI Design
 
 - **Date:** 2026-10-01
+- **Update 2026-10-09:** The range strategy was removed (commit c03309c). `RangePanel` / `components/range/` below are now `SRPanel` / `components/sr/`. Phone portrait chrome is redesigned in `2026-10-09-mobile-native-app-ux-design.md`.
 - **Status:** Implemented (P1–P4); same-bar entry+exit badge merge deferred — entries draw below price and exits above, so they do not collide
 - **Scope:** Dashboard route (`/`) at phone widths (≤ 640px). Signals and Health tabs get light notes only.
 - **Frontend root:** `frontend/src/`. All paths below are relative to it unless stated.

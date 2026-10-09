@@ -189,15 +189,24 @@
     pointer-events: none;
 }
 
-/* ── Inline legend (top-left of plot) ──────────────────────── */
+/* ── Overlay column (top-left of plot): legend, then SR situation ── */
 
-.legend {
+.overlays {
     position: absolute;
     top: 10px;
     left: 12px;
     right: 80px;
     z-index: 10;
     display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    pointer-events: none;
+}
+
+.legend {
+    display: flex;
+    max-width: 100%;
     flex-direction: column;
     align-items: flex-start;
     gap: 3px;
@@ -364,11 +373,23 @@
         padding: 0 10px;
     }
 
-    .legend {
+    .overlays {
         top: 6px;
         left: 8px;
         right: 64px;
+    }
+
+    .legend {
         font-size: 11px;
+    }
+
+    /* One line on phone; values clip instead of wrapping into the SR chip. */
+    .ohlcRow {
+        flex-wrap: nowrap;
+        gap: 8px;
+        max-width: 100%;
+        overflow: hidden;
+        white-space: nowrap;
     }
 }
 
@@ -458,4 +479,102 @@
     font-size: 12px;
     font-weight: 600;
     color: var(--sg-muted);
+}
+
+/* ── Phone portrait top bar ─────────────────────────────────────
+   [● NIFTY 50▾ 1m▾ ........ 22,463.00 ⚙]
+   [  NSE caption           +146 (+0.66%)  ] */
+.phoneBar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: calc(52px + env(safe-area-inset-top));
+    padding: env(safe-area-inset-top) 8px 0 14px;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+}
+
+.phoneBar .symbolStack {
+    flex-shrink: 1;
+    max-width: none;
+}
+
+.phoneBar .quote {
+    margin-left: auto;
+}
+
+/* Before the first candle there is no quote; keep the button on the right. */
+.phoneBar .phoneIndBtn {
+    margin-left: auto;
+}
+
+.phoneBar .quote + .phoneIndBtn {
+    margin-left: 0;
+}
+
+.tfChip {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    flex-shrink: 0;
+    height: 28px;
+    padding: 0 8px 0 10px;
+    border-radius: var(--sg-r-pill);
+    background: var(--sg-raised);
+    border: 1px solid var(--sg-line);
+    color: var(--sg-text);
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.tfChip svg {
+    color: var(--sg-muted);
+}
+
+/* Invisible native select over the chip: a tap opens the OS picker.
+   16px font stops iOS zooming on focus; extra inset widens the tap target. */
+.tfChipSelect {
+    position: absolute;
+    inset: -8px -4px;
+    width: calc(100% + 8px);
+    opacity: 0;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+.tfChip:active,
+.tfChip:has(.tfChipSelect:active) {
+    background: var(--sg-hover);
+}
+
+.tfChip:has(.tfChipSelect:focus-visible) {
+    box-shadow: var(--sg-ring);
+}
+
+.phoneIndBtn {
+    position: relative;
+    flex-shrink: 0;
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    padding: 0;
+    justify-content: center;
+    border: 0;
+    background: transparent;
+}
+
+.phoneIndBtn:active {
+    background: var(--sg-hover);
+}
+
+.phoneIndBtn .toolCount {
+    position: absolute;
+    top: 2px;
+    right: 0;
+    min-width: 16px;
+    line-height: 16px;
+    font-size: 10px;
 }

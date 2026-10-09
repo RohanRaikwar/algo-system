@@ -1,6 +1,9 @@
 import type { SignalRecord } from '../../types/signal';
 import { inferSide } from './signalAnalytics';
-import { isWatchAction, watchBadgeClass, watchExitPricedAtPremium } from './watch';
+import {
+    formatDate, formatPrice, formatSignedPaise, formatTime, getActionBadge, getMarketBadge,
+    getSideBadge, instrumentLabel, normalizeMarketState, orderMode, pnlClass, relativeTime, signalPnL,
+} from './signalFormat';
 
 interface SignalRowProps {
     signal: SignalRecord;
@@ -11,116 +14,12 @@ interface SignalRowProps {
     entryTime?: string;
 }
 
-function formatTime(ts: string): string {
-    try {
-        const d = new Date(ts);
-        return d.toLocaleTimeString('en-IN', {
-            hour: '2-digit', minute: '2-digit', second: '2-digit',
-            hour12: false, timeZone: 'Asia/Kolkata',
-        });
-    } catch {
-        return ts;
-    }
-}
-
-function formatDate(ts: string): string {
-    try {
-        const d = new Date(ts);
-        return d.toLocaleDateString('en-IN', {
-            day: '2-digit', month: 'short',
-            timeZone: 'Asia/Kolkata',
-        });
-    } catch {
-        return '';
-    }
-}
-
-function relativeTime(ts: string): string {
-    try {
-        const diff = Date.now() - new Date(ts).getTime();
-        if (diff < 60000) return `${Math.floor(diff / 1000)}s ago`;
-        if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-        if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-        return `${Math.floor(diff / 86400000)}d ago`;
-    } catch {
-        return '';
-    }
-}
-
-function getActionBadge(action: string): string {
-    if (isWatchAction(action)) return watchBadgeClass(action);
-    if (action === 'EXIT') return 'action-badge exit';
-    return 'action-badge buy-call';
-}
-
-function getSideBadge(side: string): string {
-    if (side === 'CALL') return 'action-badge buy-call';
-    if (side === 'PUT') return 'action-badge buy-put';
-    return 'action-badge';
-}
-
-function normalizeMarketState(marketState?: string, reason?: string): string {
-    const raw = (marketState || '').trim().toLowerCase();
-    if (raw === 'trending' || raw === 'sideways' || raw === 'choppy' || raw === 'range') {
-        return raw.toUpperCase();
-    }
-
-    const hay = `${reason || ''}`.toLowerCase();
-    if (/\brange\b/.test(hay)) return 'RANGE';
-    if (/\bchoppy\b/.test(hay)) return 'CHOPPY';
-    if (/\bsideways\b/.test(hay)) return 'SIDEWAYS';
-    if (/\bmomentum\b/.test(hay)) return 'TRENDING';
-    return '—';
-}
-
-function getMarketBadge(state: string): string {
-    if (state === 'TRENDING') return 'market-badge trending';
-    if (state === 'SIDEWAYS') return 'market-badge sideways';
-    if (state === 'CHOPPY') return 'market-badge choppy';
-    if (state === 'RANGE') return 'market-badge range';
-    return 'market-badge';
-}
-
-function formatPrice(price?: number): string {
-    if (price === undefined || price === null || price < 0) return '—';
-    return `₹${(price / 100).toFixed(2)}`;
-}
-
 export function SignalRow({ signal, isNew, entryPrice, entryTime }: SignalRowProps) {
     const side = inferSide(signal);
     const marketState = normalizeMarketState(signal.market_state, signal.reason);
 
-    // Compute P&L for EXIT signals when entry price is available. A WATCH_EXIT
-    // shows the P&L exiting there would have locked in.
-    const isExit = signal.action === 'EXIT' || watchExitPricedAtPremium(signal);
-    const exitPrice = signal.price;
-    const hasPnL = isExit && entryPrice && entryPrice > 0 && exitPrice && exitPrice > 0;
-    const pnlPaise = hasPnL ? exitPrice - entryPrice : 0;
-    const pnlClass = pnlPaise > 0 ? 'price-up' : pnlPaise < 0 ? 'price-down' : '';
-
-    // Order mode badge - two states:
-    // 1. LIVE (live_mode=true) - Real orders placed via broker
-    // 2. PAPER (live_mode=false) - Paper trading / simulation
-    const isLiveMode = signal.live_mode === true;
-    
-    let badgeText = 'Paper';
-    let badgeClass = 'paper';
-    let badgeTitle = 'Paper trade (simulation only)';
-
-    // Profit cap takes precedence for visually distinguishing from manual paper mode
-    if (isWatchAction(signal.action)) {
-        badgeText = 'Shadow';
-        badgeClass = 'shadow';
-        badgeTitle = 'Exit watch advice only: no order placed';
-    } else if (signal.profit_cap) {
-        badgeText = 'Capped';
-        badgeClass = 'capped';
-        badgeTitle = 'Paper trade: daily profit cap reached';
-    } else if (isLiveMode) {
-        badgeText = 'Real';
-        badgeClass = 'real';
-        badgeTitle = 'Real order placed via broker';
-    }
+    const pnl = signalPnL(signal, entryPrice);
+    const mode = orderMode(signal);
 
     return (
         <tr className={`signal-row${isNew ? ' new-signal' : ''}`}>
@@ -149,22 +48,22 @@ export function SignalRow({ signal, isNew, entryPrice, entryTime }: SignalRowPro
                 {signal.strategy}
             </td>
             <td>
-                <span className={`order-type-badge ${badgeClass}`} title={badgeTitle}>
-                    {badgeText}
+                <span className={`order-type-badge ${mode.mode}`} title={mode.title}>
+                    {mode.text}
                 </span>
             </td>
             <td title={`${signal.exchange}:${signal.token}`}>
-                <span className={signal.fno_symbol ? 'mono' : undefined}>{signal.fno_symbol || `${signal.exchange}:${signal.token}`}</span>
+                <span className={signal.fno_symbol ? 'mono' : undefined}>{instrumentLabel(signal)}</span>
             </td>
             <td className="price-cell">
                 {formatPrice(signal.price)}
-                {hasPnL && (
+                {pnl !== null && (
                     <>
                         <span className="price-sub">
                             entry {formatPrice(entryPrice)}
                         </span>
-                        <span className={`price-pnl ${pnlClass}`}>
-                            {pnlPaise > 0 ? '+' : pnlPaise < 0 ? '−' : ''}₹{(Math.abs(pnlPaise) / 100).toFixed(2)}
+                        <span className={`price-pnl ${pnl === 0 ? '' : pnlClass(pnl)}`}>
+                            {formatSignedPaise(pnl)}
                         </span>
                     </>
                 )}

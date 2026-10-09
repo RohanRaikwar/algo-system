@@ -26,3 +26,6 @@ export function useMediaQuery(query: string): boolean {
 
 /** Phone held sideways: wider than PHONE_QUERY but too short for the desktop layout. */
 export const PHONE_LANDSCAPE_QUERY = '(max-width: 940px) and (max-height: 500px) and (orientation: landscape)';
+
+/** Phone held upright. PHONE_QUERY alone also matches small phones in landscape (640×360). */
+export const PHONE_PORTRAIT_QUERY = '(max-width: 640px) and (orientation: portrait)';

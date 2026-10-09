@@ -1,0 +1,575 @@
+/* Phone Signals screen. Heights feed the sticky offsets:
+   app bar 48px (+ safe area) → segmented row 52px → day headers. */
+.page {
+    --bar-h: calc(48px + env(safe-area-inset-top));
+    --seg-h: 52px;
+    gap: 0;
+    padding-bottom: 12px;
+}
+
+/* ── Today strip ─────────────────────────────────── */
+.today {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-height: 40px;
+    padding: 0 4px 8px;
+    color: var(--sg-muted);
+    font-size: 13px;
+    white-space: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.today b {
+    color: var(--sg-text);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.todayOpen {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+.openLive {
+    color: var(--sg-accent) !important;
+}
+
+.todayPnl {
+    margin-left: auto;
+}
+
+/* ── Segmented row (sticky under the app bar) ────── */
+.segRow {
+    position: sticky;
+    top: var(--bar-h);
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: var(--seg-h);
+    margin: 0 -12px;
+    padding: 0 12px;
+    background: var(--sg-bg);
+}
+
+.seg {
+    flex: 1;
+    display: flex;
+    padding: 3px;
+    gap: 2px;
+    border-radius: 10px;
+    background: var(--sg-surface);
+    border: 1px solid var(--sg-line);
+}
+
+.segBtn {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    height: 34px;
+    min-width: 0;
+    padding: 0 4px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--sg-muted);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.segBtn:active {
+    background: var(--sg-hover);
+}
+
+.segActive {
+    background: var(--sg-hover);
+    color: var(--sg-text);
+    font-weight: 600;
+    box-shadow: inset 0 0 0 1px var(--sg-line);
+}
+
+.segCount {
+    min-width: 17px;
+    padding: 0 5px;
+    border-radius: var(--sg-r-pill);
+    background: var(--sg-accent);
+    color: #fff;
+    font-size: 10px;
+    line-height: 17px;
+}
+
+.filterBtn {
+    position: relative;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    border: 1px solid var(--sg-line);
+    border-radius: 10px;
+    background: var(--sg-surface);
+    color: var(--sg-text-2);
+    cursor: pointer;
+}
+
+.filterBtn:active {
+    background: var(--sg-hover);
+}
+
+.filterOn {
+    color: var(--sg-accent);
+    border-color: var(--sg-accent);
+}
+
+/* ── Filter chips ─────────────────────────────────── */
+.chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 2px 0 10px;
+}
+
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 30px;
+    padding: 0 10px 0 12px;
+    border: 0;
+    border-radius: var(--sg-r-pill);
+    background: var(--sg-accent-soft);
+    color: var(--sg-accent);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+/* ── Day groups ───────────────────────────────────── */
+.days {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.dayHead {
+    position: sticky;
+    top: calc(var(--bar-h) + var(--seg-h));
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: calc(100% + 24px);
+    height: 40px;
+    margin: 0 -12px;
+    padding: 0 16px 0 12px;
+    border: 0;
+    background: var(--sg-bg);
+    color: var(--sg-text);
+    font-size: 13px;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+}
+
+.dayHead svg {
+    color: var(--sg-muted);
+    flex-shrink: 0;
+}
+
+.dayDate {
+    flex: 1;
+    min-width: 0;
+}
+
+.dayMeta {
+    color: var(--sg-muted);
+    font-size: 12px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── Cards ────────────────────────────────────────── */
+.list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.card,
+.trade,
+.moreItem {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    min-height: 60px;
+    padding: 10px 12px;
+    border: 1px solid var(--sg-line-soft);
+    border-radius: 12px;
+    background: var(--sg-surface);
+    color: var(--sg-text);
+    font: inherit;
+    text-align: left;
+}
+
+.card,
+.moreItem {
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.card:active,
+.moreItem:active {
+    background: var(--sg-raised);
+}
+
+.cardNew {
+    border-color: var(--sg-accent);
+}
+
+.cardLeft {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    flex-shrink: 0;
+    width: 96px; /* fixed so instruments line up across cards */
+}
+
+.trade .cardLeft {
+    width: auto;
+}
+
+.badges {
+    display: flex;
+    gap: 4px;
+}
+
+.badges :global(.action-badge) {
+    padding: 2px 7px;
+    font-size: 10.5px;
+}
+
+.time {
+    color: var(--sg-muted);
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+}
+
+.cardMid {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    flex: 1;
+    min-width: 0;
+}
+
+.instrument {
+    overflow: hidden;
+    font-size: 13.5px;
+    font-weight: 600;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.sub {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    overflow: hidden;
+    color: var(--sg-muted);
+    font-size: 11.5px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-variant-numeric: tabular-nums;
+}
+
+.modeDot {
+    width: 7px;
+    height: 7px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--sg-faint);
+}
+
+.mode_real { background: var(--sg-profit); }
+.mode_capped { background: var(--sg-warn); }
+.mode_shadow { background: var(--sg-info); }
+
+.cardRight {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 3px;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+}
+
+.price {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.pnl {
+    font-size: 12px;
+    font-weight: 600;
+}
+
+/* ── Position card ────────────────────────────────── */
+.position {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid var(--sg-line-soft);
+    border-radius: 12px;
+    background: var(--sg-surface);
+}
+
+.posTop {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.posTop .instrument {
+    flex: 1;
+}
+
+.posPnl {
+    font-size: 18px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.posGrid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin: 0;
+}
+
+.posGrid dt {
+    color: var(--sg-muted);
+    font-size: 11px;
+}
+
+.posGrid dd {
+    margin: 2px 0 0;
+    font-size: 13px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.posFoot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+/* ── More ─────────────────────────────────────────── */
+.moreList {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.moreIcon {
+    flex-shrink: 0;
+    color: var(--sg-accent);
+}
+
+.chev {
+    flex-shrink: 0;
+    color: var(--sg-faint);
+}
+
+.moreNote {
+    padding: 8px 4px;
+    color: var(--sg-faint);
+    font-size: 12px;
+}
+
+.subBar {
+    position: sticky;
+    top: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: calc(48px + env(safe-area-inset-top));
+    margin: -12px -12px 12px;
+    padding: env(safe-area-inset-top) 12px 0 4px;
+    background: var(--sg-bg);
+    border-bottom: 1px solid var(--sg-line-soft);
+}
+
+.backBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border: 0;
+    border-radius: var(--sg-r-pill);
+    background: transparent;
+    color: var(--sg-accent);
+    cursor: pointer;
+}
+
+.backBtn:active {
+    background: var(--sg-hover);
+}
+
+.subTitle {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 600;
+}
+
+.subBody {
+    min-width: 0;
+}
+
+/* ── Empty ────────────────────────────────────────── */
+.empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 48px 24px;
+    color: var(--sg-muted);
+    text-align: center;
+    font-size: 13px;
+}
+
+/* ── Detail + filter sheets ───────────────────────── */
+.detailBadges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 14px;
+}
+
+.detailList {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+}
+
+.detailRow {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--sg-line-soft);
+    font-size: 13px;
+}
+
+.detailRow dt {
+    color: var(--sg-muted);
+}
+
+.detailRow dd {
+    margin: 0;
+    text-align: right;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    user-select: text;
+}
+
+.reason {
+    margin-top: 14px;
+}
+
+.reason h3 {
+    margin: 0 0 6px;
+    color: var(--sg-muted);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.reason p {
+    margin: 0;
+    color: var(--sg-text-2);
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.55;
+    word-break: break-word;
+    user-select: text;
+}
+
+.form {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: var(--sg-muted);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.field select,
+.field input {
+    height: 44px;
+    padding: 0 12px;
+    border: 1px solid var(--sg-line);
+    border-radius: var(--sg-r-ctrl);
+    background: var(--sg-bg);
+    color: var(--sg-text);
+    font: inherit;
+    font-size: 16px; /* no iOS zoom on focus */
+    font-weight: 400;
+}
+
+.btnGhost,
+.btnPrimary {
+    flex: 1;
+    height: 44px;
+    border-radius: var(--sg-r-ctrl);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.btnGhost {
+    border: 1px solid var(--sg-line);
+    background: transparent;
+    color: var(--sg-text-2);
+}
+
+.btnGhost:disabled {
+    opacity: 0.45;
+}
+
+.btnPrimary {
+    border: 0;
+    background: var(--sg-accent);
+    color: #fff;
+}
+
+.btnGhost:active,
+.btnPrimary:active {
+    filter: brightness(1.15);
+}

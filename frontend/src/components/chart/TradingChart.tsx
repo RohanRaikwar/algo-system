@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { SlidersHorizontal } from 'lucide-react';
+import { ChevronDown, SlidersHorizontal } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { useCandleStore } from '../../store/useCandleStore';
 import { tfLabel, entryKey, getEntryColor, tokenLabel, tokenCaption } from '../../utils/helpers';
@@ -14,6 +14,9 @@ import { useSRLines } from './hooks/useSRLines';
 import { useSRBox } from './hooks/useSRBox';
 import { SRSituationCard } from './SRSituationCard';
 import { ChartLegend } from './ChartLegend';
+import { StatusDot } from '../layout/StatusDot';
+import { PHONE_PORTRAIT_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
+import { haptic } from '../../utils/haptic';
 import styles from './Chart.module.css';
 
 interface TradingChartProps {
@@ -25,6 +28,8 @@ interface TradingChartProps {
     compact?: boolean;
     paneTF?: number;
     onPaneTFChange?: (tf: number) => void;
+    /** Phone: tapping the SR situation chip opens the SR sheet. */
+    onOpenSR?: () => void;
 }
 
 const NO_INDICATORS: never[] = [];
@@ -35,7 +40,7 @@ function fmtPrice(v: number): string {
     return v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPaneTFChange }: TradingChartProps) {
+export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPaneTFChange, onOpenSR }: TradingChartProps) {
     // App state (atomic selectors)
     const config = useAppStore(s => s.config);
     const selectedToken = useAppStore(s => s.selectedToken);
@@ -47,6 +52,8 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
     const setSelectedTF = compact ? (tf: number) => onPaneTFChange?.(tf) : setGlobalTF;
     const activeIndicators = compact ? NO_INDICATORS : globalIndicators;
     const srOverlay = useAppStore(s => s.overlays.srSituation) && !compact;
+    // Phone portrait: one top bar (status, instrument, TF chip, price, indicators).
+    const phoneBar = useMediaQuery(PHONE_PORTRAIT_QUERY) && !compact;
 
     // Show only indicators whose TF is <= chart TF (e.g. allow 3m on 5m, block >5m)
     const activeEntries = useMemo(
@@ -114,18 +121,15 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
 
     return (
         <section className={`${styles.chartCard}${compact ? ` ${styles.compact}` : ''}`} aria-label={`Price chart ${tfLabel(selectedTF)}`}>
-            <div className={styles.toolbar}>
-                <div className={styles.symbolGroup}>
-                    {compact ? (
-                        <span className={styles.paneSymbol}>{tokenLabel(selectedToken)}</span>
-                    ) : (
+            {phoneBar ? (
+                <div className={`${styles.toolbar} ${styles.phoneBar}`}>
+                    <StatusDot />
                     <div className={styles.symbolStack}>
                         <select
                             className={styles.symbolSelect}
                             value={selectedToken || ''}
                             onChange={(e) => setSelectedToken(e.target.value)}
                             aria-label="Instrument"
-                            title={selectedToken || undefined}
                         >
                             {config.tokens.map((t) => (
                                 <option key={t} value={t}>{tokenLabel(t)}</option>
@@ -133,49 +137,105 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
                         </select>
                         <span className={styles.symbolCaption} aria-hidden>{tokenCaption(selectedToken)}</span>
                     </div>
-                    )}
+                    <span className={styles.tfChip}>
+                        {tfLabel(selectedTF)}
+                        <ChevronDown size={12} aria-hidden />
+                        <select
+                            className={styles.tfChipSelect}
+                            value={selectedTF}
+                            onChange={(e) => { haptic(); setSelectedTF(Number(e.target.value)); }}
+                            aria-label="Timeframe"
+                        >
+                            {config.tfs.map((tf) => (
+                                <option key={tf} value={tf}>{tfLabel(tf)}</option>
+                            ))}
+                        </select>
+                    </span>
                     {quote && (
                         <div className={styles.quote}>
                             <span className={styles.lastPrice}>{fmtPrice(quote.price)}</span>
-                            <span className={`${styles.change} ${tone}`} title="Change since the session's first candle">
+                            <span className={`${styles.change} ${tone}`}>
                                 {sign}{fmtPrice(Math.abs(quote.change))} ({sign}{Math.abs(quote.pct).toFixed(2)}%)
                             </span>
                         </div>
                     )}
-                </div>
-
-                <div className={styles.tfGroup} role="radiogroup" aria-label="Timeframe">
-                    {config.tfs.map((tf) => (
+                    {onOpenIndicators && (
                         <button
-                            key={tf}
-                            role="radio"
-                            aria-checked={tf === selectedTF}
-                            className={`${styles.tfBtn}${tf === selectedTF ? ` ${styles.tfActive}` : ''}`}
-                            onClick={() => setSelectedTF(tf)}
-                        >
-                            {tfLabel(tf)}
-                        </button>
-                    ))}
-                </div>
-
-                <div className={styles.indGroup}>
-                    {onOpenIndicators && !compact && (
-                        <button
-                            className={styles.toolBtn}
+                            className={`${styles.toolBtn} ${styles.phoneIndBtn}`}
                             onClick={onOpenIndicators}
-                            title="Indicators (press / or I)"
-                            aria-keyshortcuts="/ I"
+                            aria-label={`Indicators${activeEntries.length ? `, ${activeEntries.length} active` : ''}`}
                         >
-                            <SlidersHorizontal size={14} />
-                            <span className={styles.toolBtnLabel}>Indicators</span>
+                            <SlidersHorizontal size={16} />
                             {activeEntries.length > 0 && (
-                                <span className={styles.toolCount} aria-label={`${activeEntries.length} active`}>{activeEntries.length}</span>
+                                <span className={styles.toolCount} aria-hidden>{activeEntries.length}</span>
                             )}
-                            <kbd className={styles.kbd}>/</kbd>
                         </button>
                     )}
                 </div>
-            </div>
+            ) : (
+                <div className={styles.toolbar}>
+                    <div className={styles.symbolGroup}>
+                        {compact ? (
+                            <span className={styles.paneSymbol}>{tokenLabel(selectedToken)}</span>
+                        ) : (
+                        <div className={styles.symbolStack}>
+                            <select
+                                className={styles.symbolSelect}
+                                value={selectedToken || ''}
+                                onChange={(e) => setSelectedToken(e.target.value)}
+                                aria-label="Instrument"
+                                title={selectedToken || undefined}
+                            >
+                                {config.tokens.map((t) => (
+                                    <option key={t} value={t}>{tokenLabel(t)}</option>
+                                ))}
+                            </select>
+                            <span className={styles.symbolCaption} aria-hidden>{tokenCaption(selectedToken)}</span>
+                        </div>
+                        )}
+                        {quote && (
+                            <div className={styles.quote}>
+                                <span className={styles.lastPrice}>{fmtPrice(quote.price)}</span>
+                                <span className={`${styles.change} ${tone}`} title="Change since the session's first candle">
+                                    {sign}{fmtPrice(Math.abs(quote.change))} ({sign}{Math.abs(quote.pct).toFixed(2)}%)
+                                </span>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className={styles.tfGroup} role="radiogroup" aria-label="Timeframe">
+                        {config.tfs.map((tf) => (
+                            <button
+                                key={tf}
+                                role="radio"
+                                aria-checked={tf === selectedTF}
+                                className={`${styles.tfBtn}${tf === selectedTF ? ` ${styles.tfActive}` : ''}`}
+                                onClick={() => setSelectedTF(tf)}
+                            >
+                                {tfLabel(tf)}
+                            </button>
+                        ))}
+                    </div>
+
+                    <div className={styles.indGroup}>
+                        {onOpenIndicators && !compact && (
+                            <button
+                                className={styles.toolBtn}
+                                onClick={onOpenIndicators}
+                                title="Indicators (press / or I)"
+                                aria-keyshortcuts="/ I"
+                            >
+                                <SlidersHorizontal size={14} />
+                                <span className={styles.toolBtnLabel}>Indicators</span>
+                                {activeEntries.length > 0 && (
+                                    <span className={styles.toolCount} aria-label={`${activeEntries.length} active`}>{activeEntries.length}</span>
+                                )}
+                                <kbd className={styles.kbd}>/</kbd>
+                            </button>
+                        )}
+                    </div>
+                </div>
+            )}
 
             <div className={styles.plot}>
                 <div ref={chartContainer} className={styles.chartContainer} />
@@ -186,14 +246,21 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
                     </div>
                 )}
 
-                {srOverlay && <SRSituationCard selectedToken={selectedToken} price={lastPaise} />}
-
-                <ChartLegend
-                    ohlcData={ohlcData}
-                    indValues={indValues}
-                    activeEntries={activeEntries}
-                    latestCandle={latestCandle}
-                />
+                <div className={styles.overlays}>
+                    <ChartLegend
+                        ohlcData={ohlcData}
+                        indValues={indValues}
+                        activeEntries={activeEntries}
+                        latestCandle={latestCandle}
+                    />
+                    {srOverlay && (
+                        <SRSituationCard
+                            selectedToken={selectedToken}
+                            price={lastPaise}
+                            onOpen={phoneBar ? onOpenSR : undefined}
+                        />
+                    )}
+                </div>
             </div>
         </section>
     );
