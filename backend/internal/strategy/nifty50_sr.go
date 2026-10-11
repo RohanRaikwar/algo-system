@@ -198,9 +198,13 @@ func (s *Nifty50SR) OnTFCandle(candle model.TFCandle) *Signal {
 		st.TradeDay, st.TradesToday, st.ConsecLosses, st.DayPnLPts = day, 0, 0, 0
 		st.LastSide, st.LastADX = SideNone, 0
 		st.PendingSide = SideNone
+		st.AdviceToday, st.AdviceCooldown = 0, 0
 	}
 	if st.CooldownLeft > 0 {
 		st.CooldownLeft--
+	}
+	if st.AdviceCooldown > 0 {
+		st.AdviceCooldown--
 	}
 
 	closeMin := minutesIST(candle.TS) + 1 // TS is the bucket start
@@ -588,10 +592,55 @@ func (s *Nifty50SR) evaluateRetest(candle model.TFCandle, st *nifty50SRState, ss
 			return sig
 		}
 	}
+	if sig := s.evaluateContinue(candle, st, ss, cur, closeMin); sig != nil {
+		st.PendingSide = SideNone
+		return sig
+	}
 	if st.PendingLeft <= 0 {
 		expire("expired")
 	}
 	return nil
+}
+
+// evaluateContinue advises a break that is still holding beyond its level
+// AdviceContinueMin minutes after it armed, without having retested it.
+// Checked once per armed break: the bar on which the minutes are reached.
+func (s *Nifty50SR) evaluateContinue(candle model.TFCandle, st *nifty50SRState, ss SRState, cur ohlcv, closeMin int) *Signal {
+	if s.cfg.AdviceContinueMin <= 0 {
+		return nil
+	}
+	wait := s.cfg.AdviceContinueMin / s.entryTF()
+	if wait < 1 {
+		wait = 1
+	}
+	if s.retestBars()-st.PendingLeft != wait {
+		return nil
+	}
+	side, l := st.PendingSide, st.PendingLevel
+	long := side == SideCall
+	beyond := ss.Range.ATR15 * s.cfg.BreakATRPct / 100
+	holding := (long && cur.bullish() && cur.Close >= l+beyond && cur.Close > ss.VWAP) ||
+		(!long && cur.bearish() && cur.Close <= l-beyond && cur.Close < ss.VWAP)
+	opposite := (long && ss.Regime == SRRegimeTrendDown) || (!long && ss.Regime == SRRegimeTrendUp)
+	if !holding || opposite {
+		s.reject("continue:not_holding")
+		return nil
+	}
+	buf := s.stopBuffer(ss)
+	stop, target := l-buf, levelAbove(ss.Levels, cur.Close+s.cfg.TouchTolPts)
+	if !long {
+		stop, target = l+buf, levelBelow(ss.Levels, cur.Close-s.cfg.TouchTolPts)
+	}
+	if s.cfg.AdviceMaxRiskATRPct > 0 && absInt64(cur.Close-stop)*100 > ss.Range.ATR15*s.cfg.AdviceMaxRiskATRPct {
+		s.reject("continue:risk")
+		return nil
+	}
+	c := confirmations{
+		VWAP: true, Candle: true,
+		EMA: (long && ss.EMAFast > ss.EMASlow) || (!long && ss.EMAFast < ss.EMASlow),
+		RSI: ss.Range.RSIReady && ((long && ss.Range.RSI5 > 50) || (!long && ss.Range.RSI5 < 50)),
+	}
+	return s.advise(candle, st, ss, side, SRKindContinue, l, stop, target, c, closeMin)
 }
 
 // ── PULLBACK (TREND regimes) ──
@@ -618,6 +667,13 @@ func (s *Nifty50SR) evaluatePullback(candle model.TFCandle, st *nifty50SRState, 
 			break
 		}
 	}
+	kind := SRKindPullback
+	if anchor == 0 && s.cfg.AdvicePullFastEMA && ss.EMAFast > 0 {
+		// Shallow dip in a strong trend: advice only (see advise).
+		if a := ss.EMAFast; (long && cur.Low <= a+tol && close > a) || (!long && cur.High >= a-tol && close < a) {
+			anchor, kind = a, SRKindPullbackFast
+		}
+	}
 	if anchor == 0 {
 		s.reject("pullback:no_touch")
 		return nil
@@ -628,7 +684,7 @@ func (s *Nifty50SR) evaluatePullback(candle model.TFCandle, st *nifty50SRState, 
 	rsi := ss.Range.RSI5
 	if long {
 		if !cur.bullish() {
-			s.reject("pullback:no_close_back")
+			s.reject(kindTag(kind) + ":no_close_back")
 			return nil
 		}
 		c = confirmations{
@@ -639,7 +695,7 @@ func (s *Nifty50SR) evaluatePullback(candle model.TFCandle, st *nifty50SRState, 
 		stop = minInt64(anchor, cur.Low) - buf
 	} else {
 		if !cur.bearish() {
-			s.reject("pullback:no_close_back")
+			s.reject(kindTag(kind) + ":no_close_back")
 			return nil
 		}
 		// Mirror of the uptrend band around 50.
@@ -660,39 +716,59 @@ func (s *Nifty50SR) evaluatePullback(candle model.TFCandle, st *nifty50SRState, 
 		next = levelBelow(ss.Levels, close)
 	}
 	if next > 0 && absInt64(next-close)*100 < risk*s.cfg.MinRewardRiskPct {
-		s.reject("pullback:level_in_way")
+		s.reject(kindTag(kind) + ":level_in_way")
 		return nil
 	}
-	return s.tryEnter(candle, st, ss, side, SRKindPullback, anchor, stop, target, c, closeMin)
+	if kind == SRKindPullbackFast {
+		return s.advise(candle, st, ss, side, kind, anchor, stop, target, c, closeMin)
+	}
+	return s.tryEnter(candle, st, ss, side, kind, anchor, stop, target, c, closeMin)
 }
 
 // tryEnter applies confirmations, caps and reward:risk, then opens the
 // position. target 0 means "no next level": DefaultTargetR is used.
 func (s *Nifty50SR) tryEnter(candle model.TFCandle, st *nifty50SRState, ss SRState, side PositionSide, kind string,
 	level, stop, target int64, c confirmations, closeMin int) *Signal {
-	if n := c.count(); n < s.cfg.MinConfirmations {
-		s.reject(fmt.Sprintf("%s:confirmations_%d", kindTag(kind), n))
+	p, ok := s.checkEntry(candle, st, ss, side, kind, stop, target, c, closeMin)
+	if !ok {
 		return nil
+	}
+	return s.open(candle, st, ss, side, kind, level, c, p)
+}
+
+// entryPlan is a checked entry: prices, the day position and warnings.
+type entryPlan struct {
+	entry, stop, target, risk, reward int64
+	day                               srDayPos
+	warns                             []string
+}
+
+// checkEntry applies confirmations, caps, the situation gate and
+// reward:risk. target 0 means "no next level": DefaultTargetR is used.
+func (s *Nifty50SR) checkEntry(candle model.TFCandle, st *nifty50SRState, ss SRState, side PositionSide, kind string,
+	stop, target int64, c confirmations, closeMin int) (entryPlan, bool) {
+	fail := func(reason string) (entryPlan, bool) {
+		s.reject(reason)
+		return entryPlan{}, false
+	}
+	if n := c.count(); n < s.cfg.MinConfirmations {
+		return fail(fmt.Sprintf("%s:confirmations_%d", kindTag(kind), n))
 	}
 	if why := s.entryBlock(st, closeMin); why != "" {
-		s.reject(why)
-		return nil
+		return fail(why)
 	}
 	if s.weakReentry(st, side, ss.Range.ADX) {
-		s.reject(kindTag(kind) + ":reentry_adx")
-		return nil
+		return fail(kindTag(kind) + ":reentry_adx")
 	}
 	day := dayPosition(ss, candle.Close)
 	warns := s.situationWarnings(st, ss, side, kind, day, closeMin)
 	if s.cfg.GateMode == SRGateBlock && len(warns) > 0 {
-		s.reject(kindTag(kind) + ":" + warns[0])
-		return nil
+		return fail(kindTag(kind) + ":" + warns[0])
 	}
 	entry := candle.Close
 	risk := absInt64(entry - stop)
 	if risk <= 0 || (side == SideCall && stop >= entry) || (side == SidePut && stop <= entry) {
-		s.reject(kindTag(kind) + ":bad_stop")
-		return nil
+		return fail(kindTag(kind) + ":bad_stop")
 	}
 	if target == 0 {
 		if side == SideCall {
@@ -706,9 +782,15 @@ func (s *Nifty50SR) tryEnter(candle model.TFCandle, st *nifty50SRState, ss SRSta
 		reward = entry - target
 	}
 	if reward <= 0 || reward*100 < risk*s.cfg.MinRewardRiskPct {
-		s.reject(kindTag(kind) + ":reward_risk")
-		return nil
+		return fail(kindTag(kind) + ":reward_risk")
 	}
+	return entryPlan{entry: entry, stop: stop, target: target, risk: risk, reward: reward, day: day, warns: warns}, true
+}
+
+// open records the position and returns its BUY signal.
+func (s *Nifty50SR) open(candle model.TFCandle, st *nifty50SRState, ss SRState, side PositionSide, kind string,
+	level int64, c confirmations, p entryPlan) *Signal {
+	entry, stop, target, risk, reward, warns := p.entry, p.stop, p.target, p.risk, p.reward, p.warns
 
 	st.Side, st.Kind, st.Regime = side, kind, ss.Regime
 	st.IndexEntry, st.StopLevel, st.TargetLevel, st.Risk = entry, stop, target, risk
@@ -719,8 +801,7 @@ func (s *Nifty50SR) tryEnter(candle model.TFCandle, st *nifty50SRState, ss SRSta
 	st.Strike = atmStrike(entry, s.cfg.StrikeStep)
 	st.TradesToday++
 
-	reason := fmt.Sprintf("SR %s %s regime=%s level=%d stop=%d target=%d vwap=%d ema=%d/%d rsi5=%.1f adx=%.1f %s %s strike=%d close=%d",
-		kind, side, ss.Regime, level, stop, target, ss.VWAP, ss.EMAFast, ss.EMASlow, ss.Range.RSI5, ss.Range.ADX, c, day, st.Strike, entry)
+	reason := s.entryReason(ss, side, kind, level, c, p, st.Strike)
 	if len(warns) > 0 {
 		reason += " warn=" + strings.Join(warns, ",")
 		if s.dayWarns == nil {
@@ -740,6 +821,60 @@ func (s *Nifty50SR) tryEnter(candle model.TFCandle, st *nifty50SRState, ss SRSta
 	}
 }
 
+// entryReason is the signal reason shared by entries and entry advice.
+func (s *Nifty50SR) entryReason(ss SRState, side PositionSide, kind string, level int64, c confirmations, p entryPlan, strike int64) string {
+	return fmt.Sprintf("SR %s %s regime=%s level=%d stop=%d target=%d vwap=%d ema=%d/%d rsi5=%.1f adx=%.1f %s %s strike=%d close=%d",
+		kind, side, ss.Regime, level, p.stop, p.target, ss.VWAP, ss.EMAFast, ss.EMASlow, ss.Range.RSI5, ss.Range.ADX, c, p.day, strike, p.entry)
+}
+
+// advise returns entry advice (WATCH_BUY) for an advice-only setup. It runs
+// the real entry checks plus a strong-trend guard (ADX ≥ StrongTrendADX,
+// no sideways box, whatever GateMode says) and its own cooldown and daily
+// cap. It never opens a position, so real SR entries, caps and P&L are
+// untouched; stratengine publishes the signal and places no order.
+func (s *Nifty50SR) advise(candle model.TFCandle, st *nifty50SRState, ss SRState, side PositionSide, kind string,
+	level, stop, target int64, c confirmations, closeMin int) *Signal {
+	if s.cfg.AdviceAsTrades {
+		return s.tryEnter(candle, st, ss, side, kind, level, stop, target, c, closeMin)
+	}
+	tag := kindTag(kind)
+	if ss.Range.ADX < s.cfg.StrongTrendADX {
+		s.reject(tag + ":weak_adx")
+		return nil
+	}
+	if _, boxed := s.sideways(st, ss); boxed {
+		s.reject(tag + ":sideways")
+		return nil
+	}
+	if st.AdviceCooldown > 0 {
+		s.reject(tag + ":advice_cooldown")
+		return nil
+	}
+	if st.AdviceToday >= s.cfg.MaxTradesPerDay {
+		s.reject(tag + ":advice_cap")
+		return nil
+	}
+	p, ok := s.checkEntry(candle, st, ss, side, kind, stop, target, c, closeMin)
+	if !ok {
+		return nil
+	}
+	st.AdviceToday++
+	st.AdviceCooldown = s.cfg.CooldownCandles
+	strike := atmStrike(p.entry, s.cfg.StrikeStep)
+	reason := s.entryReason(ss, side, kind, level, c, p, strike)
+	if len(p.warns) > 0 {
+		reason += " warn=" + strings.Join(p.warns, ",")
+	}
+	log.Printf("[strategy] %s: ADVICE %s", s.Name(), reason)
+	return &Signal{
+		StrategyName: s.Name(), Action: ActionWatchBuy, Side: side,
+		Token: candle.Token, Exchange: candle.Exchange, Qty: s.qty,
+		MarketState: srMarketState(ss.Regime), Reason: reason, Strike: strike,
+		TargetMove: p.reward,
+		Warnings:   p.warns,
+	}
+}
+
 func kindTag(kind string) string {
 	switch kind {
 	case SRKindFade:
@@ -748,6 +883,10 @@ func kindTag(kind string) string {
 		return "retest"
 	case SRKindPullback:
 		return "pullback"
+	case SRKindPullbackFast:
+		return "pullback_fast"
+	case SRKindContinue:
+		return "continue"
 	}
 	return kind
 }

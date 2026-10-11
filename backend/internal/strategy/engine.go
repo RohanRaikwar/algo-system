@@ -77,6 +77,9 @@ const (
 	ActionBuy  Action = "BUY"
 	ActionSell Action = "SELL"
 	ActionExit Action = "EXIT"
+	// ActionWatchBuy is entry advice: stratengine publishes it and never
+	// places an order or opens a position for it.
+	ActionWatchBuy Action = "WATCH_BUY"
 )
 
 // PositionSide represents which option leg is active.
@@ -198,7 +201,7 @@ func (e *TFEngine) emit(sig Signal) {
 		return
 	default:
 	}
-	if sig.Action == ActionBuy {
+	if sig.Action == ActionBuy || sig.Action == ActionWatchBuy {
 		e.dropped.Add(1)
 		log.Printf("[tfengine] ⚠️ signal channel full — dropped entry %s %s %s", sig.StrategyName, sig.Action, sig.Side)
 		return

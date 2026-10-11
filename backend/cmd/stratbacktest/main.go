@@ -64,6 +64,11 @@ func main() {
 	srGate := flag.String("sr-gate", "", "nifty50_sr: day-extreme and sideways checks warn|block (empty = default warn)")
 	srBoxFade := flag.String("sr-box-fade", "", "nifty50_sr: sideways box also refuses fades on|off (empty = default)")
 	srSetups := flag.String("sr-setups", "", "nifty50_sr: comma list of fade,retest,pullback to enable (empty = all). Strike greeks filter is live-only")
+	srAdvFast := flag.String("sr-advice-pull-fast-ema", "", "nifty50_sr: entry advice on a pullback to the 5m EMA9 on|off (empty = default)")
+	srAdvCont := flag.Int("sr-advice-continue-min", -1, "nifty50_sr: entry advice on a break still holding after this many minutes, 0 = off (-1 = default)")
+	srAdvRisk := flag.Int64("sr-advice-risk-atr", -1, "nifty50_sr: continuation advice refused when the stop is more than this %% of 15m ATR away (-1 = default)")
+	srStrongADX := flag.Float64("sr-strong-adx", 0, "nifty50_sr: entry advice needs 15m ADX at least this (0 = default)")
+	srAdvTrades := flag.Bool("sr-advice-as-trades", false, "nifty50_sr: open entry advice as trades so it can be scored (live never does)")
 	optModel := flag.Bool("option-model", false, "Price each trade's own option (strike, weekly expiry) with Black-Scholes; P&L in option premium")
 	optIV := flag.Float64("option-iv", 13, "Flat IV %% for -option-model when no India VIX history is loaded")
 	premSL := flag.Int64("premium-sl", 20, "Modeled premium hard SL %% (0 = off), as the live strategy")
@@ -78,16 +83,17 @@ func main() {
 	flag.Parse()
 
 	cfg := backtest.Config{
-		DBPath:        *dbPath,
-		Exchange:      *exchange,
-		Token:         *token,
-		Qty:           *qty,
-		From:          *from,
-		To:            *to,
-		Output:        *output,
-		OutDir:        *outDir,
-		StrategyType:  *stratFlag,
-		StrategyCfgSR: srOverrides(*srRangeADX, *srTrendADX, *srConfirm, *srMaxTrades, *srMaxLosses, *srDayLoss, *srStopATR, *srStopMin, *srEntryTF, *srSetups, *srNoProgMin, *srNoProgR, *srBreakeven, *srHardSL, *srReentryADX, *srDayExtreme, *srDayRun, *srDayPuts, *srDayFrom, *srRetestTol, *srBoxBars, *srBoxATR, *srBoxFade, *srGate),
+		DBPath:       *dbPath,
+		Exchange:     *exchange,
+		Token:        *token,
+		Qty:          *qty,
+		From:         *from,
+		To:           *to,
+		Output:       *output,
+		OutDir:       *outDir,
+		StrategyType: *stratFlag,
+		StrategyCfgSR: srAdviceOverrides(srOverrides(*srRangeADX, *srTrendADX, *srConfirm, *srMaxTrades, *srMaxLosses, *srDayLoss, *srStopATR, *srStopMin, *srEntryTF, *srSetups, *srNoProgMin, *srNoProgR, *srBreakeven, *srHardSL, *srReentryADX, *srDayExtreme, *srDayRun, *srDayPuts, *srDayFrom, *srRetestTol, *srBoxBars, *srBoxATR, *srBoxFade, *srGate),
+			*srAdvFast, *srAdvCont, *srAdvRisk, *srStrongADX, *srAdvTrades),
 		Option: backtest.OptionModel{
 			Enabled: *optModel, IVPct: *optIV, RatePct: 6.5, PremiumSLPct: *premSL,
 			SlippageBps: 50, SlippageMinPsa: 50, StrikeStep: 50,
@@ -240,6 +246,32 @@ func srOverrides(rangeADX, trendADX float64, confirm, maxTrades, maxLosses int, 
 		cfg.FadeEnabled, cfg.RetestEnabled, cfg.PullbackEnabled = on["fade"], on["retest"], on["pullback"]
 	}
 	return &cfg
+}
+
+// srAdviceOverrides applies the entry-advice flags on top of cfg (nil =
+// defaults). Without -sr-advice-as-trades the backtest ignores WATCH_BUY.
+func srAdviceOverrides(cfg *strategy.Nifty50SRConfig, fast string, contMin int, riskATR int64, strongADX float64, asTrades bool) *strategy.Nifty50SRConfig {
+	if fast == "" && contMin < 0 && riskATR < 0 && strongADX == 0 && !asTrades {
+		return cfg
+	}
+	if cfg == nil {
+		d := strategy.DefaultNifty50SRConfig()
+		cfg = &d
+	}
+	if fast != "" {
+		cfg.AdvicePullFastEMA = fast == "on"
+	}
+	if contMin >= 0 {
+		cfg.AdviceContinueMin = contMin
+	}
+	if riskATR >= 0 {
+		cfg.AdviceMaxRiskATRPct = riskATR
+	}
+	if strongADX > 0 {
+		cfg.StrongTrendADX = strongADX
+	}
+	cfg.AdviceAsTrades = asTrades
+	return cfg
 }
 
 // printWarnTally splits trades by the "warn=" flags in their entry reason

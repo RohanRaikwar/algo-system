@@ -97,6 +97,12 @@ type Config struct {
 	SRBoxBars   int
 	SRBoxATRPct int64
 	SRGateMode  string // warn (default: flag the entry) | block
+	// SR entry advice (WATCH_BUY, signal only, never an order): fast-EMA
+	// pullback and break continuation on strong-trend days.
+	SRAdvicePullFastEMA   bool
+	SRAdviceContinueMin   int
+	SRAdviceMaxRiskATRPct int64
+	SRStrongTrendADX      float64
 
 	// ExitWatchAuto: strategies exitwatch's exit requests may close
 	// (cmd:exitwatch:exit). NIFTY50_FNO is always refused.
@@ -181,6 +187,10 @@ func LoadConfig() Config {
 		SRBoxBars:             config.GetEnvInt("STRAT_SR_BOX_BARS", 6),
 		SRBoxATRPct:           config.GetEnvInt64("STRAT_SR_BOX_ATR_PCT", 150),
 		SRGateMode:            config.GetEnv("STRAT_SR_GATE_MODE", "warn"),
+		SRAdvicePullFastEMA:   config.GetEnvBool("STRAT_SR_ADVICE_PULL_FAST_EMA", true),
+		SRAdviceContinueMin:   config.GetEnvInt("STRAT_SR_ADVICE_CONTINUE_MIN", 15),
+		SRAdviceMaxRiskATRPct: config.GetEnvInt64("STRAT_SR_ADVICE_MAX_RISK_ATR_PCT", 150),
+		SRStrongTrendADX:      getEnvFloat("STRAT_SR_STRONG_TREND_ADX", 30),
 		ExitWatchAuto:         splitList(config.GetEnv("STRAT_EXITWATCH_AUTO", "")),
 		ExitPolicyFile:        config.GetEnv("STRAT_EXITPOLICY_FILE", "config/exitpolicy.json"),
 		ExitPolicyDB:          config.GetEnv("STRAT_EXITPOLICY_DB", "data/exitpolicy.db"),

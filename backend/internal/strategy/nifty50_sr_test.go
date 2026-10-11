@@ -774,3 +774,134 @@ func TestSRExitRequested(t *testing.T) {
 		t.Fatal("second request closed a flat book")
 	}
 }
+
+// fastPullbackSetup: TREND_UP with VWAP and EMA21 far below; the bar dips
+// only to EMA9 (22,828) and closes back above it. 15m ADX 35.
+func fastPullbackSetup() (SRState, ohlcv, ohlcv) {
+	ss, prev, cur := pullbackSetup()
+	ss.VWAP, ss.EMASlow = pts(22790), pts(22780)
+	ss.Range.ADX = 35
+	return ss, prev, cur
+}
+
+// 9 Oct 2026: a one-way rally never dipped to VWAP/EMA21. A dip to EMA9 is
+// entry advice (WATCH_BUY), never a position.
+func TestSRAdviceFastEMAPullback(t *testing.T) {
+	s, st := srTest(t)
+	ss, prev, cur := fastPullbackSetup()
+	sig := s.evaluatePullback(srCandle(cur.Close), st, ss, prev, cur, srMin)
+	if sig == nil {
+		t.Fatalf("no advice; rejects=%v", s.rejects)
+	}
+	if sig.Action != ActionWatchBuy || sig.Side != SideCall || !strings.Contains(sig.Reason, "SR PULLBACK_FAST CALL") {
+		t.Fatalf("action=%s side=%s reason=%s", sig.Action, sig.Side, sig.Reason)
+	}
+	if st.Side != SideNone || st.TradesToday != 0 || st.AdviceToday != 1 {
+		t.Fatalf("advice touched the position: side=%s trades=%d advice=%d", st.Side, st.TradesToday, st.AdviceToday)
+	}
+
+	// Cooldown: no second advice on the next bar.
+	if again := s.evaluatePullback(srCandle(cur.Close), st, ss, prev, cur, srMin); again != nil {
+		t.Fatal("advice repeated inside its cooldown")
+	}
+	if s.rejects["pullback_fast:advice_cooldown"] != 1 {
+		t.Errorf("rejects=%v", s.rejects)
+	}
+
+	// A real pullback entry is still taken after the advice.
+	real, prev2, cur2 := pullbackSetup()
+	if sig := s.evaluatePullback(srCandle(cur2.Close), st, real, prev2, cur2, srMin); sig == nil || sig.Action != ActionBuy {
+		t.Fatalf("real entry blocked after advice: %v rejects=%v", sig, s.rejects)
+	}
+}
+
+func TestSRAdviceNeedsStrongTrend(t *testing.T) {
+	s, st := srTest(t)
+	ss, prev, cur := fastPullbackSetup()
+	ss.Range.ADX = 28
+	if sig := s.evaluatePullback(srCandle(cur.Close), st, ss, prev, cur, srMin); sig != nil {
+		t.Fatalf("advice on a weak trend: %s", sig.Reason)
+	}
+	if s.rejects["pullback_fast:weak_adx"] != 1 {
+		t.Errorf("rejects=%v", s.rejects)
+	}
+}
+
+// 7 Oct 2026-style chop: the sideways box refuses advice even in warn mode.
+func TestSRAdviceRefusedInSidewaysBox(t *testing.T) {
+	s, st := srTest(t)
+	if s.cfg.GateMode != SRGateWarn {
+		t.Fatalf("gate mode %q", s.cfg.GateMode)
+	}
+	ss, prev, cur := fastPullbackSetup()
+	boxBars5(st, 6, 22810, 22838) // 28 pts ≤ 150% of ATR 20
+	if sig := s.evaluatePullback(srCandle(cur.Close), st, ss, prev, cur, srMin); sig != nil {
+		t.Fatalf("advice in a sideways box: %s", sig.Reason)
+	}
+	if s.rejects["pullback_fast:sideways"] != 1 {
+		t.Errorf("rejects=%v", s.rejects)
+	}
+}
+
+func TestSRAdviceFastEMAOff(t *testing.T) {
+	s, st := srTest(t)
+	s.cfg.AdvicePullFastEMA = false
+	ss, prev, cur := fastPullbackSetup()
+	if sig := s.evaluatePullback(srCandle(cur.Close), st, ss, prev, cur, srMin); sig != nil {
+		t.Fatalf("advice while off: %s", sig.Reason)
+	}
+	if s.rejects["pullback:no_touch"] != 1 {
+		t.Errorf("rejects=%v", s.rejects)
+	}
+}
+
+func TestSRAdviceAsTradesOpensPosition(t *testing.T) {
+	s, st := srTest(t)
+	s.cfg.AdviceAsTrades = true
+	ss, prev, cur := fastPullbackSetup()
+	sig := s.evaluatePullback(srCandle(cur.Close), st, ss, prev, cur, srMin)
+	if sig == nil || sig.Action != ActionBuy || st.Side != SideCall || st.Kind != SRKindPullbackFast {
+		t.Fatalf("sig=%v side=%s kind=%s rejects=%v", sig, st.Side, st.Kind, s.rejects)
+	}
+}
+
+// continueSetup: a CALL break of 22,850 armed 14 bars ago; the next bar is
+// the 15th. ATR 20 → beyond 5 pts, risk cap 30 pts.
+func continueSetup(s *Nifty50SR, st *nifty50SRState) SRState {
+	ss := srView(SRRegimeMixed, pts(22825), 60)
+	ss.Range.ADX = 35
+	ss.EMAFast, ss.EMASlow = pts(22840), pts(22830)
+	ss.Levels = ss.Levels[:2] // 22,810 / 22,850: nothing above, 2R target
+	st.PendingSide, st.PendingLevel, st.PendingLeft = SideCall, pts(22850), s.retestBars()-14
+	return ss
+}
+
+func TestSRAdviceContinuationWithoutRetest(t *testing.T) {
+	s, st := srTest(t)
+	ss := continueSetup(s, st)
+	prev := ohlcv{Open: pts(22862), High: pts(22866), Low: pts(22861), Close: pts(22864)}
+	cur := ohlcv{Open: pts(22864), High: pts(22871), Low: pts(22863), Close: pts(22870)}
+	sig := s.evaluateRetest(srCandle(cur.Close), st, ss, prev, cur, srMin)
+	if sig == nil {
+		t.Fatalf("no continuation advice; rejects=%v", s.rejects)
+	}
+	if sig.Action != ActionWatchBuy || sig.Side != SideCall || !strings.Contains(sig.Reason, "SR CONTINUE CALL") {
+		t.Fatalf("action=%s side=%s reason=%s", sig.Action, sig.Side, sig.Reason)
+	}
+	if st.PendingSide != SideNone || st.Side != SideNone {
+		t.Fatalf("pending=%s side=%s", st.PendingSide, st.Side)
+	}
+}
+
+func TestSRAdviceContinuationRiskCap(t *testing.T) {
+	s, st := srTest(t)
+	ss := continueSetup(s, st)
+	prev := ohlcv{Open: pts(22870), High: pts(22876), Low: pts(22868), Close: pts(22874)}
+	cur := ohlcv{Open: pts(22874), High: pts(22881), Low: pts(22872), Close: pts(22880)} // stop 22,840: 40 pts > 30
+	if sig := s.evaluateRetest(srCandle(cur.Close), st, ss, prev, cur, srMin); sig != nil {
+		t.Fatalf("advice past the risk cap: %s", sig.Reason)
+	}
+	if s.rejects["continue:risk"] != 1 || st.PendingSide != SideCall {
+		t.Errorf("rejects=%v pending=%s", s.rejects, st.PendingSide)
+	}
+}

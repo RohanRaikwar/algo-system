@@ -215,6 +215,8 @@ func New(cfg Config) (*Service, error) {
 	srCfg.DayExtremePct, srCfg.DayRunPts, srCfg.DayExtremePuts = cfg.SRDayExtremePct, cfg.SRDayRunPts, cfg.SRDayExtremePuts
 	srCfg.DayExtremeFromMin = cfg.SRDayExtremeFrom
 	srCfg.BoxBars, srCfg.BoxATRPct, srCfg.GateMode = cfg.SRBoxBars, cfg.SRBoxATRPct, cfg.SRGateMode
+	srCfg.AdvicePullFastEMA, srCfg.AdviceContinueMin = cfg.SRAdvicePullFastEMA, cfg.SRAdviceContinueMin
+	srCfg.AdviceMaxRiskATRPct, srCfg.StrongTrendADX = cfg.SRAdviceMaxRiskATRPct, cfg.SRStrongTrendADX
 	svc.srStrategy = strategy.NewNifty50SR(cfg.Qty, srCfg)
 	svc.srStrategy.SetExpiry(orderexec.NewStrikePicker(nil).NextExpiry(time.Now()))
 
@@ -589,6 +591,13 @@ func (svc *Service) signalLoop(ctx context.Context) {
 			for _, expandedSig := range expandedSignals {
 				sig := expandedSig
 				now := time.Now()
+
+				// Entry advice is published only: it never reaches the
+				// order path below.
+				if sig.Action == strategy.ActionWatchBuy {
+					svc.publishAdvice(ctx, sig, now)
+					continue
+				}
 
 				// Kill switch: block new entries but allow exits
 				if svc.killSwitchActive() && sig.Action == strategy.ActionBuy {

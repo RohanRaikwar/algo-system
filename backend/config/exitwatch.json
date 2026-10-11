@@ -32,6 +32,10 @@
   "runner_giveback": 0.5,
   "ghost_max_min": 60,
   "ghost_end_min": 925,
+  "early_fail_window_sec": 300,
+  "early_fail_risk_pct": 0.5,
+  "early_fail_min_paise": 800,
+  "early_fail_max_peak_paise": 500,
   "fractal_bars": 2,
   "orb_min": 15,
   "level_merge_tol_paise": 500

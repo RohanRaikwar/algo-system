@@ -59,6 +59,16 @@ type Params struct {
 	GhostMaxMin      int     `json:"ghost_max_min"`       // follow a closed runner at most this long
 	GhostEndMin      int     `json:"ghost_end_min"`       // IST minute of day ghosts stop, e.g. 925 = 15:25
 
+	// Early fail: advice (WATCH_EXIT, never an exit request) when a trade
+	// goes against us right after entry and never moved in our favour. The
+	// score and PROTECT exits need progress toward target first, so they
+	// cannot see this case. Auto-cutting it lost in every backtest setting
+	// (Mar–Oct 2026, both halves): ~40% of those trades recovered.
+	EarlyFailWindowSec    int     `json:"early_fail_window_sec"`     // only this long after entry, 0 = off
+	EarlyFailRiskPct      float64 `json:"early_fail_risk_pct"`       // adverse move ≥ this share of entry→stop…
+	EarlyFailMinPaise     int64   `json:"early_fail_min_paise"`      // …and at least this
+	EarlyFailMaxPeakPaise int64   `json:"early_fail_max_peak_paise"` // only while the best move is below this
+
 	// Day level book.
 	FractalBars        int   `json:"fractal_bars"`          // 1m bars each side for a swing high/low
 	ORBMin             int   `json:"orb_min"`               // opening range length in minutes from 09:15
@@ -103,6 +113,11 @@ func DefaultParams() Params {
 		RunnerGiveback:   0.50,
 		GhostMaxMin:      60,
 		GhostEndMin:      15*60 + 25,
+
+		EarlyFailWindowSec:    300,
+		EarlyFailRiskPct:      0.50,
+		EarlyFailMinPaise:     800,
+		EarlyFailMaxPeakPaise: 500,
 
 		FractalBars:        2,
 		ORBMin:             15,

@@ -148,6 +148,20 @@ function watchExitMarker(
     return marker;
 }
 
+/**
+ * Card for SR entry advice (WATCH_BUY): where the setup would enter, its
+ * levels and reason. No order was placed, so it opens no position.
+ */
+function watchBuyMarker(s: SignalRecord, time: number, compact: boolean): TradeMarker {
+    const marker: TradeMarker = { time, kind: 'watch', label: label('ADVICE BUY', s.side, compact), side: sideShort(s.side), lines: [] };
+    if (!compact) {
+        const lines = entryLines(s).filter(l => !l.startsWith('qty '));
+        lines[0] = metaLine(s.strategy, s.created_at || s.candle_ts, 'advice');
+        marker.lines = lines;
+    }
+    return marker;
+}
+
 function label(verb: string, side: string | undefined, compact: boolean, warned = false): string {
     return compact ? '' : [verb, sideLong(side), warned ? '⚠' : ''].filter(Boolean).join(' ');
 }
@@ -171,10 +185,11 @@ export function buildChartMarkers(
     const out: TradeMarker[] = [];
 
     // Oldest first so each EXIT pairs with the BUY before it (same key, same IST day).
-    // WATCH_* exit-watch advice is not a trade: only WATCH_EXIT gets a card,
-    // and it reads the open entry without closing it.
+    // WATCH_* advice is not a trade: only WATCH_EXIT and WATCH_BUY get a
+    // card. WATCH_EXIT reads the open entry without closing it; WATCH_BUY
+    // opens nothing.
     const mine = signals
-        .filter(s => (!isWatchAction(s.action) || s.action === 'WATCH_EXIT') && matchesToken(s.token, s.exchange, selectedToken))
+        .filter(s => (!isWatchAction(s.action) || s.action === 'WATCH_EXIT' || s.action === 'WATCH_BUY') && matchesToken(s.token, s.exchange, selectedToken))
         .sort((a, b) => Date.parse(signalTs(a)) - Date.parse(signalTs(b)));
     const open = new Map<string, { price: number; qty: number; day: string; marker: TradeMarker; signal: SignalRecord }>();
 
@@ -188,6 +203,10 @@ export function buildChartMarkers(
 
         if (s.action === 'WATCH_EXIT') {
             out.push(watchExitMarker(s, time, day, open.get(key), compact));
+            continue;
+        }
+        if (s.action === 'WATCH_BUY') {
+            out.push(watchBuyMarker(s, time, compact));
             continue;
         }
         const marker: TradeMarker = {

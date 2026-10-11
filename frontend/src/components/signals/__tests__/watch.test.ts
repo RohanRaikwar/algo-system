@@ -67,3 +67,34 @@ describe('exit watch signals', () => {
         expect(markers[2].pnl).toBe((16000 - 15365) * 65);
     });
 });
+
+describe('entry advice (WATCH_BUY)', () => {
+    const advice = sig({
+        action: 'WATCH_BUY', price: 11050, qty: 65, fno_symbol: 'NIFTY13OCT2622500CE',
+        reason: 'SR CONTINUE CALL regime=MIXED level=2238345 stop=2233145 target=2254545',
+    });
+
+    it('is a watch action with its own badge', () => {
+        expect(isWatchAction('WATCH_BUY')).toBe(true);
+        expect(matchesActionFilter('WATCH_BUY', 'WATCH')).toBe(true);
+        expect(matchesActionFilter('WATCH_BUY', 'BUY')).toBe(false);
+        expect(watchBadgeClass('WATCH_BUY')).toContain('watch-buy');
+    });
+
+    it('opens no position and pairs with no exit', () => {
+        const x = sig({ action: 'EXIT', price: 12000 });
+        expect(buildOpenOrders([advice])).toHaveLength(0);
+        expect(buildCompletedEvents([x, advice])).toHaveLength(0);
+    });
+
+    it('draws an advice card without qty or P&L', () => {
+        const markers = buildChartMarkers([advice], [], 'NSE:99926000', 60, false);
+        expect(markers).toHaveLength(1);
+        expect(markers[0].kind).toBe('watch');
+        expect(markers[0].label).toBe('ADVICE BUY CALL');
+        expect(markers[0].pnl).toBeUndefined();
+        expect(markers[0].lines[0]).toContain('advice');
+        expect(markers[0].lines.some(l => l.startsWith('qty '))).toBe(false);
+        expect(markers[0].lines.some(l => l.includes('NIFTY13OCT2622500CE'))).toBe(true);
+    });
+});
