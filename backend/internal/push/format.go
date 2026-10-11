@@ -23,7 +23,8 @@ type Notification struct {
 }
 
 // signalMsg is the subset of the pub:signal payload push needs. stratengine
-// (BUY/SELL/EXIT) and exitwatch (WATCH_EXIT) publish the same shape.
+// (BUY/SELL/EXIT, WATCH_BUY entry advice) and exitwatch (WATCH_EXIT)
+// publish the same shape.
 type signalMsg struct {
 	StrategyName    string `json:"strategy_name"`
 	Action          string `json:"action"`
@@ -35,6 +36,7 @@ type signalMsg struct {
 	FNOToken        string `json:"fno_token"`
 	FNOSymbol       string `json:"fno_symbol"`
 	OrderMode       string `json:"order_mode"`
+	IndexPrice      int64  `json:"index_price"` // WATCH_BUY only, paise
 }
 
 // FormatSignal turns one pub:signal payload into a notification. ok is false
@@ -74,6 +76,20 @@ func FormatSignal(payload []byte) (n Notification, ok bool) {
 			Title:  fmt.Sprintf("EXIT %s%s", s.StrategyName, mode),
 			Body:   joinReason(body, s.Reason),
 			Tag:    "exit-" + s.FNOToken,
+			URL:    "/",
+			Sticky: true,
+		}, true
+	case "WATCH_BUY":
+		// Entry advice: no order was placed.
+		what := strings.TrimSpace(s.Side + " " + s.FNOSymbol)
+		body := fmt.Sprintf("%s @ %s", what, Rupees(s.CurrentFNOPrice))
+		if s.CurrentFNOPrice <= 0 {
+			body = fmt.Sprintf("%s, index %s", what, Rupees(s.IndexPrice))
+		}
+		return Notification{
+			Title:  fmt.Sprintf("Entry advice %s", s.StrategyName),
+			Body:   joinReason(body+" (no order)", s.Reason),
+			Tag:    "advice-" + s.FNOToken,
 			URL:    "/",
 			Sticky: true,
 		}, true

@@ -1,7 +1,8 @@
 /**
  * Exit-watch signals (WATCH_HOLD / WATCH_TIGHTEN / WATCH_EXIT) come from the
- * exitwatch service on pub:signal and its own journal. They are advice only:
- * no order is placed, so P&L, trade pairing and chart markers skip them.
+ * exitwatch service on pub:signal and its own journal; WATCH_BUY is SR entry
+ * advice from stratengine. They are advice only: no order is placed, so P&L,
+ * trade pairing and chart markers skip them.
  */
 export function isWatchAction(action?: string): boolean {
     return (action ?? '').toUpperCase().startsWith('WATCH_');
@@ -18,6 +19,7 @@ export function matchesActionFilter(action: string, filter: string): boolean {
 export function watchBadgeClass(action: string): string {
     const a = action.toUpperCase();
     if (a === 'WATCH_EXIT') return 'action-badge watch-exit';
+    if (a === 'WATCH_BUY') return 'action-badge watch-buy';
     if (a === 'WATCH_TIGHTEN') return 'action-badge watch-tighten';
     return 'action-badge watch-hold';
 }

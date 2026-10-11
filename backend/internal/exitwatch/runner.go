@@ -27,6 +27,9 @@ const (
 	ReasonLock       = "LOCK"
 	ReasonSRReject   = "SR_REJECT"
 	ReasonRunTrail   = "RUN_TRAIL"
+
+	// ReasonEarlyFail is tracker advice, not a runner exit (see earlyFailStep).
+	ReasonEarlyFail = "EARLY_FAIL"
 )
 
 // Event is one edge-triggered exitwatch signal for the LOG tab.

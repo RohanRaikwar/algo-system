@@ -96,6 +96,8 @@ type Tracker struct {
 	events   []Event
 	exitText string
 	ghost    bool
+
+	earlyFailSent bool
 }
 
 // NewTracker validates the position and returns a tracker for it.
@@ -240,6 +242,7 @@ func (t *Tracker) Evaluate(now time.Time) Assessment {
 		return a
 	}
 	s := t.features(now)
+	t.earlyFailStep(now)
 	p, top, n := score(t.m, &s)
 
 	premOK := true
@@ -276,6 +279,44 @@ func (t *Tracker) Evaluate(now time.Time) Assessment {
 		a.SuggestedStop = t.pos.IndexEntry + t.sign*keep
 	}
 	return a
+}
+
+// earlyFailStep queues one EARLY_FAIL advice when the trade goes against us
+// within EarlyFailWindowSec of entry by at least EarlyFailRiskPct of the
+// entry→stop distance (floor EarlyFailMinPaise) without ever having moved
+// EarlyFailMaxPeakPaise in our favour. Advice only: it leaves the decision
+// and latch alone, and the engine never turns events into exit requests.
+func (t *Tracker) earlyFailStep(now time.Time) {
+	m := t.m
+	if t.earlyFailSent || m.EarlyFailWindowSec <= 0 || t.pos.EntryTS.IsZero() {
+		return
+	}
+	age := now.Sub(t.pos.EntryTS)
+	if age < 0 || age > time.Duration(m.EarlyFailWindowSec)*time.Second {
+		return
+	}
+	risk := (t.pos.IndexEntry - t.pos.StopLevel) * t.sign
+	need := int64(float64(risk) * m.EarlyFailRiskPct)
+	if need < m.EarlyFailMinPaise {
+		need = m.EarlyFailMinPaise
+	}
+	if t.lastMove > -need || t.peakMove >= m.EarlyFailMaxPeakPaise {
+		return
+	}
+	t.earlyFailSent = true
+	text := fmt.Sprintf("-%s pts in %s, best %s; stop %s", pts(-t.lastMove), age.Round(time.Second), signedPts(t.peakMove), pts(t.pos.StopLevel))
+	if risk > 0 {
+		text += fmt.Sprintf(" (-%s pts from entry)", pts(risk))
+	}
+	t.events = append(t.events, Event{Action: ActionWatchExit, Reason: ReasonEarlyFail, Text: text})
+}
+
+// signedPts formats paise as points with an explicit sign.
+func signedPts(p int64) string {
+	if p < 0 {
+		return "-" + pts(-p)
+	}
+	return "+" + pts(p)
 }
 
 func (t *Tracker) features(now time.Time) Snapshot {

@@ -1569,6 +1569,7 @@
 .action-badge.watch-hold { color: var(--sg-info); background: var(--sg-info-soft); }
 .action-badge.watch-tighten { color: var(--sg-warn); background: var(--sg-warn-soft); }
 .action-badge.watch-exit { color: var(--sg-loss); background: var(--sg-loss-soft); }
+.action-badge.watch-buy { color: var(--sg-profit); background: var(--sg-profit-soft); }
 .order-type-badge.shadow { color: var(--sg-info); background: var(--sg-info-soft); }
 .ew-runner { font-size: 0.68rem; color: var(--sg-info); white-space: nowrap; }
 

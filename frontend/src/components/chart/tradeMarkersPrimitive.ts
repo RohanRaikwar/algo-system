@@ -10,7 +10,7 @@ import type {
     Time,
 } from 'lightweight-charts';
 
-// 'watch' is an exitwatch WATCH_EXIT: advice only, the position stays open.
+// 'watch' is advice only (exitwatch WATCH_EXIT, SR WATCH_BUY): no order, no position change.
 export type TradeMarkerKind = 'entry' | 'exit' | 'refused' | 'watch';
 
 export interface TradeMarker {

@@ -25,6 +25,10 @@ const (
 	SRKindFade     = "FADE"
 	SRKindRetest   = "BREAKOUT_RETEST"
 	SRKindPullback = "PULLBACK"
+
+	// Advice-only kinds: published as WATCH_BUY, never opened as a position.
+	SRKindPullbackFast = "PULLBACK_FAST"
+	SRKindContinue     = "CONTINUE"
 )
 
 // Nifty50SRConfig holds all configurable parameters.
@@ -92,6 +96,22 @@ type Nifty50SRConfig struct {
 	// RetestTolPts: how close a retest bar must come back to the broken
 	// level (paise); 0 = TouchTolPts.
 	RetestTolPts int64
+
+	// Entry advice (WATCH_BUY): setups that only publish a signal, never an
+	// order. They catch strong one-way days where price never pulls back to
+	// VWAP/EMA21 or retests the broken level (9 Oct 2026: +260 pts, no entry).
+	//   AdvicePullFastEMA: a pullback to the 5m EMA9 in a TREND regime.
+	//   AdviceContinueMin: a break still holding beyond its level this many
+	//     minutes later without a retest. 0 = off.
+	// Both need 15m ADX ≥ StrongTrendADX and no sideways box, and are
+	// refused when the stop would sit more than AdviceMaxRiskATRPct % of
+	// the 15m ATR away (continuation only). AdviceAsTrades (backtest only)
+	// opens them as normal positions so the advice can be scored.
+	AdvicePullFastEMA   bool
+	AdviceContinueMin   int
+	AdviceMaxRiskATRPct int64
+	StrongTrendADX      float64
+	AdviceAsTrades      bool
 
 	EntryFromMin    int // no entries before (IST minutes)
 	EntryToMin      int // no entries from
@@ -166,6 +186,11 @@ func DefaultNifty50SRConfig() Nifty50SRConfig {
 		// refusing these entries would have done.
 		GateMode: SRGateWarn,
 
+		AdvicePullFastEMA:   true,
+		AdviceContinueMin:   15,
+		AdviceMaxRiskATRPct: 150,
+		StrongTrendADX:      30,
+
 		EntryFromMin:    hhmm(9, 30),
 		EntryToMin:      hhmm(14, 45),
 		TimeExitMin:     hhmm(15, 10),
@@ -220,6 +245,10 @@ type nifty50SRState struct {
 	LastADX      float64      // 15m ADX at that entry
 	CooldownLeft int
 	LastClose    int64
+
+	// ── Entry advice (not snapshotted: a restart only loses today's cap) ──
+	AdviceToday    int
+	AdviceCooldown int
 
 	LastCloseTS time.Time
 }
