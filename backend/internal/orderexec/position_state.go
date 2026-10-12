@@ -276,10 +276,12 @@ func signalFor(rec OrderRecord) strategy.Signal {
 
 // pollOrderAsync follows one order until the book shows a terminal status,
 // then calls done under the position lock. match selects the order's row.
+// orderID, when known, also lets a terminal push from the order-status
+// socket settle it at once ("" when the order is matched by tag only).
 // If the order never shows up, absent is called; if it stays non-terminal
 // or the book stays unreadable for the whole window, an alert is logged and
 // state is left for an operator.
-func (oe *OrderExecutor) pollOrderAsync(posKey, what string, match func(map[string]any) (map[string]any, bool),
+func (oe *OrderExecutor) pollOrderAsync(posKey, what, orderID string, match func(map[string]any) (map[string]any, bool),
 	done func(orderID string, f fillResult), absent func()) {
 	if oe.brokerAPI() == nil {
 		oe.alertf("%s: no broker session to settle order — check Angel order book manually", what)
@@ -302,9 +304,13 @@ func (oe *OrderExecutor) pollOrderAsync(posKey, what string, match func(map[stri
 					what, time.Duration(tries)*every, lastStatus, sawBook, slowEvery)
 			}
 			if i < tries {
-				time.Sleep(every)
+				oe.pushes.wait(orderID, every)
 			} else {
-				time.Sleep(slowEvery)
+				oe.pushes.wait(orderID, slowEvery)
+			}
+			if f, ok := oe.pushes.terminal(orderID); ok {
+				settleUnder(func() { done(orderID, f) })
+				return
 			}
 			book, err := oe.readOrderBookBackground()
 			if err != nil {
@@ -396,18 +402,18 @@ func (oe *OrderExecutor) ResumeSettlement() {
 			if rec.OrderID != "" {
 				match = matchByID(rec.OrderID)
 			}
-			oe.pollOrderAsync(posKey, "restored pending BUY "+rec.ClientOrderID, match,
+			oe.pollOrderAsync(posKey, "restored pending BUY "+rec.ClientOrderID, rec.OrderID, match,
 				func(orderID string, f fillResult) {
 					oe.onBuySettled(sig, orderID, f)
 				}, func() { oe.dropEntry(sig) })
 			continue
 		}
 
-		match := matchByID(rec.ExitOrderID)
+		exitID, match := rec.ExitOrderID, matchByID(rec.ExitOrderID)
 		if tag, ok := strings.CutPrefix(rec.ExitOrderID, "tag:"); ok {
-			match = matchByTags(tag, retryTag(tag))
+			exitID, match = "", matchByTags(tag, retryTag(tag))
 		}
-		oe.pollOrderAsync(posKey, "restored SELL "+rec.ExitOrderID, match,
+		oe.pollOrderAsync(posKey, "restored SELL "+rec.ExitOrderID, exitID, match,
 			func(orderID string, f fillResult) {
 				oe.applyExitResult(sig, orderID, f)
 			}, func() {

@@ -76,11 +76,11 @@ func (oe *OrderExecutor) orderPrice(direction, token string, ltp int64) int64 {
 // caller follows it in the background).
 func (oe *OrderExecutor) awaitFill(orderID, direction, symbol, token string, qty, price int64) (fillResult, error) {
 	if !oe.chaseMode() || price <= 0 {
-		return confirmFill(oe.readOrderBook, orderID, defaultFillPollDelays)
+		return confirmFill(oe.readOrderBook, &oe.pushes, orderID, defaultFillPollDelays)
 	}
 	first := price
 	for i := 0; ; i++ {
-		f, err := confirmFill(oe.readOrderBook, orderID, chasePollDelays)
+		f, err := confirmFill(oe.readOrderBook, &oe.pushes, orderID, chasePollDelays)
 		if err == nil && f.terminal() {
 			return f, nil
 		}
@@ -113,14 +113,14 @@ func (oe *OrderExecutor) awaitFill(orderID, direction, symbol, token string, qty
 		} else {
 			log.Printf("%s 🏃 chase BUY %s: not filled after %d re-prices — cancelled", oe.logPrefix(), orderID, oe.cfg.ChaseReprices)
 		}
-		return confirmFill(oe.readOrderBook, orderID, defaultFillPollDelays)
+		return confirmFill(oe.readOrderBook, &oe.pushes, orderID, defaultFillPollDelays)
 	}
 	if err := oe.modifyOrder(orderID, symbol, token, "MARKET", qty, 0); err != nil {
 		log.Printf("%s 🏃 chase SELL %s: switch to MARKET refused: %v", oe.logPrefix(), orderID, err)
 	} else {
 		log.Printf("%s 🏃 chase SELL %s: still open — switched to MARKET", oe.logPrefix(), orderID)
 	}
-	return confirmFill(oe.readOrderBook, orderID, defaultFillPollDelays)
+	return confirmFill(oe.readOrderBook, &oe.pushes, orderID, defaultFillPollDelays)
 }
 
 // modifyOrder changes a resting NORMAL order's type and price.

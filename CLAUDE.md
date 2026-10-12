@@ -115,6 +115,8 @@ Margin (`internal/orderexec/margin.go`): a real BUY is refused when the cached R
 
 Reconcile (`ReconcileAndFix`, every 60s in market hours): when the broker holds **less** of a tracked position on two consecutive passes, the executor books the outside sale at LTP and closes/reduces the position (resizing the stop). Anything else — broker holds more, an unknown position, a short, a `status=false` read — is unsafe: alert and halt new entries (`reconcileHalt`, same effect as the kill switch) until a pass is clean. It never places a trade.
 
+Order-status push (`STRAT_ORDER_WS`, default on; connects only with live orders and a session manager): `smartconnect.OrderStream` follows `wss://tns.angelone.in/smart-order-update` and feeds `OrderExecutor.HandleOrderUpdate` (`internal/orderexec/push.go`). Only terminal pushes (complete/rejected/cancelled) are trusted. They end `confirmFill` / `pollOrderAsync` waits early and book a filled stop at once via `sweepStop`. Non-terminal pushes are ignored and REST polling stays the fallback. Orders are still placed only by REST; Angel One has no order placement over WebSocket.
+
 Order-path changes are proven with fake-broker tests (`fakeAPI` in `fakebroker_test.go`), not paper/shadow runs.
 
 Exits must never be blocked. Existing gates (profit cap, position mutual-exclusion) apply to entries only, so an open real position can always be closed.

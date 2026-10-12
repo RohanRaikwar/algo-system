@@ -51,7 +51,19 @@ type OrderSnapshot struct {
 	CBFailures float64 `json:"cb_failures"` // consecutive failures
 	RLCount    float64 `json:"rl_count"`    // orders in the current window
 	RLMax      float64 `json:"rl_max"`      // allowed orders per window
-	UpdatedAt  string  `json:"updated_at"`
+	// OrderWS is the broker order-status socket. Nil from an older build.
+	OrderWS   *OrderWSSnapshot `json:"order_ws,omitempty"`
+	UpdatedAt string           `json:"updated_at"`
+}
+
+// OrderWSSnapshot is the state of Angel One's order-status socket.
+type OrderWSSnapshot struct {
+	Status     string  `json:"status"`       // off | paper | connecting | up | down
+	Since      string  `json:"since"`        // last status change, RFC3339; empty if never set
+	Reconnects float64 `json:"reconnects"`   // connects after the first
+	Pushes     float64 `json:"pushes"`       // order updates received
+	LastPushAt string  `json:"last_push_at"` // empty if none yet
+	LastError  string  `json:"last_error"`   // error that ended the last failed session
 }
 
 // Value reads the current value of a Counter or Gauge. It returns 0 for a nil

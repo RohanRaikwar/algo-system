@@ -27,7 +27,7 @@ func row(status string, avg any) map[string]any {
 
 func TestConfirmFill_CompleteUsesAveragePrice(t *testing.T) {
 	book, _ := scriptedBook(row("open", 0.0), row("complete", 123.45))
-	f, err := confirmFill(book, "OID-1", make([]time.Duration, 3))
+	f, err := confirmFill(book, nil, "OID-1", make([]time.Duration, 3))
 	if err != nil {
 		t.Fatalf("unexpected: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestConfirmFill_CompleteUsesAveragePrice(t *testing.T) {
 
 func TestConfirmFill_LateRejection(t *testing.T) {
 	book, _ := scriptedBook(row("rejected", 0.0))
-	f, err := confirmFill(book, "OID-1", make([]time.Duration, 3))
+	f, err := confirmFill(book, nil, "OID-1", make([]time.Duration, 3))
 	if err != nil || !f.Rejected() {
 		t.Fatalf("want rejected, got %+v err=%v", f, err)
 	}
@@ -46,7 +46,7 @@ func TestConfirmFill_LateRejection(t *testing.T) {
 
 func TestConfirmFill_StillOpenAfterPolling(t *testing.T) {
 	book, calls := scriptedBook(row("open", 0.0))
-	f, err := confirmFill(book, "OID-1", make([]time.Duration, 3))
+	f, err := confirmFill(book, nil, "OID-1", make([]time.Duration, 3))
 	if err != nil || f.Status != "open" || f.Rejected() {
 		t.Fatalf("want non-terminal open, got %+v err=%v", f, err)
 	}
@@ -57,7 +57,7 @@ func TestConfirmFill_StillOpenAfterPolling(t *testing.T) {
 
 func TestConfirmFill_BookUnavailable(t *testing.T) {
 	book, _ := scriptedBook(nil)
-	if _, err := confirmFill(book, "OID-1", make([]time.Duration, 2)); err == nil {
+	if _, err := confirmFill(book, nil, "OID-1", make([]time.Duration, 2)); err == nil {
 		t.Fatal("want error when book never readable")
 	}
 }

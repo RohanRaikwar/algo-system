@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"sync"
 	"time"
 
 	"trading-systemv1/internal/markethours"
@@ -15,6 +16,7 @@ import (
 	"trading-systemv1/internal/orderexec"
 	"trading-systemv1/internal/portfolio"
 	"trading-systemv1/internal/strategy"
+	"trading-systemv1/pkg/smartconnect"
 
 	goredis "github.com/go-redis/redis/v8"
 )
@@ -127,6 +129,7 @@ func (svc *Service) startMetrics() func() {
 				continue
 			}
 			snap := m.OrderSnapshot()
+			snap.OrderWS = svc.orderWS.snapshot()
 			snap.UpdatedAt = metrics.Stamp()
 			data, err := json.Marshal(snap)
 			if err != nil {
@@ -225,6 +228,64 @@ func (svc *Service) notifyAsync(alert notification.Alert) {
 			log.Printf("[stratengine] ⚠️  alert delivery failed: %v (alert: %s)", err, alert.Message)
 		}
 	}()
+}
+
+// orderStreamAlertAfter is how long the order-status socket may stay down
+// before the operator is told. Fills still arrive by REST meanwhile.
+const orderStreamAlertAfter = 2 * time.Minute
+
+// startOrderStream follows Angel's order-status socket (STRAT_ORDER_WS) and
+// feeds its pushes to the executor, so fills and stop hits are seen at once
+// instead of at the next order-book poll. REST polling stays as the
+// fallback. Live sessions only: paper and staging never connect (Angel
+// allows 3 sockets per client code).
+func (svc *Service) startOrderStream(ctx context.Context) {
+	if !svc.cfg.OrderStream {
+		svc.orderWS.setStatus(orderWSOff)
+		return
+	}
+	if !svc.cfg.LiveOrders || svc.sessionManager == nil {
+		svc.orderWS.setStatus(orderWSPaper)
+		log.Printf("[stratengine] order-status socket off (paper mode or no live session)")
+		return
+	}
+	sm := svc.sessionManager
+	stream := smartconnect.NewOrderStream(func() string {
+		if c := sm.GetClient(); c != nil {
+			return c.GetAccessToken()
+		}
+		return ""
+	}, func(orderData map[string]any) {
+		svc.orderWS.onPush()
+		svc.orderExecutor.HandleOrderUpdate(orderData)
+	})
+	stream.OnError = svc.orderWS.onError
+
+	var mu sync.Mutex
+	var downTimer *time.Timer
+	stream.OnState = func(up bool) {
+		svc.orderWS.onState(up)
+		mu.Lock()
+		defer mu.Unlock()
+		if up {
+			if downTimer != nil && !downTimer.Stop() {
+				svc.notifyAsync(notification.Alert{Level: notification.AlertInfo,
+					Title: "Order-status socket back", Message: "Order-status socket reconnected"})
+			}
+			downTimer = nil
+			return
+		}
+		if downTimer == nil {
+			downTimer = time.AfterFunc(orderStreamAlertAfter, func() {
+				svc.notifyAsync(notification.Alert{Level: notification.AlertWarning,
+					Title:   "Order-status socket down",
+					Message: "Order-status socket down for " + orderStreamAlertAfter.String() + " — fills fall back to order-book polling (stop hits seen within 60s)"})
+			})
+		}
+	}
+	log.Printf("[stratengine] 📡 order-status socket on (%s)", smartconnect.OrderStreamURL)
+	svc.orderWS.setStatus(orderWSConnecting)
+	go stream.Run(ctx)
 }
 
 // wireAlerts routes executor and engine alerts to operatorAlert.

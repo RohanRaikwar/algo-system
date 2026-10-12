@@ -12,7 +12,7 @@ import (
 // Partial fill then cancel: the filled part is a live position.
 func TestFillResult_CancelledWithFillsIsNotRejected(t *testing.T) {
 	book := bookWith(map[string]any{"orderid": "O1", "orderstatus": "cancelled", "filledshares": "25", "averageprice": 100.0})
-	f, err := confirmFill(func() (map[string]any, error) { return book, nil }, "O1", []time.Duration{0})
+	f, err := confirmFill(func() (map[string]any, error) { return book, nil }, nil, "O1", []time.Duration{0})
 	if err != nil {
 		t.Fatal(err)
 	}

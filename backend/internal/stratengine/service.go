@@ -82,6 +82,8 @@ type Service struct {
 
 	// Session manager for health monitoring
 	sessionManager *smartconnect.SessionManager
+	// orderWS is the order-status socket state for the Health page.
+	orderWS orderWSStats
 
 	streams    []string
 	tfCandleCh chan model.TFCandle
@@ -327,6 +329,7 @@ func (svc *Service) Run(ctx context.Context) error {
 	// ── Dashboard kill switch + broker position reconciliation ──
 	go svc.configUpdateLoop(ctx)
 	go svc.positionReconcileLoop(ctx)
+	svc.startOrderStream(ctx)
 
 	// ── Re-subscribe the picker universe + strike ladder on market open
 	// (mdengine (re)connect), not only at midnight ──

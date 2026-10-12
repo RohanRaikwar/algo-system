@@ -44,6 +44,7 @@ type Config struct {
 
 	// ── FNO Order Execution ──
 	LiveOrders     bool   // true = place real orders, false = dry-run (log only)
+	OrderStream    bool   // follow Angel's order-status socket for faster fills (live only)
 	CallFNOToken   string // Angel One symbol token for CALL option (empty = dynamic strikes only)
 	CallFNOSymbol  string // trading symbol (e.g. "NIFTY05MAR2523000CE")
 	PutFNOToken    string // Angel One symbol token for PUT option  (empty = dynamic strikes only)
@@ -164,6 +165,7 @@ func LoadConfig() Config {
 
 		// FNO
 		LiveOrders:     config.GetEnvBool("STRAT_LIVE_ORDERS", false),
+		OrderStream:    config.GetEnvBool("STRAT_ORDER_WS", true),
 		CallFNOToken:   config.GetEnv("STRAT_CALL_FNO_TOKEN", ""),
 		CallFNOSymbol:  config.GetEnv("STRAT_CALL_FNO_SYMBOL", ""),
 		PutFNOToken:    config.GetEnv("STRAT_PUT_FNO_TOKEN", ""),

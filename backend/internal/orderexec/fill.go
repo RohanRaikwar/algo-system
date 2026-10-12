@@ -60,14 +60,17 @@ func parseFillRow(row map[string]any) fillResult {
 // or the delays run out. An accepted placement is not a fill: Angel One
 // returns an orderid and can reject the order moments later (e.g. margin).
 // If polling ends on a non-terminal status, that status is returned without
-// error. An error means the book was never readable.
-func confirmFill(orderBook func() (map[string]any, error), orderID string, delays []time.Duration) (fillResult, error) {
+// error. An error means the book was never readable. A terminal status
+// pushed by the order-status socket (push; nil for none) ends the wait early
+// and is returned without reading the book.
+func confirmFill(orderBook func() (map[string]any, error), push *pushBook, orderID string, delays []time.Duration) (fillResult, error) {
 	var last fillResult
 	var lastErr error
 	seen := false
 	for _, d := range delays {
-		if d > 0 {
-			time.Sleep(d)
+		push.wait(orderID, d)
+		if f, ok := push.terminal(orderID); ok {
+			return f, nil
 		}
 		book, err := orderBook()
 		if err != nil {

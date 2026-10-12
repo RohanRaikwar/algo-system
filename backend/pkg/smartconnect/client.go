@@ -495,6 +495,11 @@ func (sc *SmartConnect) SetAccessToken(t string) {
 	sc.accessToken = t
 	sc.tokMu.Unlock()
 }
+// GetAccessToken returns the current session JWT (without the "Bearer "
+// prefix). SessionManager refreshes it in place, so long-lived sockets re-read it on
+// every dial.
+func (sc *SmartConnect) GetAccessToken() string { return sc.getAccessToken() }
+
 func (sc *SmartConnect) getAccessToken() string {
 	sc.tokMu.RLock()
 	defer sc.tokMu.RUnlock()

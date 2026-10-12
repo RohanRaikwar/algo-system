@@ -140,7 +140,7 @@ func (oe *OrderExecutor) cancelStopForExit(sig strategy.Signal, posKey string) s
 		// the order book below says which.
 		log.Printf("%s stop %s cancel refused (%v %v) — checking order book", oe.logPrefix(), id, err, res)
 	}
-	f, err := confirmFill(oe.readOrderBook, id, stopCancelDelays)
+	f, err := confirmFill(oe.readOrderBook, &oe.pushes, id, stopCancelDelays)
 	if err == nil {
 		oe.journalFill("", id, f, "protection")
 	}
@@ -231,21 +231,24 @@ func (oe *OrderExecutor) sweepOne(posKey string) {
 		oe.rearmStop(posKey)
 		return
 	}
-	book, err := oe.readOrderBookBackground()
-	if err != nil {
-		return
-	}
-	row, found := findOrderByID(book, rec.SLOrderID)
-	if !found {
-		if rec.SLPlacedAt.Before(startOfTodayIST()) {
-			// Yesterday's DAY stop expired: protect today's session.
-			oe.updateEntry(posKey, func(r *OrderRecord) { r.SLOrderID = "" })
-			oe.rearmStop(posKey)
+	f, pushed := oe.pushes.terminal(rec.SLOrderID)
+	if !pushed {
+		book, err := oe.readOrderBookBackground()
+		if err != nil {
+			return
 		}
-		return
+		row, found := findOrderByID(book, rec.SLOrderID)
+		if !found {
+			if rec.SLPlacedAt.Before(startOfTodayIST()) {
+				// Yesterday's DAY stop expired: protect today's session.
+				oe.updateEntry(posKey, func(r *OrderRecord) { r.SLOrderID = "" })
+				oe.rearmStop(posKey)
+			}
+			return
+		}
+		f = parseFillRow(row)
+		oe.journalFill("", rec.SLOrderID, f, "sweep")
 	}
-	f := parseFillRow(row)
-	oe.journalFill("", rec.SLOrderID, f, "sweep")
 	sig := signalFor(rec)
 	switch {
 	case f.Status == "complete":

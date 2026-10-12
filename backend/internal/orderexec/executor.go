@@ -123,6 +123,9 @@ type OrderExecutor struct {
 	// keyLocks serialises orders per position key; see keyLock.
 	keyLocks sync.Map
 
+	// pushes holds terminal statuses from the order-status socket.
+	pushes pushBook
+
 	// Rate-limited order-book reader, created on first use.
 	bookOnce sync.Once
 	books    *bookReader
@@ -1106,7 +1109,7 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 		rec.Pending = true
 		oe.storeEntry(sig, rec)
 		log.Printf("%s ⚠️  BUY %s not confirmed filled yet (status=%q, err=%v) — pending, following in background", prefix, orderID, fill.Status, ferr)
-		oe.pollOrderAsync(posKey, "BUY "+orderID, matchByID(orderID), func(oid string, f fillResult) {
+		oe.pollOrderAsync(posKey, "BUY "+orderID, orderID, matchByID(orderID), func(oid string, f fillResult) {
 			oe.onBuySettled(sig, oid, f)
 		}, nil)
 		return
@@ -1128,7 +1131,7 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 	log.Printf("%s ⏳ SELL %s not confirmed filled (status=%q, err=%v) — position kept open with GTT protection, following in background",
 		prefix, orderID, fill.Status, ferr)
 	oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = orderID })
-	oe.pollOrderAsync(posKey, "SELL "+orderID, matchByID(orderID), func(_ string, f fillResult) {
+	oe.pollOrderAsync(posKey, "SELL "+orderID, orderID, matchByID(orderID), func(_ string, f fillResult) {
 		oe.applyExitResult(sig, orderID, f)
 	}, nil)
 }
@@ -1158,7 +1161,7 @@ func (oe *OrderExecutor) settleUnknown(sig strategy.Signal, posKey, direction, f
 			StrategyName:  sig.StrategyName,
 			PositionSide:  string(sig.Side),
 		})
-		oe.pollOrderAsync(posKey, "unknown BUY "+key, match, func(orderID string, f fillResult) {
+		oe.pollOrderAsync(posKey, "unknown BUY "+key, "", match, func(orderID string, f fillResult) {
 			log.Printf("%s unknown BUY %s settled: orderID=%s status=%s", prefix, key, orderID, f.Status)
 			oe.onBuySettled(sig, orderID, f)
 		}, func() {
@@ -1170,7 +1173,7 @@ func (oe *OrderExecutor) settleUnknown(sig strategy.Signal, posKey, direction, f
 	}
 
 	oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = "tag:" + key })
-	oe.pollOrderAsync(posKey, "unknown SELL "+key, match, func(orderID string, f fillResult) {
+	oe.pollOrderAsync(posKey, "unknown SELL "+key, "", match, func(orderID string, f fillResult) {
 		log.Printf("%s unknown SELL %s settled: orderID=%s status=%s", prefix, key, orderID, f.Status)
 		oe.applyExitResult(sig, orderID, f)
 	}, func() {

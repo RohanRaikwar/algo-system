@@ -136,6 +136,16 @@ export function SystemHealth() {
         : orders.cb_state === 1 ? { label: 'Tripped', sub: 'Open: new real entries rejected', tone: 'bad' as Tone }
             : orders.cb_state === 2 ? { label: 'Testing', sub: 'Half-open: testing the broker with one entry', tone: 'warn' as Tone }
                 : { label: 'Normal', sub: 'Closed: entries reach the broker', tone: 'ok' as Tone };
+    const ows = orders?.order_ws;
+    const owsState = !ows ? null
+        : ows.status === 'up' ? { label: 'Connected', sub: 'Fills and stop hits arrive as soon as the broker sends them.', tone: 'ok' as Tone }
+            : ows.status === 'connecting' ? { label: 'Connecting', sub: 'First connection pending. Fills arrive by order-book polling meanwhile.', tone: 'warn' as Tone }
+                : ows.status === 'down' ? { label: 'Down', sub: 'Reconnecting. Fills arrive by order-book polling; stop hits are seen within 60s.', tone: 'bad' as Tone }
+                    : ows.status === 'paper' ? { label: 'Paper mode', sub: 'No live orders, so the socket does not connect.', tone: 'idle' as Tone }
+                        : { label: 'Off', sub: 'Disabled by STRAT_ORDER_WS. Fills arrive by order-book polling.', tone: 'idle' as Tone };
+    const owsSince = ows?.since ? Date.parse(ows.since) : NaN;
+    const owsLastPush = ows?.last_push_at ? Date.parse(ows.last_push_at) : NaN;
+    const owsActive = ows?.status === 'up' || ows?.status === 'down' || ows?.status === 'connecting';
     const rlPct = orders && orders.rl_max > 0 ? (orders.rl_count / orders.rl_max) * 100 : 0;
     const rlTone = levelTone(rlPct, 60, 90);
     const problems = p ? PROBLEM_COUNTERS.filter(c => (p[c.key] as number) > 0) : [];
@@ -314,6 +324,44 @@ export function SystemHealth() {
                                     <Row label="Real entries in the last 60s" value={`${fmtCount(orders.rl_count)} of ${fmtCount(orders.rl_max)}`} tone={rlTone === 'ok' || rlTone === 'idle' ? undefined : rlTone} />
                                     <Meter pct={rlPct} tone={rlTone} />
                                     <p className={styles.note}>Real entries only. New entries are refused at the limit; exits are never blocked.</p>
+                                </>
+                            )}
+                        </Card>
+
+                        {/* Order-status socket */}
+                        <Card title="Order-status socket" meta="stratengine">
+                            {!orders ? <NotReporting service="stratengine" /> : !ows || !owsState ? (
+                                <p className={styles.unavailable}>The running stratengine does not report the order-status socket. Restart it to load the new build.</p>
+                            ) : (
+                                <>
+                                    <div className={styles.hero}>
+                                        <span className={`${styles.dot} ${styles[`dot_${owsState.tone}`]} ${styles.dotLg}`} />
+                                        <span className={`${styles.heroValue} ${styles[owsState.tone]}`}>{owsState.label}</span>
+                                    </div>
+                                    <p className={styles.note}>{owsState.sub}</p>
+                                    {owsActive && (
+                                        <>
+                                            <Row
+                                                label="Since"
+                                                value={Number.isNaN(owsSince) ? '—' : `${fmtClock(owsSince)} (${fmtAge(now - owsSince)})`}
+                                            />
+                                            <Row
+                                                label="Reconnects"
+                                                value={fmtCount(ows.reconnects)}
+                                                tone={ows.reconnects > 0 ? 'warn' : undefined}
+                                                hint="Times the socket reconnected after its first connection"
+                                            />
+                                            <Row label="Order updates received" value={fmtCount(ows.pushes)} />
+                                            <Row
+                                                label="Last update"
+                                                value={Number.isNaN(owsLastPush) ? 'None yet' : `${fmtClock(owsLastPush)} (${fmtAge(now - owsLastPush)})`}
+                                                tone={Number.isNaN(owsLastPush) ? 'idle' : undefined}
+                                            />
+                                            {ows.last_error && (
+                                                <Row label="Last error" value={ows.last_error} tone="warn" hint="Error that ended the last failed or dropped connection" />
+                                            )}
+                                        </>
+                                    )}
                                 </>
                             )}
                         </Card>

@@ -41,6 +41,8 @@ type fakeAPI struct {
 
 	fillAfterModifies int // a resting order fills (at its price) on this many re-prices; 0 = never
 
+	bookReads int // OrderBook calls
+
 	rmsNet string // RMSLimit "net" in rupees
 	rmsErr error
 }
@@ -76,6 +78,7 @@ func (f *fakeAPI) PlaceOrder(p map[string]any) (string, error) {
 func (f *fakeAPI) OrderBook() (map[string]any, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.bookReads++
 	if f.bookErr != nil {
 		return nil, f.bookErr
 	}

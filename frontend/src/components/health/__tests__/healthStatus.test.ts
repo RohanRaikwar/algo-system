@@ -48,6 +48,16 @@ describe('collectIssues', () => {
         expect(issues.every(i => i.tone === 'bad')).toBe(true);
     });
 
+    it('flags a down order-status socket only while the market is open', () => {
+        const ows = { status: 'down' as const, since: '', reconnects: 0, pushes: 0, last_push_at: '', last_error: '' };
+        const orders = { cb_state: 0, cb_failures: 0, rl_count: 0, rl_max: 10, updated_at: '', order_ws: ows };
+        const open = base({ orders, pipeline: { candle_lag_sec: 1, market_open: true } as PipelineSnapshot });
+        expect(collectIssues(open, true).map(i => [i.key, i.tone])).toEqual([['order-ws', 'warn']]);
+        expect(collectIssues(base({ orders }), true)).toEqual([]);
+        const paper = base({ orders: { ...orders, order_ws: { ...ows, status: 'paper' } }, pipeline: { candle_lag_sec: 1, market_open: true } as PipelineSnapshot });
+        expect(collectIssues(paper, true)).toEqual([]);
+    });
+
     it('flags candle lag only while ticks flow', () => {
         const lagging = base({ pipeline: { candle_lag_sec: 3, market_open: false } as PipelineSnapshot });
         expect(collectIssues(lagging, true).map(i => [i.key, i.tone])).toEqual([['lag', 'warn']]);
