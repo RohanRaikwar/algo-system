@@ -850,6 +850,8 @@ func (svc *Service) signalLoop(ctx context.Context) {
 					"warnings":          sig.Warnings,
 					"fno_token":         rec.FNOToken,
 					"fno_symbol":        rec.FNOSymbol,
+					"pick":              sig.Pick,
+					"pick_alt":          sig.PickAlt,
 					"order_mode":        orderMode,
 					"profit_cap_hit":    profitCapHit,
 					"ts":                now.UTC().Format(time.RFC3339Nano),

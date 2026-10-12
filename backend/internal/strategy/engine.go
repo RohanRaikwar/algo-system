@@ -43,6 +43,12 @@ type Signal struct {
 	Strike    int64     `json:"strike,omitempty"`     // strike in index points
 	Short     bool      `json:"short,omitempty"`      // leg is sold to open
 
+	// Pick names the picker that chose the traded contract: "old"
+	// (pickSRStrike path) or "new" (optionpicker). PickAlt is the other
+	// picker's contract when it differs (shadow mode). Display only.
+	Pick    string `json:"pick,omitempty"`
+	PickAlt string `json:"pick_alt,omitempty"`
+
 	// TargetMove is the index move (paise) from entry to target, so the
 	// engine can check the expected option gain covers trading costs.
 	TargetMove int64 `json:"target_move,omitempty"`

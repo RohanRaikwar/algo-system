@@ -82,6 +82,9 @@ func (svc *Service) resolveEntryStrike(ctx context.Context, sig *strategy.Signal
 	// STRAT_PICKER_MODE=on: the picker's contract (quoted, streamed) or a
 	// refusal. Off/shadow fall through to the selection below unchanged.
 	if decided, err := svc.pickEntry(sig, now); decided {
+		if err == nil {
+			sig.Pick = "new"
+		}
 		return err
 	}
 	sr := svc.isSRSignal(sig)
@@ -112,7 +115,20 @@ func (svc *Service) resolveEntryStrike(ctx context.Context, sig *strategy.Signal
 	// decision (recorded earlier in pickEntry), for the go/no-go review.
 	// No-op when there's no picker decision to attach it to (mode "off").
 	svc.recordOldChoice(sig.StrategyName, sig.FNOSymbol)
+	sig.Pick, sig.PickAlt = "old", svc.altPick(sig.StrategyName, sig.FNOSymbol, now)
 	return nil
+}
+
+// altPick returns the new picker's contract for strategyName when it picked
+// one different from symbol (shadow mode disagreement), else "". Only a
+// decision made for this entry counts (pickEntry stamps it with now); an
+// older one belongs to an earlier signal.
+func (svc *Service) altPick(strategyName, symbol string, now time.Time) string {
+	d := svc.lastPickerDecision(strategyName)
+	if d.TS != now.UTC().Format(time.RFC3339) || d.Result != "picked" || d.Symbol == "" || d.Symbol == symbol {
+		return ""
+	}
+	return d.Symbol
 }
 
 func (svc *Service) cancelStrategyEntry(ctx context.Context, sig strategy.Signal, reason string, now time.Time) {

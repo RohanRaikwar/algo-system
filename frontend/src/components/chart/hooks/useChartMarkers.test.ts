@@ -61,6 +61,22 @@ describe('card lines', () => {
         expect(e.pnl).toBe((13575 - 12050) * 75);
     });
 
+    it('names the pick on the entry, the paired exit and its P&L', () => {
+        const picked = { ...buy, pick: 'old', pick_alt: 'NIFTY06OCT2622600PE' } as SignalRecord;
+        const [b, e] = buildChartMarkers([exit, picked], [], 'NSE:99926000', 60, false);
+        expect(b.lines).toEqual(['NIFTY50_SR · 10:40:00', '@ ₹120.50  22700P', 'Pick OLD · new NIFTY06OCT2622600PE', 'qty 75']);
+        expect(e.lines).toEqual(['NIFTY50_SR · 11:40:00', '@ ₹135.75', 'Pick OLD · new NIFTY06OCT2622600PE', 'P&L (old pick) +₹1,143.75']);
+    });
+
+    it('shows the live P&L by pick on an open entry', () => {
+        const now = new Date().toISOString();
+        const open = { ...buy, pick: 'new', candle_ts: now, created_at: now } as SignalRecord;
+        const orders = { 'NIFTY50_SR|PUT': { strategy_name: 'NIFTY50_SR', side: 'PUT', current_fno_price: 12150 } };
+        const [m] = buildChartMarkers([open], [], 'NSE:99926000', 60, false, orders);
+        expect(m.lines).toContain('Pick NEW');
+        expect(m.lines[m.lines.length - 1]).toBe('P&L (new pick) +₹75.00 · LTP ₹121.50');
+    });
+
     it('puts both reasons on refused cards and drops lines in compact mode', () => {
         expect(buildChartMarkers([], [refused], 'NSE:99926000', 60, false)[0].lines)
             .toEqual(['NIFTY50_SR · 10:46:01 · 22600P', 'SR PULLBACK PUT', 'Blocked: SR strike: no greeks']);

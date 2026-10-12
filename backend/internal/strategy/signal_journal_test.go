@@ -50,10 +50,10 @@ func TestJournalMigratesFNOColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer j.Close()
-	if err := j.Record(Signal{StrategyName: "S", Action: ActionExit, Side: SideCall, Token: "1", Exchange: "NSE", FNOSymbol: "X"}, time.Now(), nil, false, false); err != nil {
+	if err := j.Record(Signal{StrategyName: "S", Action: ActionExit, Side: SideCall, Token: "1", Exchange: "NSE", FNOSymbol: "X", Pick: "old", PickAlt: "Y"}, time.Now(), nil, false, false); err != nil {
 		t.Fatal(err)
 	}
-	if recs, _ := j.GetSignals(1); len(recs) != 1 || recs[0].FNOSymbol != "X" {
+	if recs, _ := j.GetSignals(1); len(recs) != 1 || recs[0].FNOSymbol != "X" || recs[0].Pick != "old" || recs[0].PickAlt != "Y" {
 		t.Fatalf("recs = %+v", recs)
 	}
 }
