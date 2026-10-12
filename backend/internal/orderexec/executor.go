@@ -522,6 +522,12 @@ func (oe *OrderExecutor) clearPositionInstrument(sig strategy.Signal) {
 	oe.mu.Unlock()
 }
 
+// ResolveEntryInstrument returns the contract a BUY for sig would trade
+// right now (signal contract, picker, or static config).
+func (oe *OrderExecutor) ResolveEntryInstrument(sig strategy.Signal) (token, symbol string, err error) {
+	return oe.resolveInstrument(sig, "BUY")
+}
+
 func (oe *OrderExecutor) resolveInstrument(sig strategy.Signal, direction string) (string, string, error) {
 	prefix := oe.logPrefix()
 	isCall := sig.Side == strategy.SideCall
