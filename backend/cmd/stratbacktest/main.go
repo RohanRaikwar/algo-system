@@ -76,6 +76,7 @@ func main() {
 	expMinDTE := flag.Int("expiry-min-dte", 0, "With -option-model: buy the next weekly expiry when the nearest is fewer than this many days away (live SR: 2)")
 	minDTE := flag.Int("min-dte", 0, "With -option-model: skip entries whose expiry is fewer than this many calendar days away (0 = off)")
 	cmpStrikes := flag.Bool("compare-strikes", false, "With -option-model: price the same trades at the signal strike and at the option picker's delta and expected-return picks (use -premium-sl 0 for like-for-like exits)")
+	pickHold := flag.Float64("pick-hold-min", 240, "With -compare-strikes: expected hold in minutes for the picker's theta rule and return rank (live: STRAT_PICK_HOLD_MIN)")
 	thetaExit := flag.String("theta-exit", "off", "With -option-model: exit policy theta rule off|shadow|act (shadow reports what it would have done)")
 	thetaFile := flag.String("theta-file", "config/exitpolicy.json", "Exit policy file; the strategy's entry (or defaults) supplies the theta settings")
 	thetaFlatMin := flag.Int("theta-max-flat-min", 0, "Theta rule: exit a flat trade after this many minutes (0 = from -theta-file)")
@@ -99,11 +100,12 @@ func main() {
 			SlippageBps: 50, SlippageMinPsa: 50, StrikeStep: 50,
 			MinEntryPremium: int64(*minPrem * 100), MinEntryDTE: *minDTE, ExpiryMinDTE: *expMinDTE,
 		},
-		CallFNOToken: *callToken,
-		PutFNOToken:  *putToken,
-		FNOExchange:  *fnoExchange,
-		CandleTF:     *candleTF,
-		ExitPolicy:   thetaOverrides(*thetaExit, *thetaFile, *stratFlag, *thetaFlatMin, *thetaDecayPct),
+		PickHoldMinutes: *pickHold,
+		CallFNOToken:    *callToken,
+		PutFNOToken:     *putToken,
+		FNOExchange:     *fnoExchange,
+		CandleTF:        *candleTF,
+		ExitPolicy:      thetaOverrides(*thetaExit, *thetaFile, *stratFlag, *thetaFlatMin, *thetaDecayPct),
 	}
 
 	engine := backtest.New(cfg)

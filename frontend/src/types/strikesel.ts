@@ -46,6 +46,9 @@ export interface PickerLivePick {
     expiry: string;
     dte: number;
     delta: number;
+    gamma: number;
+    /** Rupees per calendar day (negative for a bought option). */
+    theta: number;
     iv: number;
     bid: number;
     ask: number;

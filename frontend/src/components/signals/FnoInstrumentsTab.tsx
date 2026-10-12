@@ -42,7 +42,7 @@ export function paramRows(p: StrikeSelView['params']): Array<[string, string]> {
     return [
         ['Delta band', `${num(p.delta_min, 2)} – ${num(p.delta_max, 2)} (closest to ${num((p.delta_min + p.delta_max) / 2, 3)} wins)`],
         ['Theta rule', p.theta_max_gain_pct > 0
-            ? `decay over ${p.theta_hold_min ?? 60}m ≤ ${num(p.theta_max_gain_pct, 0)}% of delta × target (view: ${p.view_target_pts ?? 30} pts)`
+            ? `decay over ${p.theta_hold_min ?? DEFAULT_HOLD_MIN}m ≤ ${num(p.theta_max_gain_pct, 0)}% of delta × target (view: ${p.view_target_pts ?? 30} pts)`
             : 'off'],
         ['Gamma cap', p.max_gamma > 0 ? `${p.max_gamma} within ${p.gamma_dte}d of expiry` : 'off'],
         ['Min liquidity', p.min_liquidity > 0 ? p.min_liquidity.toLocaleString('en-IN') : 'off'],
@@ -52,9 +52,75 @@ export function paramRows(p: StrikeSelView['params']): Array<[string, string]> {
     ];
 }
 
+/** Minutes in one session (09:15–15:30): a day's theta is spread over it,
+ *  as the picker does (optionpicker.tradingMinutesPerDay). */
+const SESSION_MIN = 375;
+/** Trades are held 1–5h: the decay ladder shows each hour. */
+export const HOLD_LADDER_MIN = [60, 120, 180, 240, 300];
+const DEFAULT_HOLD_MIN = 240;
+
+/** Rupees of premium lost to theta (rupees per day) over holdMin minutes. */
+export function decayOver(theta: number, holdMin: number): number {
+    return Math.abs(theta) * holdMin / SESSION_MIN;
+}
+
+/** "₹2.40 · ₹4.80 · ₹7.20 · [₹9.60] · ₹12.00": decay at 1–5h, the hold the
+ *  picker prices in brackets. */
+export function decayLadder(theta: number, holdMin: number): string {
+    if (!Number.isFinite(theta)) return '—';
+    return HOLD_LADDER_MIN
+        .map(m => {
+            const v = `₹${decayOver(theta, m).toFixed(2)}`;
+            return m === holdMin ? `[${v}]` : v;
+        })
+        .join(' · ');
+}
+
+export interface ThetaBudget { decay: number; gain: number; pct: number; ok: boolean }
+
+/** The picker's theta rule (optionpicker thetaGainOK): decay over the hold
+ *  ≤ maxPct % of |delta| × target. null when the rule is off. */
+export function thetaBudget(theta: number, delta: number, holdMin: number, targetPts: number, maxPct: number): ThetaBudget | null {
+    if (maxPct <= 0 || holdMin <= 0 || targetPts <= 0 || !Number.isFinite(theta) || !Number.isFinite(delta)) return null;
+    const decay = decayOver(theta, holdMin);
+    const gain = Math.abs(delta) * targetPts;
+    const pct = gain > 0 ? decay * 100 / gain : Infinity;
+    return { decay, gain, pct, ok: decay * 100 <= gain * maxPct };
+}
+
+/** "₹9.60 / ₹15.00 = 64% (limit 25%)". */
+export function thetaBudgetLine(b: ThetaBudget, maxPct: number): string {
+    const pct = Number.isFinite(b.pct) ? `${Math.round(b.pct)}%` : '—';
+    return `₹${b.decay.toFixed(2)} / ₹${b.gain.toFixed(2)} = ${pct} (limit ${num(maxPct, 0)}%)`;
+}
+
+type Params = StrikeSelView['params'];
+
+/** Decay over 1–5h, and for a live pick the theta rule at the view target. */
+function ThetaRows({ theta, delta, params, live }: { theta: number; delta: number; params?: Params; live: boolean }) {
+    const hold = params?.theta_hold_min ?? DEFAULT_HOLD_MIN;
+    const b = live && params
+        ? thetaBudget(theta, delta, hold, params.view_target_pts ?? 30, params.theta_max_gain_pct)
+        : null;
+    return (
+        <>
+            <div className="fno-inst-row">
+                <span className="fno-inst-label">Decay 1h–5h</span>
+                <span className="fno-inst-value">{decayLadder(theta, hold)}</span>
+            </div>
+            {b && params && (
+                <div className="fno-inst-row">
+                    <span className="fno-inst-label">Theta vs gain ({hold}m)</span>
+                    <span className={`fno-inst-value${b.ok ? '' : ' picker-dec-down'}`}>{thetaBudgetLine(b, params.theta_max_gain_pct)}</span>
+                </div>
+            )}
+        </>
+    );
+}
+
 /** Contract details. live: premium follows the token's ticks (a "now" pick);
  *  otherwise it is the premium when the contract was picked. */
-function ContractRows({ c, live = false }: { c: SRContract; live?: boolean }) {
+function ContractRows({ c, live = false, params }: { c: SRContract; live?: boolean; params?: Params }) {
     const tick = useOptionLTPStore(s => (live && c.token ? s.ltp[c.token] : undefined));
     const prem = livePremium(tick, c.premium);
     const rows: Array<[string, string, string?]> = [
@@ -77,6 +143,7 @@ function ContractRows({ c, live = false }: { c: SRContract; live?: boolean }) {
                     <span className={`fno-inst-value${cls ? ` ${cls}` : ''}`}>{value}</span>
                 </div>
             ))}
+            <ThetaRows theta={c.theta} delta={c.delta} params={params} live={live} />
         </>
     );
 }
@@ -125,7 +192,7 @@ export function quoteLine(p: PickerLivePick): string {
     return `₹${p.bid.toFixed(2)} / ₹${p.ask.toFixed(2)} · spread ${p.spread_pct.toFixed(1)}% · ${p.quote_age_s.toFixed(1)}s old`;
 }
 
-function NewPickRows({ side }: { side: SRSide }) {
+function NewPickRows({ side, params }: { side: SRSide; params?: Params }) {
     const p = side.new_pick;
     const cmp = sideComparison(side);
     return (
@@ -142,6 +209,9 @@ function NewPickRows({ side }: { side: SRSide }) {
                     <div className="fno-inst-row"><span className="fno-inst-label">Bid / ask</span><span className="fno-inst-value">{quoteLine(p)}</span></div>
                     <div className="fno-inst-row"><span className="fno-inst-label">Delta · IV</span>
                         <span className="fno-inst-value">{p.delta.toFixed(3)} · {p.iv.toFixed(1)}%</span></div>
+                    <div className="fno-inst-row"><span className="fno-inst-label">Theta</span>
+                        <span className="fno-inst-value">{num(p.theta, 2)} /day</span></div>
+                    <ThetaRows theta={p.theta} delta={p.delta} params={params} live />
                     {p.score !== 0 && (
                         <div className="fno-inst-row"><span className="fno-inst-label">Expected return</span>
                             <span className="fno-inst-value">{scoreText(p.score)}</span></div>
@@ -241,7 +311,7 @@ function PickerCard({ p }: { p: PickerView }) {
     );
 }
 
-function SideCard({ title, kind, side, chainError }: { title: string; kind: 'call' | 'put'; side?: SRSide; chainError?: string }) {
+function SideCard({ title, kind, side, chainError, params }: { title: string; kind: 'call' | 'put'; side?: SRSide; chainError?: string; params?: Params }) {
     const Icon = kind === 'call' ? TrendingUp : TrendingDown;
     return (
         <div className={`fno-instrument-card ${kind}`}>
@@ -252,7 +322,7 @@ function SideCard({ title, kind, side, chainError }: { title: string; kind: 'cal
             </div>
             <div className="fno-inst-body">
                 {side?.pick ? (
-                    <ContractRows c={side.pick} live />
+                    <ContractRows c={side.pick} live params={params} />
                 ) : (
                     <div className="fno-inst-row">
                         <span className="fno-na">
@@ -266,7 +336,7 @@ function SideCard({ title, kind, side, chainError }: { title: string; kind: 'cal
                         <span className="fno-inst-value">{rejectSummary(side.rejects)}</span>
                     </div>
                 )}
-                {side && (side.new_pick || side.new_error) && <NewPickRows side={side} />}
+                {side && (side.new_pick || side.new_error) && <NewPickRows side={side} params={params} />}
             </div>
         </div>
     );
@@ -318,8 +388,8 @@ export function FnoInstrumentsTab() {
             </div>
 
             <div className="fno-instruments-grid">
-                <SideCard title="CALL pick now" kind="call" side={view.call} chainError={view.error} />
-                <SideCard title="PUT pick now" kind="put" side={view.put} chainError={view.error} />
+                <SideCard title="CALL pick now" kind="call" side={view.call} chainError={view.error} params={view.params} />
+                <SideCard title="PUT pick now" kind="put" side={view.put} chainError={view.error} params={view.params} />
             </div>
 
             <div className="fno-instrument-card">
@@ -329,7 +399,7 @@ export function FnoInstrumentsTab() {
                     {last && <span className="fno-na">{fmtTime(last.ts)} · {last.side} · asked {last.asked_strike}</span>}
                 </div>
                 <div className="fno-inst-body">
-                    {last ? <ContractRows c={last} /> : (
+                    {last ? <ContractRows c={last} params={view.params} /> : (
                         <div className="fno-inst-row"><span className="fno-na">No SR entry signal yet</span></div>
                     )}
                 </div>

@@ -15,7 +15,7 @@ func TestNewPickerViewComparesWithOldPick(t *testing.T) {
 	side := &srSideView{Pick: &srContractView{Strike: 22850, Expiry: "2026-10-13"}}
 	p := optionpicker.Pick{
 		Contract: optionpicker.Contract{Token: "44625", Symbol: "NIFTY13OCT2622800PE", Strike: 22800, Option: "PE", Expiry: exp, IV: 11.2, Liquidity: 210000},
-		Delta:    -0.49, DTE: 7, Score: 0.21,
+		Delta:    -0.49, Gamma: 0.0012, Theta: -14.5, DTE: 7, Score: 0.21,
 		Quote: optionpicker.Quote{Bid: 17010, Ask: 17190, At: now.Add(-800 * time.Millisecond)},
 	}
 	newPickerView(side, p, optionpicker.Rejects{"delta": 12, "spread": 3}, nil, now)
@@ -23,6 +23,9 @@ func TestNewPickerViewComparesWithOldPick(t *testing.T) {
 	v := side.NewPick
 	if v == nil || v.Strike != 22800 || v.Bid != 170.10 || v.Ask != 171.90 || v.Mid != 171.00 || v.Expiry != "2026-10-13" {
 		t.Fatalf("new pick %+v", v)
+	}
+	if v.Theta != -14.5 || v.Gamma != 0.0012 {
+		t.Errorf("greeks: theta %v gamma %v", v.Theta, v.Gamma)
 	}
 	if math.Abs(v.SpreadPct-1.0526) > 0.001 || math.Abs(v.QuoteAgeS-0.8) > 1e-9 {
 		t.Errorf("spread %.4f%% age %.2fs", v.SpreadPct, v.QuoteAgeS)

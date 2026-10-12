@@ -118,7 +118,7 @@ type Config struct {
 	PickMaxQuoteAge  time.Duration // bid/ask older than this is not tradable
 	PickMaxChainAge  time.Duration // greeks snapshot older than this refuses selection
 	PickRank         string        // delta (closest to band middle) | return (highest expected return on premium)
-	PickHoldMinutes  float64       // expected holding time for the return rank's decay term
+	PickHoldMinutes  float64       // real trade hold (1–5h, mostly 3–4h): theta rule and return rank decay term
 
 	PaperSlippageBps      int64 // paper fills cross the spread: LTP ± max(LTP×bps/10000, min)
 	PaperSlippageMinPaise int64
@@ -199,7 +199,7 @@ func LoadConfig() Config {
 		PickMaxQuoteAge:       getEnvDuration("STRAT_PICK_MAX_QUOTE_AGE", 3*time.Second),
 		PickMaxChainAge:       getEnvDuration("STRAT_PICK_MAX_CHAIN_AGE", 2*time.Minute),
 		PickRank:              config.GetEnv("STRAT_PICK_RANK", "return"),
-		PickHoldMinutes:       getEnvFloat("STRAT_PICK_HOLD_MIN", 60),
+		PickHoldMinutes:       getEnvFloat("STRAT_PICK_HOLD_MIN", 240),
 		PaperSlippageBps:      config.GetEnvInt64("STRAT_PAPER_SLIPPAGE_BPS", 50),
 		PaperSlippageMinPaise: config.GetEnvInt64("STRAT_PAPER_SLIPPAGE_MIN_PAISE", 50),
 		WarmupDays:            config.GetEnvInt("STRAT_RANGE_WARMUP_DAYS", 5),

@@ -56,6 +56,10 @@ type Config struct {
 	// real option history exists (expired contracts). See optionmodel.go.
 	Option OptionModel
 
+	// PickHoldMinutes is the expected hold the strike comparison's picker
+	// prices theta over (live: STRAT_PICK_HOLD_MIN). 0 = 240.
+	PickHoldMinutes float64
+
 	// ExitPolicy runs the live exit policy (theta exit) on modeled
 	// premiums; nil = off. Needs Option.Enabled. Shadow mode only records
 	// what it would have done on each trade (Trade.ShadowExit*).
