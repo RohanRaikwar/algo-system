@@ -212,6 +212,7 @@ func (oe *OrderExecutor) sendDeferredExit(sig strategy.Signal) {
 	}
 	exit := sig
 	exit.Action = strategy.ActionExit
+	exit.SignalTS = time.Time{}
 	exit.Reason = "deferred exit (arrived while BUY was settling)"
 	key := generateIdempotencyKey(exit)
 	log.Printf("%s ▶️  sending deferred EXIT for %s %s qty=%d", oe.logPrefix(), posKey, rec.Symbol, rec.Quantity)
@@ -313,6 +314,7 @@ func (oe *OrderExecutor) pollOrderAsync(posKey, what string, match func(map[stri
 				continue
 			}
 			oid := toStr(row["orderid"])
+			oe.journalFill(toStr(row["ordertag"]), oid, f, "poll")
 			settleUnder(func() { done(oid, f) })
 			return
 		}
@@ -504,6 +506,7 @@ func (oe *OrderExecutor) retryExitLocked(sig strategy.Signal, attempt int) {
 	}
 	exit := sig
 	exit.Action = strategy.ActionExit
+	exit.SignalTS = time.Time{}
 	exit.Reason = fmt.Sprintf("automatic exit retry %d", attempt)
 	key := generateIdempotencyKey(exit)
 	log.Printf("%s ▶️  exit retry %d for %s: SELL %d %s", prefix, attempt, posKey, qty, rec.Symbol)

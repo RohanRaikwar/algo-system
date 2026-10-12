@@ -25,6 +25,7 @@ import (
 	"trading-systemv1/internal/circuitbreaker"
 	"trading-systemv1/internal/metrics"
 	"trading-systemv1/internal/model"
+	"trading-systemv1/internal/oms"
 	"trading-systemv1/internal/strategy"
 	"trading-systemv1/pkg/smartconnect"
 
@@ -50,6 +51,10 @@ type Config struct {
 	// MaxDayLossPaise blocks new real entries once a strategy's daily P&L
 	// is at or below -MaxDayLossPaise. Exits are never blocked. 0 = off.
 	MaxDayLossPaise int64
+
+	// RequireJournal refuses real entries while no order ledger is set
+	// (SetOrderLedger), so no real order is sent without a durable record.
+	RequireJournal bool
 
 	CallFNOToken   string // Angel One symbol token for CALL option
 	CallFNOSymbol  string // trading symbol for CALL option
@@ -137,6 +142,9 @@ type OrderExecutor struct {
 
 	// Optional quote source for paper fills; set via SetQuoteSource.
 	quotes QuoteSource
+
+	// Optional durable order ledger; set via SetOrderLedger.
+	ledger OrderLedger
 
 	// lotSizeOf returns the exchange lot size of a contract symbol.
 	lotSizeOf func(symbol string) (int64, error)
@@ -859,11 +867,15 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 	// executor does not know about.
 	if isExit {
 		oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = "tag:" + key })
+		oe.journalExitIntent(sig, posKey, fnoToken, fnoSymbol, qty, key)
 		if err := oe.persistIntentNow(); err != nil {
 			// Never block an exit: send it anyway.
 			log.Printf("%s ⚠️  exit intent for %s not persisted (%v) — sending anyway", prefix, posKey, err)
 		}
 	} else {
+		if !oe.journalEntryIntent(sig, posKey, fnoToken, fnoSymbol, qty, key) {
+			return
+		}
 		oe.storeEntry(sig, OrderRecord{
 			ClientOrderID: key,
 			Symbol:        fnoSymbol,
@@ -879,6 +891,7 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 		})
 		if err := oe.persistIntentNow(); err != nil {
 			oe.dropEntry(sig)
+			oe.ledgerApply(oms.Event{ClientOrderID: key, State: oms.StateAbsent, Reason: "not sent: snapshot persist failed"})
 			oe.alertf("BUY %s %s NOT sent: order intent could not be persisted (%v)", sig.StrategyName, fnoSymbol, err)
 			return
 		}
@@ -927,6 +940,7 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 	if cbErr == nil && rejectErr != nil {
 		cbErr = rejectErr
 	}
+	oe.journalPlacement(key, orderID, cbErr, sellPositionFlat)
 
 	if cbErr != nil {
 		switch {
@@ -979,6 +993,9 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 	// An accepted order is not a filled one: the broker can still reject it
 	// (e.g. margin). Use the real average price, not the signal-time LTP.
 	fill, ferr := confirmFill(oe.readOrderBook, orderID, defaultFillPollDelays)
+	if ferr == nil {
+		oe.journalFill(key, orderID, fill, "fill-confirm")
+	}
 	if ferr == nil && fill.Rejected() && !isExit {
 		log.Printf("%s ❌ BUY %s AFTER ACCEPT: %s orderID=%s — %s",
 			prefix, strings.ToUpper(fill.Status), fnoSymbol, orderID, fill.Text)
@@ -1083,6 +1100,7 @@ func (oe *OrderExecutor) settleUnknown(sig strategy.Signal, posKey, direction, f
 			oe.onBuySettled(sig, orderID, f)
 		}, func() {
 			log.Printf("%s ✅ unknown BUY %s settled: never reached broker — clearing", prefix, key)
+			oe.ledgerApply(oms.Event{ClientOrderID: key, State: oms.StateAbsent, Reason: "not in order book", Source: "poll"})
 			oe.dropEntry(sig)
 		})
 		return
@@ -1093,6 +1111,7 @@ func (oe *OrderExecutor) settleUnknown(sig strategy.Signal, posKey, direction, f
 		log.Printf("%s unknown SELL %s settled: orderID=%s status=%s", prefix, key, orderID, f.Status)
 		oe.applyExitResult(sig, orderID, f)
 	}, func() {
+		oe.ledgerApply(oms.Event{ClientOrderID: key, State: oms.StateAbsent, Reason: "not in order book", Source: "poll"})
 		oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = "" })
 		oe.alertf("unknown SELL %s never reached broker — %s position still OPEN, close manually", key, fnoSymbol)
 	})
@@ -1339,11 +1358,17 @@ func isPositionFlatError(err error) bool {
 	return false
 }
 
-// generateIdempotencyKey creates a unique key for an order signal
-// based on strategy name, side, action, and current timestamp.
-// Used for audit trail and duplicate detection.
+// generateIdempotencyKey creates the order key, sent as ordertag. An entry
+// with a market timestamp gets a deterministic key (strategy, side,
+// action, token, SignalTS), so the same signal replayed maps to the same
+// claimed intent and is refused. Everything else — exits, retries,
+// signals without SignalTS — gets a unique key from the current time:
+// exits are never refused, so they must never collide with an earlier one.
 func generateIdempotencyKey(sig strategy.Signal) string {
-	data := fmt.Sprintf("%s:%s:%s:%d", sig.StrategyName, sig.Side, sig.Action, time.Now().UnixMilli())
+	data := fmt.Sprintf("%s:%s:%s:%d", sig.StrategyName, sig.Side, sig.Action, time.Now().UnixNano())
+	if sig.Action == strategy.ActionBuy && !sig.SignalTS.IsZero() {
+		data = fmt.Sprintf("%s:%s:%s:%s:%d", sig.StrategyName, sig.Side, sig.Action, sig.Token, sig.SignalTS.UnixNano())
+	}
 	hash := sha256.Sum256([]byte(data))
 	return fmt.Sprintf("%x", hash[:8]) // 16-char hex prefix
 }

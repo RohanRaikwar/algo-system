@@ -11,6 +11,7 @@ import (
 	"trading-systemv1/internal/metrics"
 	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/notification"
+	"trading-systemv1/internal/oms"
 	"trading-systemv1/internal/orderexec"
 	"trading-systemv1/internal/portfolio"
 	"trading-systemv1/internal/strategy"
@@ -339,4 +340,29 @@ func (svc *Service) isRealStrategy(name string) bool {
 		return true
 	}
 	return svc.orderExecutor != nil && svc.orderExecutor.IsRealStrategy(name)
+}
+
+// attachOrderJournal opens the SQLite order journal and gives the executor
+// its ledger. Without it, live mode refuses real entries (RequireJournal).
+func (svc *Service) attachOrderJournal() {
+	path := svc.cfg.OrderJournalPath
+	if path == "" {
+		log.Println("[stratengine] ⚪ order journal disabled (STRAT_ORDER_JOURNAL_PATH empty)")
+		return
+	}
+	j, err := oms.OpenJournal(path)
+	if err != nil {
+		log.Printf("[stratengine] 🚨 order journal %s: %v — real entries will be refused", path, err)
+		return
+	}
+	ledger, err := oms.NewLedger(j)
+	if err != nil {
+		j.Close()
+		log.Printf("[stratengine] 🚨 order ledger replay %s: %v — real entries will be refused", path, err)
+		return
+	}
+	if n := len(ledger.Working()); n > 0 {
+		log.Printf("[stratengine] 📒 order journal %s: %d order(s) not terminal at startup", path, n)
+	}
+	svc.orderExecutor.SetOrderLedger(ledger)
 }

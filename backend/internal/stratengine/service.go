@@ -269,6 +269,7 @@ func New(cfg Config) (*Service, error) {
 		LiveLots:         cfg.LiveLots,
 		FreezeQty:        cfg.FreezeQty,
 		MaxDayLossPaise:  cfg.LiveMaxDayLossPaise,
+		RequireJournal:   cfg.LiveOrders,
 		AngelAPIKey:      cfg.AngelAPIKey,
 		AngelClientID:    cfg.AngelClientID,
 		AngelPassword:    cfg.AngelPassword,
@@ -282,6 +283,7 @@ func New(cfg Config) (*Service, error) {
 
 	// P&L source for the executor's daily max-loss gate on real entries.
 	svc.orderExecutor.SetPnLTracker(svc.pnlTracker)
+	svc.attachOrderJournal()
 
 	// ── Global option picker (off | shadow | on) ──
 	svc.picker = svc.newPicker()

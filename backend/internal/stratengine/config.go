@@ -59,6 +59,7 @@ type Config struct {
 	LiveMaxDayLossPaise int64    // block real entries at this daily loss; 0 = off
 	GTTStopLossPaise    int64    // GTT stop distance below entry; 0 = no SL GTT
 	GTTTargetBps        int64    // GTT target above entry in bps; 0 = no target GTT
+	OrderJournalPath    string   // SQLite order journal; real entries need it when live
 
 	// ── Angel One SmartAPI ──
 	AngelAPIKey   string
@@ -171,6 +172,7 @@ func LoadConfig() Config {
 		LiveMaxDayLossPaise: config.GetEnvInt64("STRAT_LIVE_MAX_DAY_LOSS_PAISE", 200000),
 		GTTStopLossPaise:    config.GetEnvInt64("STRAT_GTT_SL_PAISE", 1000),
 		GTTTargetBps:        config.GetEnvInt64("STRAT_GTT_TARGET_BPS", 0),
+		OrderJournalPath:    config.GetEnv("STRAT_ORDER_JOURNAL_PATH", "data/orders.db"),
 
 		// Angel One
 		AngelAPIKey:   config.GetEnv("ANGEL_API_KEY", ""),

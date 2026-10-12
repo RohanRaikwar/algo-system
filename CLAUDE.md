@@ -111,6 +111,8 @@ Real entries additionally pass, in `ExecuteSignal`: rate limiter, circuit breake
 
 Exits must never be blocked. Existing gates (profit cap, position mutual-exclusion) apply to entries only, so an open real position can always be closed.
 
+Every real order is journaled through `internal/oms` (state machine + ledger + SQLite `STRAT_ORDER_JOURNAL_PATH`, default `data/orders.db`, `synchronous=FULL`). A real BUY claims its intent and is journaled `SUBMITTING` before it is sent; if either fails, or the intent was already claimed (a replayed signal), the BUY is not sent. With `STRAT_LIVE_ORDERS=true` a missing journal refuses real entries. Exits are journaled best-effort and always sent. Entry keys are deterministic from `Signal.SignalTS` (stamped by `TFEngine` with the candle close or tick time); exit and retry keys stay unique. The Redis snapshot is still the executor's restore source; the journal is the audit trail and the base for the future standalone OMS.
+
 `internal/orderexec` also holds a sliding-window `RateLimiter` and `internal/circuitbreaker` guards the broker connection. New checks on the order path belong next to these in `ExecuteSignal`, not scattered.
 
 ## Staging vs production
