@@ -167,3 +167,24 @@ func TestExecuteAlways_FailureRecorded(t *testing.T) {
 		t.Fatalf("failures via ExecuteAlways must count, got %v", cb.CurrentState())
 	}
 }
+
+func TestCircuitBreaker_AllowMovesOpenToHalfOpenAfterTimeout(t *testing.T) {
+	cb := NewCircuitBreaker(1, 20*time.Millisecond)
+	_ = cb.Execute(func() error { return errors.New("fail") })
+	if cb.Allow() {
+		t.Fatal("Allow true right after tripping, want false")
+	}
+	time.Sleep(30 * time.Millisecond)
+	if !cb.Allow() {
+		t.Fatal("Allow false after reset timeout, want true")
+	}
+	if cb.CurrentState() != StateHalfOpen {
+		t.Fatalf("state %v after Allow, want half-open", cb.CurrentState())
+	}
+	if err := cb.Execute(func() error { return nil }); err != nil {
+		t.Fatalf("probe refused: %v", err)
+	}
+	if cb.CurrentState() != StateClosed {
+		t.Fatalf("state %v after successful probe, want closed", cb.CurrentState())
+	}
+}

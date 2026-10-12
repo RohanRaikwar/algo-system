@@ -34,9 +34,23 @@ import (
 // Config holds FNO order execution configuration.
 // Extracted from the per-service Config to avoid duplication.
 type Config struct {
-	LiveOrders     bool   // true = place real orders, false = dry-run (log only)
-	PaperTrade     bool   // true = use Angel One paper trading, false = real orders (only if LiveOrders=true)
-	Qty            int64  // default quantity per trade
+	LiveOrders bool  // true = place real orders, false = dry-run (log only)
+	Qty        int64 // quantity per paper trade
+
+	// LiveStrategies names the strategies allowed to send real orders.
+	// A real order still needs LiveOrders and a live session as well.
+	LiveStrategies []string
+
+	// Real entry size: LiveLots lots of the contract's exchange lot size
+	// (from the instrument master). An entry whose lot size is unknown, or
+	// whose quantity exceeds FreezeQty, is refused — never guessed.
+	LiveLots  int64
+	FreezeQty int64 // exchange freeze quantity in units (default 1800)
+
+	// MaxDayLossPaise blocks new real entries once a strategy's daily P&L
+	// is at or below -MaxDayLossPaise. Exits are never blocked. 0 = off.
+	MaxDayLossPaise int64
+
 	CallFNOToken   string // Angel One symbol token for CALL option
 	CallFNOSymbol  string // trading symbol for CALL option
 	PutFNOToken    string // Angel One symbol token for PUT option
@@ -47,14 +61,20 @@ type Config struct {
 
 	// FNOStopLossPaise: fixed stop loss distance below FNO entry premium,
 	// in paise. 1000 = ₹10 below buy price. Placed at the exchange via a
-	// paired GTT rule alongside the 1.5% target. 0 disables the SL GTT.
+	// GTT rule. 0 disables the SL GTT.
 	FNOStopLossPaise int64
-	FNOTickPaise     int64 // exchange tick size for GTT prices (default 5 paise)
-	AngelAPIKey      string
-	AngelClientID    string
-	AngelPassword    string
-	AngelTOTP        string
-	LogPrefix        string // log prefix, e.g. "[order_executor]" or "[order_executor_ind]"
+	// GTTTargetBps places a target GTT this many basis points above the
+	// entry price (150 = +1.5%). 0 = no target GTT (the default): the two
+	// GTT rules are not one-cancels-other, so once either fires the other
+	// stays live and can sell short on a flat position.
+	GTTTargetBps int64
+
+	FNOTickPaise  int64 // exchange tick size for GTT prices (default 5 paise)
+	AngelAPIKey   string
+	AngelClientID string
+	AngelPassword string
+	AngelTOTP     string
+	LogPrefix     string // log prefix, e.g. "[order_executor]" or "[order_executor_ind]"
 
 	// Paper fills cross the spread like a real order would: a paper BUY
 	// fills at LTP + slip, a SELL at LTP − slip, slip = max(LTP×bps/10000,
@@ -117,6 +137,11 @@ type OrderExecutor struct {
 
 	// Optional quote source for paper fills; set via SetQuoteSource.
 	quotes QuoteSource
+
+	// lotSizeOf returns the exchange lot size of a contract symbol.
+	lotSizeOf func(symbol string) (int64, error)
+
+	liveStrategies map[string]bool
 
 	mu           sync.RWMutex
 	ltp          map[string]int64 // token → latest price (paise)
@@ -206,6 +231,19 @@ func NewOrderExecutor(cfg Config) *OrderExecutor {
 
 	// Persist resolved defaults back into cfg so log lines and gauges report
 	// the values the runtime actually uses, not the zero from input cfg.
+	if cfg.FreezeQty <= 0 {
+		cfg.FreezeQty = 1800
+	}
+	if cfg.LiveLots <= 0 {
+		cfg.LiveLots = 1
+	}
+	liveStrategies := make(map[string]bool, len(cfg.LiveStrategies))
+	for _, name := range cfg.LiveStrategies {
+		if name = strings.TrimSpace(name); name != "" {
+			liveStrategies[name] = true
+		}
+	}
+
 	cfg.CBMaxFailures = cbMaxFailures
 	cfg.CBResetTimeout = cbTimeout
 	cfg.RLMaxOrders = rlMaxOrders
@@ -221,6 +259,10 @@ func NewOrderExecutor(cfg Config) *OrderExecutor {
 		live:         cfg.LiveOrders,
 		cb:           circuitbreaker.NewCircuitBreaker(cbMaxFailures, cbTimeout),
 		rl:           NewRateLimiter(rlMaxOrders, rlWindow),
+		lotSizeOf: func(symbol string) (int64, error) {
+			return GetInstrumentMaster().GetLotSize(symbol)
+		},
+		liveStrategies: liveStrategies,
 	}
 
 	prefix := cfg.LogPrefix
@@ -239,6 +281,8 @@ func NewOrderExecutor(cfg Config) *OrderExecutor {
 
 	log.Printf("%s ⚡ Circuit breaker: max_failures=%d reset_timeout=%v", prefix, cbMaxFailures, cbTimeout)
 	log.Printf("%s ⚡ Rate limiter: max_orders=%d window=%v", prefix, rlMaxOrders, rlWindow)
+	log.Printf("%s ⚡ Live strategies=%v lots=%d freeze_qty=%d max_day_loss=%d paise",
+		prefix, cfg.LiveStrategies, cfg.LiveLots, cfg.FreezeQty, cfg.MaxDayLossPaise)
 
 	if cfg.LiveOrders {
 		// Use session manager if provided (recommended for production)
@@ -249,11 +293,7 @@ func NewOrderExecutor(cfg Config) *OrderExecutor {
 			}
 			oe.sessionOK = oe.sc != nil
 			log.Printf("%s ✅ Using session manager for order execution (auto-refresh enabled)", prefix)
-			if cfg.PaperTrade {
-				log.Printf("%s 📋 PAPER TRADING MODE (test orders only)", prefix)
-			} else {
-				log.Printf("%s 🔴 LIVE ORDER MODE (real money)", prefix)
-			}
+			log.Printf("%s 🔴 LIVE ORDER MODE (real money)", prefix)
 			return oe
 		}
 
@@ -289,11 +329,7 @@ func NewOrderExecutor(cfg Config) *OrderExecutor {
 		oe.api = sc
 		oe.sessionOK = true
 
-		if cfg.PaperTrade {
-			log.Printf("%s ✅ SmartConnect session established — PAPER TRADING MODE (test orders only)", prefix)
-		} else {
-			log.Printf("%s ✅ SmartConnect session established — LIVE ORDER MODE", prefix)
-		}
+		log.Printf("%s ✅ SmartConnect session established — LIVE ORDER MODE", prefix)
 	} else {
 		log.Printf("%s 📋 Dry-run mode — orders will be logged but NOT placed", prefix)
 	}
@@ -369,10 +405,52 @@ func (oe *OrderExecutor) SetStrikePicker(picker *StrikePicker) {
 	log.Printf("%s 🎯 dynamic strike picker attached", oe.logPrefix())
 }
 
-// SetPnLTracker attaches a P&L tracker for profit cap checking.
+// SetPnLTracker attaches the P&L source for the daily max-loss gate on
+// real entries (Config.MaxDayLossPaise).
 func (oe *OrderExecutor) SetPnLTracker(tracker PnLTracker) {
+	oe.mu.Lock()
 	oe.pnlTracker = tracker
-	log.Printf("%s 💰 P&L tracker attached for profit cap monitoring", oe.logPrefix())
+	oe.mu.Unlock()
+	log.Printf("%s 💰 P&L tracker attached for daily max-loss gate", oe.logPrefix())
+}
+
+// IsRealStrategy reports whether a strategy is in the live allowlist. It
+// does not say a real order will be sent: that also needs LiveOrders and a
+// live session.
+func (oe *OrderExecutor) IsRealStrategy(name string) bool {
+	return oe.liveStrategies[name]
+}
+
+// realEntryQty is the quantity of a real entry: LiveLots lots of the
+// contract's lot size. It refuses rather than guesses: NFO rejects a
+// quantity that is not a whole number of lots, and one above the freeze
+// quantity would need slicing.
+func (oe *OrderExecutor) realEntryQty(symbol string) (int64, error) {
+	lot, err := oe.lotSizeOf(symbol)
+	if err != nil {
+		return 0, fmt.Errorf("lot size unknown for %s: %w", symbol, err)
+	}
+	if lot <= 0 {
+		return 0, fmt.Errorf("lot size %d for %s is not positive", lot, symbol)
+	}
+	qty := oe.cfg.LiveLots * lot
+	if qty > oe.cfg.FreezeQty {
+		return 0, fmt.Errorf("qty %d (%d lots × %d) exceeds freeze qty %d", qty, oe.cfg.LiveLots, lot, oe.cfg.FreezeQty)
+	}
+	return qty, nil
+}
+
+// dayLossBlocked reports whether a strategy's daily P&L has reached the
+// max-loss limit for new real entries.
+func (oe *OrderExecutor) dayLossBlocked(strategyName string) (int64, bool) {
+	oe.mu.RLock()
+	tracker := oe.pnlTracker
+	oe.mu.RUnlock()
+	if oe.cfg.MaxDayLossPaise <= 0 || tracker == nil {
+		return 0, false
+	}
+	pnl := tracker.GetStrategyDailyPnL(strategyName)
+	return pnl, pnl <= -oe.cfg.MaxDayLossPaise
 }
 
 // GetSmartConnect returns the internal SmartConnect client (e.g. for
@@ -494,12 +572,13 @@ func (oe *OrderExecutor) resolveInstrument(sig strategy.Signal, direction string
 // If the rate limit is exceeded, orders are rejected immediately.
 //
 // STRATEGY-SPECIFIC ORDER ROUTING:
-// - NIFTY50_FNO: Real orders (if LiveOrders=true AND daily profit < threshold)
-// - All other strategies: Paper trading only
+//   - Strategies in Config.LiveStrategies: real orders when LiveOrders=true
+//     and the broker session is live
+//   - All other strategies: paper trading only
 //
-// DAILY PROFIT CAP:
-// - If NIFTY50_FNO daily profit >= 10 points (1000 paise), switch to paper trading
-// - Resets at market open next day
+// Real entries also pass the daily max-loss gate, lot sizing, the rate
+// limiter and the circuit breaker. Exits pass none of these. The daily
+// profit cap lives in stratengine, before dispatch.
 func (oe *OrderExecutor) ExecuteSignal(sig strategy.Signal) {
 	prefix := oe.logPrefix()
 	defer oe.reportMetrics()
@@ -535,11 +614,11 @@ func (oe *OrderExecutor) ExecuteSignal(sig strategy.Signal) {
 	defer kl.Unlock()
 
 	// ── Routing ──
-	// Only NIFTY50_FNO places real entries. A real exit is sent only against
+	// Only allowlisted strategies place real entries. A real exit is sent only against
 	// a real tracked entry, so an exit for an entry that was never sent (kill
 	// switch, profit cap, paper) can never open a naked short.
 	live := oe.liveSession()
-	isRealOrderStrategy := sig.StrategyName == "NIFTY50_FNO"
+	isRealOrderStrategy := oe.IsRealStrategy(sig.StrategyName)
 	entry, hasEntry := oe.entry(posKey)
 	realEntry := hasEntry && entry.Real
 	sendReal := isRealOrderStrategy && live
@@ -614,9 +693,16 @@ func (oe *OrderExecutor) ExecuteSignal(sig strategy.Signal) {
 				prefix, direction, sig.StrategyName, fnoSymbol, oe.rl.Count())
 			return
 		}
-		if oe.cb.CurrentState() == circuitbreaker.StateOpen {
+		// Allow (not CurrentState) so an open breaker moves to half-open
+		// once its timeout passes and the next entry probes the broker.
+		if !oe.cb.Allow() {
 			log.Printf("%s 🔌 CIRCUIT OPEN: %s %s %s — broker unreachable, skipping order (failures=%d)",
 				prefix, direction, sig.StrategyName, fnoSymbol, oe.cb.Failures())
+			return
+		}
+		if pnl, blocked := oe.dayLossBlocked(sig.StrategyName); blocked {
+			oe.alertf("DAY LOSS LIMIT: %s daily P&L %d paise ≤ -%d — real BUY %s refused, exits still allowed",
+				sig.StrategyName, pnl, oe.cfg.MaxDayLossPaise, fnoSymbol)
 			return
 		}
 	}
@@ -632,6 +718,14 @@ func (oe *OrderExecutor) ExecuteSignal(sig strategy.Signal) {
 	qty := oe.cfg.Qty
 	if isExit && realEntry && entry.Quantity > 0 {
 		qty = entry.Quantity // sell what is held, not the configured size
+	}
+	if !isExit {
+		q, err := oe.realEntryQty(fnoSymbol)
+		if err != nil {
+			oe.alertf("real BUY %s %s refused: %v", sig.StrategyName, fnoSymbol, err)
+			return
+		}
+		qty = q
 	}
 	oe.executeReal(sig, posKey, direction, fnoToken, fnoSymbol, ltp, qty, idempotencyKey)
 }
@@ -795,6 +889,7 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 	// a completed exit, not a failure.
 	var orderID string
 	var sellPositionFlat bool
+	var rejectErr error // broker refused the order on its merits
 	runCB := oe.cb.Execute
 	if isExit {
 		runCB = oe.cb.ExecuteAlways
@@ -821,8 +916,17 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 			return nil
 		}
 		log.Printf("%s ❌ ORDER FAILED: %s %s %s tag=%s — %v", prefix, direction, fnoSymbol, fnoToken, key, err)
+		if !isBrokerFault(err) {
+			// A rejection (margin, RMS, bad params) proves the broker is
+			// reachable: it must not count toward opening the breaker.
+			rejectErr = err
+			return nil
+		}
 		return err
 	})
+	if cbErr == nil && rejectErr != nil {
+		cbErr = rejectErr
+	}
 
 	if cbErr != nil {
 		switch {
@@ -998,16 +1102,10 @@ func (oe *OrderExecutor) settleUnknown(sig strategy.Signal, posKey, direction, f
 func (oe *OrderExecutor) placeOrder(fnoSymbol, fnoToken, direction string, ltp, qty int64, tag string) (string, error) {
 	params := oe.buildOrderParams(fnoSymbol, fnoToken, direction, ltp, qty, tag)
 
-	// Use paper trading method if enabled
 	api := oe.brokerAPI()
 	if api == nil {
-		return "", fmt.Errorf("no broker session")
+		return "", errNoSession
 	}
-	if oe.cfg.PaperTrade {
-		log.Printf("%s 📋 Placing PAPER TRADE order: %s %s", oe.logPrefix(), direction, fnoSymbol)
-		return api.PlaceOrderPaperTrade(params)
-	}
-
 	return api.PlaceOrder(params)
 }
 
@@ -1035,11 +1133,10 @@ func (oe *OrderExecutor) buildOrderParams(fnoSymbol, fnoToken, direction string,
 	return params
 }
 
-// placeTargetGTT places a GTT SELL rule at 1.5% above the entry price.
-// This lets the exchange auto-sell when the target is hit, with zero system dependency.
-// gttTargetPaise is the GTT target at +1.5% of entry, floored to the tick.
-func gttTargetPaise(entryPaise, tickPaise int64) int64 {
-	return floorTick(entryPaise*1015/1000, tickPaise)
+// gttTargetPaise is the GTT target bps basis points above entry, floored
+// to the tick.
+func gttTargetPaise(entryPaise, bps, tickPaise int64) int64 {
+	return floorTick(entryPaise*(10000+bps)/10000, tickPaise)
 }
 
 // gttStopLossPaise is the GTT stop trigger (entry − sl, raised to the tick
@@ -1077,13 +1174,18 @@ func (oe *OrderExecutor) tickPaise() int64 {
 	return 5 // NSE F&O options tick
 }
 
+// placeTargetGTT places a GTT SELL rule GTTTargetBps above the entry
+// price, or nothing when GTTTargetBps is 0.
 func (oe *OrderExecutor) placeTargetGTT(posKey, fnoSymbol, fnoToken string, entryPricePaise, qty int64) string {
+	if oe.cfg.GTTTargetBps <= 0 {
+		return ""
+	}
 	api := oe.brokerAPI()
 	if api == nil || entryPricePaise <= 0 {
 		oe.alertf("GTT TARGET not placed for %s: entry price unknown (%d) — position has no exchange-side target", posKey, entryPricePaise)
 		return ""
 	}
-	targetPriceRupees := paiseToRupees(gttTargetPaise(entryPricePaise, oe.tickPaise()))
+	targetPriceRupees := paiseToRupees(gttTargetPaise(entryPricePaise, oe.cfg.GTTTargetBps, oe.tickPaise()))
 	params := map[string]any{
 		"tradingsymbol":   fnoSymbol,
 		"symboltoken":     fnoToken,
@@ -1100,8 +1202,8 @@ func (oe *OrderExecutor) placeTargetGTT(posKey, fnoSymbol, fnoToken string, entr
 		oe.alertf("GTT TARGET failed for %s: %v — position has no exchange-side target", posKey, err)
 		return ""
 	}
-	log.Printf("%s 🎯 GTT TARGET placed: %s SELL %d @ %s (1.5%% over entry %s) gttID=%s",
-		oe.logPrefix(), fnoSymbol, qty, targetPriceRupees, paiseToRupees(entryPricePaise), gttID)
+	log.Printf("%s 🎯 GTT TARGET placed: %s SELL %d @ %s (%d bps over entry %s) gttID=%s",
+		oe.logPrefix(), fnoSymbol, qty, targetPriceRupees, oe.cfg.GTTTargetBps, paiseToRupees(entryPricePaise), gttID)
 	return gttID
 }
 

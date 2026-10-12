@@ -37,7 +37,7 @@ func (svc *Service) exitRequestSignal(payload string, now time.Time) (*strategy.
 		return nil, fmt.Errorf("bad payload: %w", err)
 	}
 	switch {
-	case req.Strategy == model.RealOrderStrategy:
+	case svc.isRealStrategy(req.Strategy):
 		return nil, fmt.Errorf("%s places real orders; exitwatch never closes it", req.Strategy)
 	case !slices.Contains(svc.cfg.ExitWatchAuto, req.Strategy):
 		return nil, fmt.Errorf("%s not in STRAT_EXITWATCH_AUTO", req.Strategy)

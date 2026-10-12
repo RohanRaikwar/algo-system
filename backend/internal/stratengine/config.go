@@ -52,6 +52,14 @@ type Config struct {
 	FNOOrderType   string // "MARKET" or "LIMIT"
 	FNOProductType string // "CARRYFORWARD" or "INTRADAY"
 
+	// Real-order gates (see orderexec.Config).
+	LiveStrategies      []string // strategies allowed to send real orders
+	LiveLots            int64    // lots per real entry
+	FreezeQty           int64    // exchange freeze quantity, units
+	LiveMaxDayLossPaise int64    // block real entries at this daily loss; 0 = off
+	GTTStopLossPaise    int64    // GTT stop distance below entry; 0 = no SL GTT
+	GTTTargetBps        int64    // GTT target above entry in bps; 0 = no target GTT
+
 	// ── Angel One SmartAPI ──
 	AngelAPIKey   string
 	AngelClientID string
@@ -156,6 +164,13 @@ func LoadConfig() Config {
 		FNOExchange:    config.GetEnv("STRAT_FNO_EXCHANGE", "NFO"),
 		FNOOrderType:   config.GetEnv("STRAT_FNO_ORDER_TYPE", "MARKET"),
 		FNOProductType: config.GetEnv("STRAT_FNO_PRODUCT_TYPE", "CARRYFORWARD"),
+
+		LiveStrategies:      splitList(config.GetEnv("STRAT_LIVE_STRATEGIES", "NIFTY50_FNO")),
+		LiveLots:            config.GetEnvInt64("STRAT_LIVE_LOTS", 1),
+		FreezeQty:           config.GetEnvInt64("STRAT_FREEZE_QTY", 1800),
+		LiveMaxDayLossPaise: config.GetEnvInt64("STRAT_LIVE_MAX_DAY_LOSS_PAISE", 200000),
+		GTTStopLossPaise:    config.GetEnvInt64("STRAT_GTT_SL_PAISE", 1000),
+		GTTTargetBps:        config.GetEnvInt64("STRAT_GTT_TARGET_BPS", 0),
 
 		// Angel One
 		AngelAPIKey:   config.GetEnv("ANGEL_API_KEY", ""),

@@ -14,8 +14,8 @@ import (
 type fakeAPI struct {
 	mu        sync.Mutex
 	placed    []map[string]any
-	placeErr  []error         // per call; nil = accepted
-	placeGate chan struct{}   // if set, PlaceOrder blocks until closed
+	placeErr  []error          // per call; nil = accepted
+	placeGate chan struct{}    // if set, PlaceOrder blocks until closed
 	rows      []map[string]any // order book rows
 	bookErr   error
 	gttNext   int
@@ -55,8 +55,6 @@ func (f *fakeAPI) PlaceOrder(p map[string]any) (string, error) {
 	}
 	return id, nil
 }
-
-func (f *fakeAPI) PlaceOrderPaperTrade(p map[string]any) (string, error) { return f.PlaceOrder(p) }
 
 func (f *fakeAPI) OrderBook() (map[string]any, error) {
 	f.mu.Lock()
@@ -165,10 +163,13 @@ func liveExecutor(t *testing.T, fake *fakeAPI) *OrderExecutor {
 		FNOOrderType:     "MARKET",
 		FNOProductType:   "INTRADAY",
 		FNOStopLossPaise: 1000,
+		GTTTargetBps:     150,
+		LiveStrategies:   []string{"NIFTY50_FNO"},
 		LogPrefix:        "[test]",
 		RLMaxOrders:      100,
 		RLWindow:         time.Minute,
 	})
+	oe.lotSizeOf = func(string) (int64, error) { return 75, nil }
 	oe.mu.Lock()
 	oe.api = fake
 	oe.live = true

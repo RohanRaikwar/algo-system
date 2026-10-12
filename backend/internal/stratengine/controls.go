@@ -9,6 +9,7 @@ import (
 
 	"trading-systemv1/internal/markethours"
 	"trading-systemv1/internal/metrics"
+	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/notification"
 	"trading-systemv1/internal/orderexec"
 	"trading-systemv1/internal/portfolio"
@@ -328,4 +329,14 @@ func (svc *Service) reconcilePositionsOnce(startup bool) {
 		log.Printf("[stratengine] 🚨 POSITION MISMATCH%s %s — check broker and close/adjust manually", when, m)
 		svc.operatorAlert("POSITION MISMATCH" + when + " " + m.String() + " — check broker and close/adjust manually")
 	}
+}
+
+// isRealStrategy reports a strategy whose orders may be real: the legacy
+// real-order name or one in the executor's live allowlist. Automated
+// closers (exitwatch, exit policy) never act on these.
+func (svc *Service) isRealStrategy(name string) bool {
+	if name == model.RealOrderStrategy {
+		return true
+	}
+	return svc.orderExecutor != nil && svc.orderExecutor.IsRealStrategy(name)
 }

@@ -15,7 +15,6 @@ import (
 // here, where it is consumed, so the order path can run against a fake.
 type broker interface {
 	PlaceOrder(params map[string]any) (string, error)
-	PlaceOrderPaperTrade(params map[string]any) (string, error)
 	OrderBook() (map[string]any, error)
 	Position() (map[string]any, error)
 	GTTCreateRule(params map[string]any) (string, error)

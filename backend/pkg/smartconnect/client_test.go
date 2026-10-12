@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -111,5 +112,25 @@ func TestRoutes_BuildValidURLs(t *testing.T) {
 		if !strings.HasPrefix(u, "https://apiconnect.angelone.in/") {
 			t.Errorf("buildURL(%s) = %q", route, u)
 		}
+	}
+}
+
+// Session refresh rewrites the token while order goroutines build headers;
+// run under -race.
+func TestAccessToken_ConcurrentRefreshAndHeaders(t *testing.T) {
+	sc := &SmartConnect{}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 1000; i++ {
+			sc.SetAccessToken("tok-"+strconv.Itoa(i))
+		}
+	}()
+	for i := 0; i < 1000; i++ {
+		_ = sc.requestHeaders()
+	}
+	<-done
+	if got := sc.requestHeaders().Get("Authorization"); got != "Bearer tok-999" {
+		t.Fatalf("Authorization %q, want last token", got)
 	}
 }

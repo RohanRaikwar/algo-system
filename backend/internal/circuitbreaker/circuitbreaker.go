@@ -129,6 +129,23 @@ func (cb *CircuitBreaker) ExecuteAlways(fn func() error) error {
 	return nil
 }
 
+// Allow reports whether a call may go through now, for callers that check
+// before doing work and then run the call with Execute. An open breaker
+// whose reset timeout has passed moves to half-open here, so the next call
+// probes the broker; checking CurrentState alone would keep it open forever.
+func (cb *CircuitBreaker) Allow() bool {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	if cb.state != StateOpen {
+		return true
+	}
+	if time.Since(cb.lastFailure) > cb.resetTimeout {
+		cb.transition(StateHalfOpen)
+		return true
+	}
+	return false
+}
+
 // CurrentState returns the current circuit breaker state.
 func (cb *CircuitBreaker) CurrentState() State {
 	cb.mu.Lock()

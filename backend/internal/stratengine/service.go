@@ -225,8 +225,7 @@ func New(cfg Config) (*Service, error) {
 
 	svc.tfEngine = strategy.NewTFEngine(1000)
 
-	// NIFTY50_SR is paper-only (the executor's real-order gate is
-	// NIFTY50_FNO alone).
+	// NIFTY50_SR is paper unless STRAT_LIVE_STRATEGIES names it.
 	registered := 0
 	if cfg.SREnabled {
 		svc.tfEngine.Register(svc.srStrategy)
@@ -264,7 +263,12 @@ func New(cfg Config) (*Service, error) {
 		FNOExchange:      cfg.FNOExchange,
 		FNOOrderType:     cfg.FNOOrderType,
 		FNOProductType:   cfg.FNOProductType,
-		FNOStopLossPaise: 1000, // ₹10 below entry premium, GTT stop on real orders
+		FNOStopLossPaise: cfg.GTTStopLossPaise,
+		GTTTargetBps:     cfg.GTTTargetBps,
+		LiveStrategies:   cfg.LiveStrategies,
+		LiveLots:         cfg.LiveLots,
+		FreezeQty:        cfg.FreezeQty,
+		MaxDayLossPaise:  cfg.LiveMaxDayLossPaise,
 		AngelAPIKey:      cfg.AngelAPIKey,
 		AngelClientID:    cfg.AngelClientID,
 		AngelPassword:    cfg.AngelPassword,
@@ -276,7 +280,7 @@ func New(cfg Config) (*Service, error) {
 		PaperSlippageMinPaise: cfg.PaperSlippageMinPaise,
 	})
 
-	// Attach P&L tracker for profit cap monitoring
+	// P&L source for the executor's daily max-loss gate on real entries.
 	svc.orderExecutor.SetPnLTracker(svc.pnlTracker)
 
 	// ── Global option picker (off | shadow | on) ──
@@ -731,9 +735,9 @@ func (svc *Service) signalLoop(ctx context.Context) {
 				orderMode := "PAPER"
 				profitCapHit := false
 				liveMode := false
-				if sig.StrategyName == "NIFTY50_FNO" && svc.cfg.LiveOrders {
+				if svc.orderExecutor.IsRealStrategy(sig.StrategyName) && svc.cfg.LiveOrders {
 					// Check profit cap BEFORE this trade
-					dailyPnL := svc.pnlTracker.GetStrategyDailyPnL("NIFTY50_FNO")
+					dailyPnL := svc.pnlTracker.GetStrategyDailyPnL(sig.StrategyName)
 					// 10 points profit cap for 65 qty = 65 × 10 × 100 paise = 65,000 paise
 					const profitCapPaise int64 = 65000 // 65 qty × 10 points = ₹650.00
 

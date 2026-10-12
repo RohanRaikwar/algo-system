@@ -32,7 +32,7 @@ func TestRealBuy_PartialFillThenCancel_TracksFilledQty(t *testing.T) {
 }
 
 func TestGTTPrices_RoundedToTick(t *testing.T) {
-	if got := gttTargetPaise(10003, 5); got != 10150 { // 10003*1.015=10153.04 → floor to 5 → 10150
+	if got := gttTargetPaise(10003, 150, 5); got != 10150 { // 10003*1.015=10153.04 → floor to 5 → 10150
 		t.Fatalf("target %d, want 10150", got)
 	}
 	trig, lim := gttStopLossPaise(10003, 1000, 5)

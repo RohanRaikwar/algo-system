@@ -101,11 +101,13 @@ Channels the gateway forwards to the browser are listed in `dynamicPubSubPattern
 Real orders require **all three** conditions in `internal/orderexec/executor.go`:
 
 ```go
-isRealOrderStrategy := sig.StrategyName == "NIFTY50_FNO"   // hardcoded
-if isRealOrderStrategy && oe.live && oe.sessionOK { ... }
+isRealOrderStrategy := oe.IsRealStrategy(sig.StrategyName)   // STRAT_LIVE_STRATEGIES allowlist
+sendReal := isRealOrderStrategy && live                      // live = oe.live && oe.sessionOK && oe.api != nil
 ```
 
-Everything else falls through to paper mode with a synthetic `PAPER_*` order ID. `oe.live` comes from `LiveOrders` config and is force-downgraded to `false` if Angel credentials are missing or the session fails to establish. Any change touching this gate changes whether real money moves — treat it accordingly.
+The allowlist defaults to `NIFTY50_FNO` (which no registered strategy uses), so nothing goes live unless `STRAT_LIVE_STRATEGIES` names a running strategy. Everything else falls through to paper mode with a synthetic `PAPER_*` order ID. `oe.live` comes from `LiveOrders` config and is force-downgraded to `false` if Angel credentials are missing or the session fails to establish. Any change touching this gate changes whether real money moves — treat it accordingly. Automated closers (exitwatch, exit policy) never act on a real strategy (`Service.isRealStrategy`).
+
+Real entries additionally pass, in `ExecuteSignal`: rate limiter, circuit breaker (`cb.Allow()`, so an open breaker recovers; broker business rejections such as margin do not count as failures, see `isBrokerFault`), daily max loss (`STRAT_LIVE_MAX_DAY_LOSS_PAISE`), and lot sizing (qty = `STRAT_LIVE_LOTS` × instrument-master lot size, refused if unknown or above `STRAT_FREEZE_QTY`). `STRAT_QTY` sizes paper trades only. GTT protection is a stop-loss rule (`STRAT_GTT_SL_PAISE`); the target GTT is off by default (`STRAT_GTT_TARGET_BPS=0`) because the two rules are not OCO.
 
 Exits must never be blocked. Existing gates (profit cap, position mutual-exclusion) apply to entries only, so an open real position can always be closed.
 
