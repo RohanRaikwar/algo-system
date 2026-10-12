@@ -157,7 +157,6 @@ const orderQueueDepth = 256
 // strategy run strictly in arrival order, so a reverse EXIT always
 // completes before its BUY.
 func (svc *Service) dispatchOrder(ctx context.Context, sig strategy.Signal) {
-	svc.shadowIntent(sig)
 	svc.orderQueuesMu.Lock()
 	if svc.orderQueues == nil {
 		svc.orderQueues = make(map[string]chan strategy.Signal)

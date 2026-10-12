@@ -60,9 +60,6 @@ Angel One WS ──▶ mdengine ──▶ ticks + 1s candles ──▶ Redis
 | `stratengine` | Strategy evaluation, order execution, portfolio and P&L tracking |
 | `analyst` | Market-state and support/resistance detection |
 | `api_gateway` | REST + WebSocket to the browser (`GATEWAY_ADDR`, default `:9090`) |
-| `oms` | Standalone order manager (`internal/omsvc`). **Phase 3 shadow: paper only, hard-coded `LiveOrders=false`.** Consumes `stream:oms:intents` (published by stratengine when `STRAT_OMS_SHADOW=true`), dedupes by intent id, runs its own executor, journals to `OMS_JOURNAL_PATH`, publishes fills on `stream:oms:events`. Single instance via Redis lock `oms:leader`. Runs in the staging stack only so far |
-
-Order intents and OMS events use Redis **Streams** (consumer group, ack after handling, pending redelivered on restart), not pub/sub, because they must survive a consumer being down.
 
 `api_gateway` never calls into `stratengine`. State reaches the dashboard by `stratengine` writing a Redis key (for REST) and publishing the same payload (for WS push); the gateway subscribes and fans out. Follow `publishPnLSummary` in `internal/stratengine/lifecycle.go` when adding new dashboard state.
 

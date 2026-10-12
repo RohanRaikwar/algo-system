@@ -60,7 +60,6 @@ type Config struct {
 	GTTStopLossPaise    int64    // GTT stop distance below entry; 0 = no SL GTT
 	GTTTargetBps        int64    // GTT target above entry in bps; 0 = no target GTT
 	OrderJournalPath    string   // SQLite order journal; real entries need it when live
-	OMSShadow           bool     // also publish order intents to the OMS process (paper shadow)
 
 	// ── Angel One SmartAPI ──
 	AngelAPIKey   string
@@ -174,7 +173,6 @@ func LoadConfig() Config {
 		GTTStopLossPaise:    config.GetEnvInt64("STRAT_GTT_SL_PAISE", 1000),
 		GTTTargetBps:        config.GetEnvInt64("STRAT_GTT_TARGET_BPS", 0),
 		OrderJournalPath:    config.GetEnv("STRAT_ORDER_JOURNAL_PATH", "data/orders.db"),
-		OMSShadow:           config.GetEnvBool("STRAT_OMS_SHADOW", false),
 
 		// Angel One
 		AngelAPIKey:   config.GetEnv("ANGEL_API_KEY", ""),

@@ -22,7 +22,7 @@ echo "╔═══════════════════════�
 echo "║  STAGING MODE                                     ║"
 echo "║  Services: tickserver + mdengine                  ║"
 echo "║            + api_gateway + stratengine + analyst  ║"
-echo "║            + indengine + exitwatch + oms (shadow) ║"
+echo "║            + indengine + exitwatch                ║"
 echo "║  Strategy: NIFTY50_SR (paper)                     ║"
 echo "║  Data: Local Tickserver (simulated)               ║"
 echo "╚═══════════════════════════════════════════════════╝"
@@ -36,6 +36,5 @@ sleep 1
 ./tmp/analyst     2>&1 | sed 's/^/[analyst]     /' &
 ./tmp/exitwatch   2>&1 | sed 's/^/[exitwatch]   /' &
 ./tmp/archiver    2>&1 | sed 's/^/[archiver]    /' &
-./tmp/oms         2>&1 | sed 's/^/[oms]         /' &   # paper shadow; set STRAT_OMS_SHADOW=true to feed it
 
 wait

@@ -17,7 +17,6 @@ import (
 	"trading-systemv1/internal/markethours"
 	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/notification"
-	"trading-systemv1/internal/oms"
 	"trading-systemv1/internal/optionpicker"
 	"trading-systemv1/internal/orderexec"
 	"trading-systemv1/internal/portfolio"
@@ -52,10 +51,6 @@ type Service struct {
 	notifier      notification.Notifier
 	orderExecutor *orderexec.OrderExecutor
 	strikePicker  *orderexec.StrikePicker
-
-	// Shadow intents for the OMS process (oms_shadow.go); nil when off.
-	intentCh      chan oms.Intent
-	intentDropped atomic.Int64
 
 	// Global option picker (picker_wiring.go); nil when STRAT_PICKER_MODE=off.
 	picker    *optionpicker.Picker
@@ -315,7 +310,6 @@ func (svc *Service) Run(ctx context.Context) error {
 	log.Println("[stratengine] starting Strategy Engine...")
 
 	svc.restoreAndWire(ctx)
-	svc.startOMSShadow(ctx)
 	svc.warmupRangeStrategies()
 	svc.refreshVolumeToken(ctx, time.Now())
 	stopMetrics := svc.startMetrics()
