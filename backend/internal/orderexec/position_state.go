@@ -19,6 +19,9 @@ type broker interface {
 	Position() (map[string]any, error)
 	GTTCreateRule(params map[string]any) (string, error)
 	GTTCancelRule(params map[string]any) (map[string]any, error)
+	CancelOrder(orderID, variety string) (map[string]any, error)
+	ModifyOrder(params map[string]any) (map[string]any, error)
+	RMSLimit() (map[string]any, error)
 }
 
 var errNoSession = errors.New("no broker session")
@@ -161,6 +164,16 @@ func (oe *OrderExecutor) storeEntry(sig strategy.Signal, rec OrderRecord) {
 func (oe *OrderExecutor) commitEntry(sig strategy.Signal, rec OrderRecord) {
 	posKey := oe.positionKey(sig)
 	rec.Pending = false
+	if oe.stopMode() {
+		// A stop already recorded (adopted again after a crash) is kept.
+		if rec.SLOrderID == "" {
+			if id := oe.placeStop(posKey, rec); id != "" {
+				rec.SLOrderID, rec.SLPlacedAt = id, time.Now()
+			}
+		}
+		oe.storeEntry(sig, rec)
+		return
+	}
 	// Rules already recorded (e.g. adopted again after a crash) are kept:
 	// placing a second pair would orphan the first.
 	if rec.GttRuleID == "" {
@@ -223,6 +236,7 @@ func (oe *OrderExecutor) sendDeferredExit(sig strategy.Signal) {
 func (oe *OrderExecutor) dropEntry(sig strategy.Signal) {
 	posKey := oe.positionKey(sig)
 	oe.cancelPairedGTTs(posKey)
+	oe.cancelStopQuiet(posKey)
 	oe.mu.Lock()
 	delete(oe.entryOrders, posKey)
 	delete(oe.exitRetries, posKey)
@@ -398,6 +412,7 @@ func (oe *OrderExecutor) ResumeSettlement() {
 				oe.applyExitResult(sig, orderID, f)
 			}, func() {
 				oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = "" })
+				oe.rearmStop(posKey)
 				oe.alertf("restored EXIT for %s never reached broker — position still OPEN, retrying the exit", posKey)
 				oe.scheduleExitRetry(sig)
 			})
@@ -413,11 +428,13 @@ func (oe *OrderExecutor) applyExitResult(sig strategy.Signal, orderID string, f 
 	switch {
 	case f.Rejected():
 		oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = "" })
+		oe.rearmStop(posKey)
 		oe.alertf("EXIT %s %s by broker (%s) — %s position still OPEN, retrying the exit", orderID, f.Status, f.Text, rec.Symbol)
 		oe.scheduleExitRetry(sig)
 	case f.Partial() && f.FilledQty < rec.Quantity:
 		left := rec.Quantity - f.FilledQty
 		oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = ""; r.Quantity = left })
+		oe.rearmStop(posKey)
 		oe.alertf("EXIT %s only partly filled (%d of %d) — %d of %s still OPEN; paired GTTs still sized %d, retrying the rest",
 			orderID, f.FilledQty, rec.Quantity, left, rec.Symbol, rec.Quantity)
 		oe.reportFill(sig, "SELL", oe.fillPriceOr(f, rec.Token), f.FilledQty, true)
@@ -567,7 +584,12 @@ func (oe *OrderExecutor) settleStalePending(sig strategy.Signal, rec OrderRecord
 		oe.alertf("pending BUY %s from a previous day could not be checked (%v) — kept pending; verify Angel positions for %s", posKey, err, rec.Symbol)
 	case held > 0:
 		oe.updateEntry(posKey, func(r *OrderRecord) { r.Pending, r.Quantity = false, held })
-		oe.alertf("pending BUY %s from a previous day: broker holds %d %s — kept OPEN without GTT protection (fill price unknown); protect or close manually", posKey, held, rec.Symbol)
+		if oe.stopMode() {
+			oe.rearmStop(posKey)
+			oe.alertf("pending BUY %s from a previous day: broker holds %d %s — kept OPEN; stop placed from the signal-time price (fill price unknown), check it", posKey, held, rec.Symbol)
+		} else {
+			oe.alertf("pending BUY %s from a previous day: broker holds %d %s — kept OPEN without GTT protection (fill price unknown); protect or close manually", posKey, held, rec.Symbol)
+		}
 	default:
 		oe.dropEntry(sig)
 		oe.alertf("pending BUY %s from a previous day: broker holds none of %s — dropped", posKey, rec.Symbol)

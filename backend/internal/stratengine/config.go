@@ -60,6 +60,12 @@ type Config struct {
 	GTTStopLossPaise    int64    // GTT stop distance below entry; 0 = no SL GTT
 	GTTTargetBps        int64    // GTT target above entry in bps; 0 = no target GTT
 	OrderJournalPath    string   // SQLite order journal; real entries need it when live
+	ProtectionMode      string   // "sl" resting stop order (default) or "gtt"
+	ExecMode            string   // "chase" marketable LIMIT (default) or "market"
+	ChaseTicks          int64    // ticks through the touch
+	ChaseReprices       int      // re-prices before BUY cancel / SELL→MARKET
+	ChaseMaxBps         int64    // max BUY chase above first price
+	MarginBufferPct     int64    // margin pre-check buffer %; negative = off
 
 	// ── Angel One SmartAPI ──
 	AngelAPIKey   string
@@ -173,6 +179,12 @@ func LoadConfig() Config {
 		GTTStopLossPaise:    config.GetEnvInt64("STRAT_GTT_SL_PAISE", 1000),
 		GTTTargetBps:        config.GetEnvInt64("STRAT_GTT_TARGET_BPS", 0),
 		OrderJournalPath:    config.GetEnv("STRAT_ORDER_JOURNAL_PATH", "data/orders.db"),
+		ProtectionMode:      config.GetEnv("STRAT_PROTECTION", "sl"),
+		ExecMode:            config.GetEnv("STRAT_EXEC_MODE", "chase"),
+		ChaseTicks:          config.GetEnvInt64("STRAT_CHASE_TICKS", 2),
+		ChaseReprices:       config.GetEnvInt("STRAT_CHASE_REPRICES", 3),
+		ChaseMaxBps:         config.GetEnvInt64("STRAT_CHASE_MAX_BPS", 300),
+		MarginBufferPct:     config.GetEnvInt64("STRAT_MARGIN_BUFFER_PCT", 10),
 
 		// Angel One
 		AngelAPIKey:   config.GetEnv("ANGEL_API_KEY", ""),

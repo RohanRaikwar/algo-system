@@ -73,6 +73,21 @@ type Config struct {
 	// GTT rules are not one-cancels-other, so once either fires the other
 	// stays live and can sell short on a flat position.
 	GTTTargetBps int64
+	// ProtectionMode picks how a filled real entry is protected at the
+	// exchange: ProtectionStop ("sl", one resting stop order) or
+	// ProtectionGTT ("gtt"). Empty means "gtt".
+	ProtectionMode string
+
+	// ExecMode picks how real orders are priced: ExecChase ("chase") or
+	// ExecMarket ("market", FNOOrderType as is). Empty means "market".
+	ExecMode      string
+	ChaseTicks    int64 // ticks through the touch for a marketable LIMIT (default 2)
+	ChaseReprices int   // re-prices before a BUY is cancelled / a SELL goes MARKET
+	ChaseMaxBps   int64 // a BUY is never chased more than this above its first price; 0 = no cap
+
+	// MarginBufferPct: a real BUY needs cached available margin ≥ price ×
+	// qty × (100+pct)/100 (see RefreshMargin). Negative turns the check off.
+	MarginBufferPct int64
 
 	FNOTickPaise  int64 // exchange tick size for GTT prices (default 5 paise)
 	AngelAPIKey   string
@@ -146,6 +161,12 @@ type OrderExecutor struct {
 	// Optional durable order ledger; set via SetOrderLedger.
 	ledger OrderLedger
 
+	margin marginCache // see RefreshMargin
+
+	// Reconcile drift seen on the previous pass, per token (see
+	// ReconcileAndFix): a fix needs the same reading twice in a row.
+	driftSeen map[string]int64
+
 	// lotSizeOf returns the exchange lot size of a contract symbol.
 	lotSizeOf func(symbol string) (int64, error)
 
@@ -206,6 +227,8 @@ type OrderRecord struct {
 	IndexExchange string    // exchange of that signal
 	GttRuleID     string    // Angel One GTT rule ID for 1.5% target (empty if none)
 	GttSLRuleID   string    // Angel One GTT rule ID for fixed stop loss (empty if none)
+	SLOrderID     string    `json:",omitempty"` // resting protective stop order (ProtectionStop)
+	SLPlacedAt    time.Time `json:",omitempty"` // when SLOrderID was placed (DAY order: gone next session)
 	Real          bool      // true when the order went to the broker (not paper/dry-run)
 	Pending       bool      // real BUY whose outcome is not yet known; being settled in background
 	ExitOrderID   string    // real SELL sent but not yet confirmed filled
@@ -859,6 +882,42 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 	prefix := oe.logPrefix()
 	isExit := direction == "SELL"
 
+	// ── Protective stop (exits) ──
+	// Cancel the resting stop and confirm it before selling, so the stop
+	// and this SELL can never both fill. A stop that already filled closed
+	// the position: nothing to sell.
+	if isExit && oe.stopMode() {
+		switch oe.cancelStopForExit(sig, posKey) {
+		case stopFilled:
+			return
+		case stopUnknown:
+			oe.scheduleExitRetry(sig)
+			return
+		}
+		if rec, ok := oe.entry(posKey); ok && rec.Quantity > 0 && rec.Quantity < qty {
+			qty = rec.Quantity
+		}
+	}
+
+	// ── Price ── (0 = MARKET). A chased BUY needs a price to start from;
+	// an exit without one goes out as MARKET.
+	limitPrice := oe.orderPrice(direction, fnoToken, ltp)
+	if limitPrice <= 0 && !isExit && oe.chaseMode() {
+		oe.alertf("real BUY %s %s refused: no price (LTP/quote) to build a LIMIT from", sig.StrategyName, fnoSymbol)
+		return
+	}
+	if !isExit {
+		est := limitPrice
+		if est <= 0 {
+			est = ltp
+		}
+		if need, have, short := oe.marginShort(est, qty); short {
+			oe.alertf("real BUY %s %s refused: needs ~%s with buffer, available margin %s",
+				sig.StrategyName, fnoSymbol, paiseToRupees(need), paiseToRupees(have))
+			return
+		}
+	}
+
 	// ── Intent ──
 	// Record what is about to be sent, and persist it, before the broker
 	// sees the order. A crash anywhere after placeOrder then restarts with
@@ -911,7 +970,7 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 		attempt := orderAttempt{
 			tag: key,
 			place: func(tag string) (string, error) {
-				return oe.placeOrder(fnoSymbol, fnoToken, direction, ltp, qty, tag)
+				return oe.placeOrder(fnoSymbol, fnoToken, direction, limitPrice, qty, tag)
 			},
 			orderBook:    oe.readOrderBook,
 			refresh:      oe.RefreshSession,
@@ -950,6 +1009,7 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 			log.Printf("%s 🔌 CIRCUIT OPEN during execution — order rejected", prefix)
 			if isExit {
 				oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = "" })
+				oe.rearmStop(posKey)
 				oe.scheduleExitRetry(sig)
 			} else {
 				oe.dropEntry(sig)
@@ -959,6 +1019,7 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 				prefix, oe.cb.Failures(), oe.cfg.CBMaxFailures, cbErr)
 			if isExit {
 				oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = "" })
+				oe.rearmStop(posKey)
 				oe.alertf("EXIT FAILED — %s position still OPEN at broker: %v", fnoSymbol, cbErr)
 				oe.scheduleExitRetry(sig)
 			} else {
@@ -976,9 +1037,11 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 		switch {
 		case perr != nil:
 			oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = "" })
+			oe.rearmStop(posKey)
 			oe.alertf("SELL %s rejected as flat but broker positions unreadable (%v) — %s kept OPEN with GTT protection; verify manually", fnoSymbol, perr, posKey)
 		case held != 0:
 			oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = "" })
+			oe.rearmStop(posKey)
 			oe.alertf("SELL %s rejected as flat but broker still holds %d — %s kept OPEN with GTT protection; close manually", fnoSymbol, held, posKey)
 		default:
 			// Closed at the exchange (GTT) at a price we don't know: book
@@ -992,7 +1055,7 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 	// ── Fill confirmation ──
 	// An accepted order is not a filled one: the broker can still reject it
 	// (e.g. margin). Use the real average price, not the signal-time LTP.
-	fill, ferr := confirmFill(oe.readOrderBook, orderID, defaultFillPollDelays)
+	fill, ferr := oe.awaitFill(orderID, direction, fnoSymbol, fnoToken, qty, limitPrice)
 	if ferr == nil {
 		oe.journalFill(key, orderID, fill, "fill-confirm")
 	}
@@ -1113,13 +1176,15 @@ func (oe *OrderExecutor) settleUnknown(sig strategy.Signal, posKey, direction, f
 	}, func() {
 		oe.ledgerApply(oms.Event{ClientOrderID: key, State: oms.StateAbsent, Reason: "not in order book", Source: "poll"})
 		oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = "" })
+		oe.rearmStop(posKey)
 		oe.alertf("unknown SELL %s never reached broker — %s position still OPEN, close manually", key, fnoSymbol)
 	})
 }
 
-// placeOrder builds and sends the order request.
-func (oe *OrderExecutor) placeOrder(fnoSymbol, fnoToken, direction string, ltp, qty int64, tag string) (string, error) {
-	params := oe.buildOrderParams(fnoSymbol, fnoToken, direction, ltp, qty, tag)
+// placeOrder builds and sends the order request. price > 0 sends a LIMIT
+// at that price; 0 sends MARKET.
+func (oe *OrderExecutor) placeOrder(fnoSymbol, fnoToken, direction string, price, qty int64, tag string) (string, error) {
+	params := oe.buildOrderParams(fnoSymbol, fnoToken, direction, price, qty, tag)
 
 	api := oe.brokerAPI()
 	if api == nil {
@@ -1128,26 +1193,29 @@ func (oe *OrderExecutor) placeOrder(fnoSymbol, fnoToken, direction string, ltp, 
 	return api.PlaceOrder(params)
 }
 
-// buildOrderParams builds the Angel One placeOrder payload. tag is sent as
-// ordertag so the order can be found in the order book if the placement
-// response is lost.
-func (oe *OrderExecutor) buildOrderParams(fnoSymbol, fnoToken, direction string, ltp, qty int64, tag string) map[string]any {
+// buildOrderParams builds the Angel One placeOrder payload: a LIMIT at
+// price when price > 0, else MARKET. tag is sent as ordertag so the order
+// can be found in the order book if the placement response is lost.
+func (oe *OrderExecutor) buildOrderParams(fnoSymbol, fnoToken, direction string, price, qty int64, tag string) map[string]any {
+	orderType := "MARKET"
+	if price > 0 {
+		orderType = "LIMIT"
+	}
 	params := map[string]any{
 		"variety":         "NORMAL",
 		"tradingsymbol":   fnoSymbol,
 		"symboltoken":     fnoToken,
 		"transactiontype": direction,
 		"exchange":        oe.cfg.FNOExchange,
-		"ordertype":       oe.cfg.FNOOrderType,
+		"ordertype":       orderType,
 		"producttype":     oe.cfg.FNOProductType,
 		"duration":        "DAY",
 		"quantity":        fmt.Sprintf("%d", qty),
 		"ordertag":        tag,
 	}
 
-	// For LIMIT orders, set the price (rupees string, tick-aligned, no float)
-	if strings.EqualFold(oe.cfg.FNOOrderType, "LIMIT") && ltp > 0 {
-		params["price"] = paiseToRupees(floorTick(ltp, oe.tickPaise()))
+	if price > 0 {
+		params["price"] = paiseToRupees(price) // rupees string, tick-aligned, no float
 	}
 	return params
 }

@@ -29,7 +29,7 @@ const (
 // killSwitchActive reports whether new entries are blocked. STRAT_KILL_SWITCH
 // (env) is a floor the dashboard cannot lift; the dashboard toggle adds to it.
 func (svc *Service) killSwitchActive() bool {
-	return svc.cfg.KillSwitch || svc.uiKillSwitch.Load()
+	return svc.cfg.KillSwitch || svc.uiKillSwitch.Load() || svc.reconcileHalt.Load()
 }
 
 // applyTradingConfig applies a trading config published by the gateway
@@ -314,7 +314,16 @@ func (svc *Service) positionReconcileLoop(ctx context.Context) {
 }
 
 func (svc *Service) reconcilePositionsOnce(startup bool) {
-	mismatches, err := svc.orderExecutor.ReconcilePositions()
+	// Protective stops first: a stop that filled closes its position
+	// before positions are compared, and a missing one is re-placed. Only
+	// in session: the exchange refuses new stop orders when closed.
+	if markethours.IsMarketOpen(time.Now()) {
+		svc.orderExecutor.SweepProtection()
+	}
+	if err := svc.orderExecutor.RefreshMargin(); err != nil {
+		log.Printf("[stratengine] ⚠️  margin refresh: %v", err)
+	}
+	res, err := svc.orderExecutor.ReconcileAndFix()
 	if errors.Is(err, orderexec.ErrNotLive) {
 		return
 	}
@@ -326,9 +335,21 @@ func (svc *Service) reconcilePositionsOnce(startup bool) {
 	if startup {
 		when = " at startup"
 	}
-	for _, m := range mismatches {
-		log.Printf("[stratengine] 🚨 POSITION MISMATCH%s %s — check broker and close/adjust manually", when, m)
-		svc.operatorAlert("POSITION MISMATCH" + when + " " + m.String() + " — check broker and close/adjust manually")
+	for _, f := range res.Fixed {
+		svc.operatorAlert("POSITION RECONCILED" + when + ": " + f)
+	}
+	for _, m := range res.Waiting {
+		log.Printf("[stratengine] ⏳ position drift%s %s — fixed next pass if it persists", when, m)
+	}
+	for _, m := range res.Unsafe {
+		svc.operatorAlert("POSITION MISMATCH" + when + " " + m.String() + " — new entries halted; check broker and close/adjust manually")
+	}
+	// Unsafe drift halts new entries (exits still run) until a pass is clean.
+	switch halt := len(res.Unsafe) > 0; {
+	case halt && !svc.reconcileHalt.Swap(true):
+		log.Printf("[stratengine] 🛑 entries HALTED by position reconcile")
+	case !halt && svc.reconcileHalt.Swap(false):
+		svc.operatorAlert("positions match the broker again — new entries resumed")
 	}
 }
 

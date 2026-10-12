@@ -94,6 +94,9 @@ type Service struct {
 
 	// Dashboard kill switch (cmd:config_update); see killSwitchActive.
 	uiKillSwitch atomic.Bool
+	// reconcileHalt blocks new entries while broker positions disagree
+	// with the executor in a way it must not fix itself.
+	reconcileHalt atomic.Bool
 
 	// snapshotMu serialises saveSnapshot (periodic loop + after each order)
 	// so an older snapshot can never overwrite a newer one in Redis.
@@ -270,6 +273,12 @@ func New(cfg Config) (*Service, error) {
 		FreezeQty:        cfg.FreezeQty,
 		MaxDayLossPaise:  cfg.LiveMaxDayLossPaise,
 		RequireJournal:   cfg.LiveOrders,
+		ProtectionMode:   cfg.ProtectionMode,
+		ExecMode:         cfg.ExecMode,
+		ChaseTicks:       cfg.ChaseTicks,
+		ChaseReprices:    cfg.ChaseReprices,
+		ChaseMaxBps:      cfg.ChaseMaxBps,
+		MarginBufferPct:  cfg.MarginBufferPct,
 		AngelAPIKey:      cfg.AngelAPIKey,
 		AngelClientID:    cfg.AngelClientID,
 		AngelPassword:    cfg.AngelPassword,
