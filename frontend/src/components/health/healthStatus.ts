@@ -70,6 +70,9 @@ export function collectIssues(m: SystemMetrics, ticking: boolean, lagHistory?: n
         issues.push({ key: 'cb', text: 'Order circuit breaker is testing the broker connection (half-open).', tone: 'warn' });
     }
     const p = m.pipeline;
+    if (m.orders?.order_ws?.status === 'down' && p?.market_open) {
+        issues.push({ key: 'order-ws', text: 'Order-status socket is down: fills arrive by order-book polling, and stop hits are seen within 60s.', tone: 'warn' });
+    }
     const recentLags = lagHistory && lagHistory.length > 0 ? lagHistory.slice(-LAG_SUSTAIN_SAMPLES) : p ? [p.candle_lag_sec] : [];
     if (p && ticking && recentLags.length > 0 && Math.min(...recentLags) >= 2) {
         issues.push({ key: 'lag', text: `Candles are running ${p.candle_lag_sec.toFixed(1)}s behind real time (normal is about 1s).`, tone: p.candle_lag_sec >= 5 ? 'bad' : 'warn' });

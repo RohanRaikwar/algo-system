@@ -246,6 +246,11 @@ func TestSelectSingleThetaGainRule(t *testing.T) {
 	in.ThetaMaxGainPct = 25 // decay over 60m ≈ 2.5 ≤ 25% × 0.5 × 30 = 3.75
 	ok(true)
 
+	// A real 4h hold pays four times the decay: ≈ 10 > 3.75.
+	r.HoldMinutes = 240
+	ok(false)
+	r.HoldMinutes = 60
+
 	in.ThetaMaxGainPct = 10 // 2.5 > 10% × 15 = 1.5
 	ok(false)
 

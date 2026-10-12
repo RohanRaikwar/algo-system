@@ -154,3 +154,22 @@ func findOrderByTag(book map[string]any, tag string) (map[string]any, bool) {
 	}
 	return nil, false
 }
+
+// isBrokerFault reports an order failure that says the broker (or our
+// session with it) is unhealthy: ambiguous outcomes, session errors, no
+// session, refresh failure, rate limiting. Anything else is the broker
+// refusing the order on its merits (margin, RMS, bad params), which shows
+// the broker is reachable and must not open the circuit breaker.
+func isBrokerFault(err error) bool {
+	switch {
+	case err == nil:
+		return false
+	case errors.Is(err, ErrOrderStateUnknown),
+		errors.Is(err, smartconnect.ErrOutcomeUnknown),
+		errors.Is(err, errNoSession),
+		isSessionError(err):
+		return true
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "refresh failed") || strings.Contains(s, "rate limit")
+}

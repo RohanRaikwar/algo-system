@@ -162,7 +162,7 @@ func (svc *Service) evaluateExitPolicy(now time.Time) {
 	}
 	for _, d := range e.arbiter.OnMinute(now, armed) {
 		p := d.Position
-		if d.Shadow || p.Strategy == model.RealOrderStrategy {
+		if d.Shadow || svc.isRealStrategy(p.Strategy) {
 			log.Printf("[exitpolicy] 👻 would exit %s %s: %s", p.Strategy, p.Side, d.Text)
 			svc.recordExitDecision(d, false, "shadow")
 			continue

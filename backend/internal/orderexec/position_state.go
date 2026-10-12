@@ -15,11 +15,13 @@ import (
 // here, where it is consumed, so the order path can run against a fake.
 type broker interface {
 	PlaceOrder(params map[string]any) (string, error)
-	PlaceOrderPaperTrade(params map[string]any) (string, error)
 	OrderBook() (map[string]any, error)
 	Position() (map[string]any, error)
 	GTTCreateRule(params map[string]any) (string, error)
 	GTTCancelRule(params map[string]any) (map[string]any, error)
+	CancelOrder(orderID, variety string) (map[string]any, error)
+	ModifyOrder(params map[string]any) (map[string]any, error)
+	RMSLimit() (map[string]any, error)
 }
 
 var errNoSession = errors.New("no broker session")
@@ -162,6 +164,16 @@ func (oe *OrderExecutor) storeEntry(sig strategy.Signal, rec OrderRecord) {
 func (oe *OrderExecutor) commitEntry(sig strategy.Signal, rec OrderRecord) {
 	posKey := oe.positionKey(sig)
 	rec.Pending = false
+	if oe.stopMode() {
+		// A stop already recorded (adopted again after a crash) is kept.
+		if rec.SLOrderID == "" {
+			if id := oe.placeStop(posKey, rec); id != "" {
+				rec.SLOrderID, rec.SLPlacedAt = id, time.Now()
+			}
+		}
+		oe.storeEntry(sig, rec)
+		return
+	}
 	// Rules already recorded (e.g. adopted again after a crash) are kept:
 	// placing a second pair would orphan the first.
 	if rec.GttRuleID == "" {
@@ -213,6 +225,7 @@ func (oe *OrderExecutor) sendDeferredExit(sig strategy.Signal) {
 	}
 	exit := sig
 	exit.Action = strategy.ActionExit
+	exit.SignalTS = time.Time{}
 	exit.Reason = "deferred exit (arrived while BUY was settling)"
 	key := generateIdempotencyKey(exit)
 	log.Printf("%s ▶️  sending deferred EXIT for %s %s qty=%d", oe.logPrefix(), posKey, rec.Symbol, rec.Quantity)
@@ -223,6 +236,7 @@ func (oe *OrderExecutor) sendDeferredExit(sig strategy.Signal) {
 func (oe *OrderExecutor) dropEntry(sig strategy.Signal) {
 	posKey := oe.positionKey(sig)
 	oe.cancelPairedGTTs(posKey)
+	oe.cancelStopQuiet(posKey)
 	oe.mu.Lock()
 	delete(oe.entryOrders, posKey)
 	delete(oe.exitRetries, posKey)
@@ -262,10 +276,12 @@ func signalFor(rec OrderRecord) strategy.Signal {
 
 // pollOrderAsync follows one order until the book shows a terminal status,
 // then calls done under the position lock. match selects the order's row.
+// orderID, when known, also lets a terminal push from the order-status
+// socket settle it at once ("" when the order is matched by tag only).
 // If the order never shows up, absent is called; if it stays non-terminal
 // or the book stays unreadable for the whole window, an alert is logged and
 // state is left for an operator.
-func (oe *OrderExecutor) pollOrderAsync(posKey, what string, match func(map[string]any) (map[string]any, bool),
+func (oe *OrderExecutor) pollOrderAsync(posKey, what, orderID string, match func(map[string]any) (map[string]any, bool),
 	done func(orderID string, f fillResult), absent func()) {
 	if oe.brokerAPI() == nil {
 		oe.alertf("%s: no broker session to settle order — check Angel order book manually", what)
@@ -288,9 +304,13 @@ func (oe *OrderExecutor) pollOrderAsync(posKey, what string, match func(map[stri
 					what, time.Duration(tries)*every, lastStatus, sawBook, slowEvery)
 			}
 			if i < tries {
-				time.Sleep(every)
+				oe.pushes.wait(orderID, every)
 			} else {
-				time.Sleep(slowEvery)
+				oe.pushes.wait(orderID, slowEvery)
+			}
+			if f, ok := oe.pushes.terminal(orderID); ok {
+				settleUnder(func() { done(orderID, f) })
+				return
 			}
 			book, err := oe.readOrderBookBackground()
 			if err != nil {
@@ -314,6 +334,7 @@ func (oe *OrderExecutor) pollOrderAsync(posKey, what string, match func(map[stri
 				continue
 			}
 			oid := toStr(row["orderid"])
+			oe.journalFill(toStr(row["ordertag"]), oid, f, "poll")
 			settleUnder(func() { done(oid, f) })
 			return
 		}
@@ -381,22 +402,23 @@ func (oe *OrderExecutor) ResumeSettlement() {
 			if rec.OrderID != "" {
 				match = matchByID(rec.OrderID)
 			}
-			oe.pollOrderAsync(posKey, "restored pending BUY "+rec.ClientOrderID, match,
+			oe.pollOrderAsync(posKey, "restored pending BUY "+rec.ClientOrderID, rec.OrderID, match,
 				func(orderID string, f fillResult) {
 					oe.onBuySettled(sig, orderID, f)
 				}, func() { oe.dropEntry(sig) })
 			continue
 		}
 
-		match := matchByID(rec.ExitOrderID)
+		exitID, match := rec.ExitOrderID, matchByID(rec.ExitOrderID)
 		if tag, ok := strings.CutPrefix(rec.ExitOrderID, "tag:"); ok {
-			match = matchByTags(tag, retryTag(tag))
+			exitID, match = "", matchByTags(tag, retryTag(tag))
 		}
-		oe.pollOrderAsync(posKey, "restored SELL "+rec.ExitOrderID, match,
+		oe.pollOrderAsync(posKey, "restored SELL "+rec.ExitOrderID, exitID, match,
 			func(orderID string, f fillResult) {
 				oe.applyExitResult(sig, orderID, f)
 			}, func() {
 				oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = "" })
+				oe.rearmStop(posKey)
 				oe.alertf("restored EXIT for %s never reached broker — position still OPEN, retrying the exit", posKey)
 				oe.scheduleExitRetry(sig)
 			})
@@ -412,11 +434,13 @@ func (oe *OrderExecutor) applyExitResult(sig strategy.Signal, orderID string, f 
 	switch {
 	case f.Rejected():
 		oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = "" })
+		oe.rearmStop(posKey)
 		oe.alertf("EXIT %s %s by broker (%s) — %s position still OPEN, retrying the exit", orderID, f.Status, f.Text, rec.Symbol)
 		oe.scheduleExitRetry(sig)
 	case f.Partial() && f.FilledQty < rec.Quantity:
 		left := rec.Quantity - f.FilledQty
 		oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = ""; r.Quantity = left })
+		oe.rearmStop(posKey)
 		oe.alertf("EXIT %s only partly filled (%d of %d) — %d of %s still OPEN; paired GTTs still sized %d, retrying the rest",
 			orderID, f.FilledQty, rec.Quantity, left, rec.Symbol, rec.Quantity)
 		oe.reportFill(sig, "SELL", oe.fillPriceOr(f, rec.Token), f.FilledQty, true)
@@ -505,6 +529,7 @@ func (oe *OrderExecutor) retryExitLocked(sig strategy.Signal, attempt int) {
 	}
 	exit := sig
 	exit.Action = strategy.ActionExit
+	exit.SignalTS = time.Time{}
 	exit.Reason = fmt.Sprintf("automatic exit retry %d", attempt)
 	key := generateIdempotencyKey(exit)
 	log.Printf("%s ▶️  exit retry %d for %s: SELL %d %s", prefix, attempt, posKey, qty, rec.Symbol)
@@ -565,7 +590,12 @@ func (oe *OrderExecutor) settleStalePending(sig strategy.Signal, rec OrderRecord
 		oe.alertf("pending BUY %s from a previous day could not be checked (%v) — kept pending; verify Angel positions for %s", posKey, err, rec.Symbol)
 	case held > 0:
 		oe.updateEntry(posKey, func(r *OrderRecord) { r.Pending, r.Quantity = false, held })
-		oe.alertf("pending BUY %s from a previous day: broker holds %d %s — kept OPEN without GTT protection (fill price unknown); protect or close manually", posKey, held, rec.Symbol)
+		if oe.stopMode() {
+			oe.rearmStop(posKey)
+			oe.alertf("pending BUY %s from a previous day: broker holds %d %s — kept OPEN; stop placed from the signal-time price (fill price unknown), check it", posKey, held, rec.Symbol)
+		} else {
+			oe.alertf("pending BUY %s from a previous day: broker holds %d %s — kept OPEN without GTT protection (fill price unknown); protect or close manually", posKey, held, rec.Symbol)
+		}
 	default:
 		oe.dropEntry(sig)
 		oe.alertf("pending BUY %s from a previous day: broker holds none of %s — dropped", posKey, rec.Symbol)

@@ -1,9 +1,28 @@
 import { describe, expect, it } from 'vitest';
-import { paramRows, rejectSummary, decisionLine, quoteLine, sideComparison } from '../FnoInstrumentsTab';
+import { paramRows, rejectSummary, decisionLine, quoteLine, sideComparison, decayLadder, thetaBudget, thetaBudgetLine } from '../FnoInstrumentsTab';
 import { parseStrikeSelView } from '../../../store/useStrikeSelStore';
 import { channelKind } from '../../../utils/seqTracker';
 
 describe('FNO strike selection', () => {
+    it('ladders theta decay over a 1–5h hold, bracketing the picker hold', () => {
+        // ₹15/day over a 375-minute session: ₹2.40 per hour.
+        expect(decayLadder(-15, 240)).toBe('₹2.40 · ₹4.80 · ₹7.20 · [₹9.60] · ₹12.00');
+        expect(decayLadder(NaN, 240)).toBe('—');
+    });
+
+    it('applies the picker theta rule at the configured hold', () => {
+        // Same numbers as optionpicker TestSelectSingleThetaGainRule:
+        // gain = 0.5 × 30 = ₹15, limit 25% = ₹3.75.
+        const short = thetaBudget(-15, 0.5, 60, 30, 25)!;
+        expect(short.ok).toBe(true);
+        expect(short.decay).toBeCloseTo(2.4, 9);
+        const long = thetaBudget(-15, -0.5, 240, 30, 25)!;
+        expect(long.ok).toBe(false);
+        expect(thetaBudgetLine(long, 25)).toBe('₹9.60 / ₹15.00 = 64% (limit 25%)');
+        expect(thetaBudget(-15, 0.5, 240, 30, 0)).toBeNull();
+        expect(thetaBudget(-15, 0.5, 240, 0, 25)).toBeNull();
+    });
+
     it('summarises only the filters that dropped contracts', () => {
         expect(rejectSummary({ delta: 12, premium: 0, theta: 0, gamma: 0, liquidity: 3, iv: 1, cost: 0 })).toBe('delta 12, liquidity 3, iv 1');
         expect(rejectSummary({ delta: 0, premium: 0, theta: 0, gamma: 0, liquidity: 0, iv: 0, cost: 0 })).toBe('none');
@@ -75,7 +94,7 @@ describe('decision cards', () => {
 describe('new picker live pick', () => {
     const rejects = { delta: 0, premium: 0, theta: 0, gamma: 0, liquidity: 0, iv: 0, cost: 0 };
     it('formats the quote it picked on', () => {
-        expect(quoteLine({ strike: 22800, option: 'PE', expiry: '2026-10-13', dte: 7, delta: -0.49, iv: 11.2,
+        expect(quoteLine({ strike: 22800, option: 'PE', expiry: '2026-10-13', dte: 7, delta: -0.49, gamma: 0.0012, theta: -14.5, iv: 11.2,
             bid: 170.1, ask: 171.9, mid: 171, spread_pct: 1.0526, quote_age_s: 0.8, score: 0.21, liquidity: 210000 }))
             .toBe('₹170.10 / ₹171.90 · spread 1.1% · 0.8s old');
     });

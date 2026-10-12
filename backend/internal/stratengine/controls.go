@@ -5,14 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"sync"
 	"time"
 
 	"trading-systemv1/internal/markethours"
 	"trading-systemv1/internal/metrics"
+	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/notification"
+	"trading-systemv1/internal/oms"
 	"trading-systemv1/internal/orderexec"
 	"trading-systemv1/internal/portfolio"
 	"trading-systemv1/internal/strategy"
+	"trading-systemv1/pkg/smartconnect"
 
 	goredis "github.com/go-redis/redis/v8"
 )
@@ -27,7 +31,7 @@ const (
 // killSwitchActive reports whether new entries are blocked. STRAT_KILL_SWITCH
 // (env) is a floor the dashboard cannot lift; the dashboard toggle adds to it.
 func (svc *Service) killSwitchActive() bool {
-	return svc.cfg.KillSwitch || svc.uiKillSwitch.Load()
+	return svc.cfg.KillSwitch || svc.uiKillSwitch.Load() || svc.reconcileHalt.Load()
 }
 
 // applyTradingConfig applies a trading config published by the gateway
@@ -125,6 +129,7 @@ func (svc *Service) startMetrics() func() {
 				continue
 			}
 			snap := m.OrderSnapshot()
+			snap.OrderWS = svc.orderWS.snapshot()
 			snap.UpdatedAt = metrics.Stamp()
 			data, err := json.Marshal(snap)
 			if err != nil {
@@ -225,6 +230,64 @@ func (svc *Service) notifyAsync(alert notification.Alert) {
 	}()
 }
 
+// orderStreamAlertAfter is how long the order-status socket may stay down
+// before the operator is told. Fills still arrive by REST meanwhile.
+const orderStreamAlertAfter = 2 * time.Minute
+
+// startOrderStream follows Angel's order-status socket (STRAT_ORDER_WS) and
+// feeds its pushes to the executor, so fills and stop hits are seen at once
+// instead of at the next order-book poll. REST polling stays as the
+// fallback. Live sessions only: paper and staging never connect (Angel
+// allows 3 sockets per client code).
+func (svc *Service) startOrderStream(ctx context.Context) {
+	if !svc.cfg.OrderStream {
+		svc.orderWS.setStatus(orderWSOff)
+		return
+	}
+	if !svc.cfg.LiveOrders || svc.sessionManager == nil {
+		svc.orderWS.setStatus(orderWSPaper)
+		log.Printf("[stratengine] order-status socket off (paper mode or no live session)")
+		return
+	}
+	sm := svc.sessionManager
+	stream := smartconnect.NewOrderStream(func() string {
+		if c := sm.GetClient(); c != nil {
+			return c.GetAccessToken()
+		}
+		return ""
+	}, func(orderData map[string]any) {
+		svc.orderWS.onPush()
+		svc.orderExecutor.HandleOrderUpdate(orderData)
+	})
+	stream.OnError = svc.orderWS.onError
+
+	var mu sync.Mutex
+	var downTimer *time.Timer
+	stream.OnState = func(up bool) {
+		svc.orderWS.onState(up)
+		mu.Lock()
+		defer mu.Unlock()
+		if up {
+			if downTimer != nil && !downTimer.Stop() {
+				svc.notifyAsync(notification.Alert{Level: notification.AlertInfo,
+					Title: "Order-status socket back", Message: "Order-status socket reconnected"})
+			}
+			downTimer = nil
+			return
+		}
+		if downTimer == nil {
+			downTimer = time.AfterFunc(orderStreamAlertAfter, func() {
+				svc.notifyAsync(notification.Alert{Level: notification.AlertWarning,
+					Title:   "Order-status socket down",
+					Message: "Order-status socket down for " + orderStreamAlertAfter.String() + " — fills fall back to order-book polling (stop hits seen within 60s)"})
+			})
+		}
+	}
+	log.Printf("[stratengine] 📡 order-status socket on (%s)", smartconnect.OrderStreamURL)
+	svc.orderWS.setStatus(orderWSConnecting)
+	go stream.Run(ctx)
+}
+
 // wireAlerts routes executor and engine alerts to operatorAlert.
 func (svc *Service) wireAlerts() {
 	svc.orderExecutor.SetAlerter(svc.operatorAlert)
@@ -312,7 +375,16 @@ func (svc *Service) positionReconcileLoop(ctx context.Context) {
 }
 
 func (svc *Service) reconcilePositionsOnce(startup bool) {
-	mismatches, err := svc.orderExecutor.ReconcilePositions()
+	// Protective stops first: a stop that filled closes its position
+	// before positions are compared, and a missing one is re-placed. Only
+	// in session: the exchange refuses new stop orders when closed.
+	if markethours.IsMarketOpen(time.Now()) {
+		svc.orderExecutor.SweepProtection()
+	}
+	if err := svc.orderExecutor.RefreshMargin(); err != nil {
+		log.Printf("[stratengine] ⚠️  margin refresh: %v", err)
+	}
+	res, err := svc.orderExecutor.ReconcileAndFix()
 	if errors.Is(err, orderexec.ErrNotLive) {
 		return
 	}
@@ -324,8 +396,55 @@ func (svc *Service) reconcilePositionsOnce(startup bool) {
 	if startup {
 		when = " at startup"
 	}
-	for _, m := range mismatches {
-		log.Printf("[stratengine] 🚨 POSITION MISMATCH%s %s — check broker and close/adjust manually", when, m)
-		svc.operatorAlert("POSITION MISMATCH" + when + " " + m.String() + " — check broker and close/adjust manually")
+	for _, f := range res.Fixed {
+		svc.operatorAlert("POSITION RECONCILED" + when + ": " + f)
 	}
+	for _, m := range res.Waiting {
+		log.Printf("[stratengine] ⏳ position drift%s %s — fixed next pass if it persists", when, m)
+	}
+	for _, m := range res.Unsafe {
+		svc.operatorAlert("POSITION MISMATCH" + when + " " + m.String() + " — new entries halted; check broker and close/adjust manually")
+	}
+	// Unsafe drift halts new entries (exits still run) until a pass is clean.
+	switch halt := len(res.Unsafe) > 0; {
+	case halt && !svc.reconcileHalt.Swap(true):
+		log.Printf("[stratengine] 🛑 entries HALTED by position reconcile")
+	case !halt && svc.reconcileHalt.Swap(false):
+		svc.operatorAlert("positions match the broker again — new entries resumed")
+	}
+}
+
+// isRealStrategy reports a strategy whose orders may be real: the legacy
+// real-order name or one in the executor's live allowlist. Automated
+// closers (exitwatch, exit policy) never act on these.
+func (svc *Service) isRealStrategy(name string) bool {
+	if name == model.RealOrderStrategy {
+		return true
+	}
+	return svc.orderExecutor != nil && svc.orderExecutor.IsRealStrategy(name)
+}
+
+// attachOrderJournal opens the SQLite order journal and gives the executor
+// its ledger. Without it, live mode refuses real entries (RequireJournal).
+func (svc *Service) attachOrderJournal() {
+	path := svc.cfg.OrderJournalPath
+	if path == "" {
+		log.Println("[stratengine] ⚪ order journal disabled (STRAT_ORDER_JOURNAL_PATH empty)")
+		return
+	}
+	j, err := oms.OpenJournal(path)
+	if err != nil {
+		log.Printf("[stratengine] 🚨 order journal %s: %v — real entries will be refused", path, err)
+		return
+	}
+	ledger, err := oms.NewLedger(j)
+	if err != nil {
+		j.Close()
+		log.Printf("[stratengine] 🚨 order ledger replay %s: %v — real entries will be refused", path, err)
+		return
+	}
+	if n := len(ledger.Working()); n > 0 {
+		log.Printf("[stratengine] 📒 order journal %s: %d order(s) not terminal at startup", path, n)
+	}
+	svc.orderExecutor.SetOrderLedger(ledger)
 }

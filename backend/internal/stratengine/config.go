@@ -44,6 +44,7 @@ type Config struct {
 
 	// ── FNO Order Execution ──
 	LiveOrders     bool   // true = place real orders, false = dry-run (log only)
+	OrderStream    bool   // follow Angel's order-status socket for faster fills (live only)
 	CallFNOToken   string // Angel One symbol token for CALL option (empty = dynamic strikes only)
 	CallFNOSymbol  string // trading symbol (e.g. "NIFTY05MAR2523000CE")
 	PutFNOToken    string // Angel One symbol token for PUT option  (empty = dynamic strikes only)
@@ -51,6 +52,21 @@ type Config struct {
 	FNOExchange    string // exchange ("NFO")
 	FNOOrderType   string // "MARKET" or "LIMIT"
 	FNOProductType string // "CARRYFORWARD" or "INTRADAY"
+
+	// Real-order gates (see orderexec.Config).
+	LiveStrategies      []string // strategies allowed to send real orders
+	LiveLots            int64    // lots per real entry
+	FreezeQty           int64    // exchange freeze quantity, units
+	LiveMaxDayLossPaise int64    // block real entries at this daily loss; 0 = off
+	GTTStopLossPaise    int64    // GTT stop distance below entry; 0 = no SL GTT
+	GTTTargetBps        int64    // GTT target above entry in bps; 0 = no target GTT
+	OrderJournalPath    string   // SQLite order journal; real entries need it when live
+	ProtectionMode      string   // "sl" resting stop order (default) or "gtt"
+	ExecMode            string   // "chase" marketable LIMIT (default) or "market"
+	ChaseTicks          int64    // ticks through the touch
+	ChaseReprices       int      // re-prices before BUY cancel / SELL→MARKET
+	ChaseMaxBps         int64    // max BUY chase above first price
+	MarginBufferPct     int64    // margin pre-check buffer %; negative = off
 
 	// ── Angel One SmartAPI ──
 	AngelAPIKey   string
@@ -118,7 +134,7 @@ type Config struct {
 	PickMaxQuoteAge  time.Duration // bid/ask older than this is not tradable
 	PickMaxChainAge  time.Duration // greeks snapshot older than this refuses selection
 	PickRank         string        // delta (closest to band middle) | return (highest expected return on premium)
-	PickHoldMinutes  float64       // expected holding time for the return rank's decay term
+	PickHoldMinutes  float64       // real trade hold (1–5h, mostly 3–4h): theta rule and return rank decay term
 
 	PaperSlippageBps      int64 // paper fills cross the spread: LTP ± max(LTP×bps/10000, min)
 	PaperSlippageMinPaise int64
@@ -149,6 +165,7 @@ func LoadConfig() Config {
 
 		// FNO
 		LiveOrders:     config.GetEnvBool("STRAT_LIVE_ORDERS", false),
+		OrderStream:    config.GetEnvBool("STRAT_ORDER_WS", true),
 		CallFNOToken:   config.GetEnv("STRAT_CALL_FNO_TOKEN", ""),
 		CallFNOSymbol:  config.GetEnv("STRAT_CALL_FNO_SYMBOL", ""),
 		PutFNOToken:    config.GetEnv("STRAT_PUT_FNO_TOKEN", ""),
@@ -156,6 +173,20 @@ func LoadConfig() Config {
 		FNOExchange:    config.GetEnv("STRAT_FNO_EXCHANGE", "NFO"),
 		FNOOrderType:   config.GetEnv("STRAT_FNO_ORDER_TYPE", "MARKET"),
 		FNOProductType: config.GetEnv("STRAT_FNO_PRODUCT_TYPE", "CARRYFORWARD"),
+
+		LiveStrategies:      splitList(config.GetEnv("STRAT_LIVE_STRATEGIES", "NIFTY50_FNO")),
+		LiveLots:            config.GetEnvInt64("STRAT_LIVE_LOTS", 1),
+		FreezeQty:           config.GetEnvInt64("STRAT_FREEZE_QTY", 1800),
+		LiveMaxDayLossPaise: config.GetEnvInt64("STRAT_LIVE_MAX_DAY_LOSS_PAISE", 200000),
+		GTTStopLossPaise:    config.GetEnvInt64("STRAT_GTT_SL_PAISE", 1000),
+		GTTTargetBps:        config.GetEnvInt64("STRAT_GTT_TARGET_BPS", 0),
+		OrderJournalPath:    config.GetEnv("STRAT_ORDER_JOURNAL_PATH", "data/orders.db"),
+		ProtectionMode:      config.GetEnv("STRAT_PROTECTION", "sl"),
+		ExecMode:            config.GetEnv("STRAT_EXEC_MODE", "chase"),
+		ChaseTicks:          config.GetEnvInt64("STRAT_CHASE_TICKS", 2),
+		ChaseReprices:       config.GetEnvInt("STRAT_CHASE_REPRICES", 3),
+		ChaseMaxBps:         config.GetEnvInt64("STRAT_CHASE_MAX_BPS", 300),
+		MarginBufferPct:     config.GetEnvInt64("STRAT_MARGIN_BUFFER_PCT", 10),
 
 		// Angel One
 		AngelAPIKey:   config.GetEnv("ANGEL_API_KEY", ""),
@@ -199,7 +230,7 @@ func LoadConfig() Config {
 		PickMaxQuoteAge:       getEnvDuration("STRAT_PICK_MAX_QUOTE_AGE", 3*time.Second),
 		PickMaxChainAge:       getEnvDuration("STRAT_PICK_MAX_CHAIN_AGE", 2*time.Minute),
 		PickRank:              config.GetEnv("STRAT_PICK_RANK", "return"),
-		PickHoldMinutes:       getEnvFloat("STRAT_PICK_HOLD_MIN", 60),
+		PickHoldMinutes:       getEnvFloat("STRAT_PICK_HOLD_MIN", 240),
 		PaperSlippageBps:      config.GetEnvInt64("STRAT_PAPER_SLIPPAGE_BPS", 50),
 		PaperSlippageMinPaise: config.GetEnvInt64("STRAT_PAPER_SLIPPAGE_MIN_PAISE", 50),
 		WarmupDays:            config.GetEnvInt("STRAT_RANGE_WARMUP_DAYS", 5),

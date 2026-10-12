@@ -107,6 +107,20 @@ export function reasonLines(reason: string | undefined, width = 40, rows = 4): s
     return out;
 }
 
+/** "Pick OLD · new NIFTY..CE": which picker chose the contract; '' when unknown. */
+export function pickLine(s: SignalRecord | undefined): string {
+    const pick = (s?.pick || '').toLowerCase();
+    if (pick !== 'old' && pick !== 'new') return '';
+    const other = pick === 'old' ? 'new' : 'old';
+    return [`Pick ${pick.toUpperCase()}`, s?.pick_alt ? `${other} ${s.pick_alt}` : ''].filter(Boolean).join(' · ');
+}
+
+/** "P&L (old pick)" when the entry's picker is known, else "P&L". */
+function pnlLabel(s: SignalRecord | undefined): string {
+    const pick = (s?.pick || '').toLowerCase();
+    return pick === 'old' || pick === 'new' ? `P&L (${pick} pick)` : 'P&L';
+}
+
 function entryLines(s: SignalRecord): string[] {
     const lines: string[] = [metaLine(s.strategy, s.created_at || s.candle_ts)];
     const strike = signalStrike(s);
@@ -115,6 +129,8 @@ function entryLines(s: SignalRecord): string[] {
     const head = [s.price && s.price > 0 ? `@ ${rupees(s.price)}` : '', contract]
         .filter(Boolean).join('  ');
     if (head) lines.push(head);
+    const pick = pickLine(s);
+    if (pick) lines.push(pick);
     if (s.qty && s.qty > 0) lines.push(`qty ${s.qty}`);
     const levels = levelsLine(s.reason);
     if (levels) lines.push(levels);
@@ -229,7 +245,9 @@ export function buildChartMarkers(
                 if (entry && entry.price > 0 && entry.day === day) {
                     const qty = s.qty && s.qty > 0 ? s.qty : entry.qty > 0 ? entry.qty : 1;
                     marker.pnl = (s.price - entry.price) * qty;
-                    lines.push(`P&L ${marker.pnl > 0 ? '+' : ''}${rupees(marker.pnl)}`);
+                    const pick = pickLine(entry.signal);
+                    if (pick) lines.push(pick);
+                    lines.push(`${pnlLabel(entry.signal)} ${marker.pnl > 0 ? '+' : ''}${rupees(marker.pnl)}`);
                 }
             }
             lines.push(...reasonLines(s.reason));
@@ -251,7 +269,7 @@ export function buildChartMarkers(
         o.marker.pnl = (ltp - entryPrice) * qty;
         if (!compact) {
             o.marker.label = label('OPEN', s.side, compact, reasonWarnings(s.reason).length > 0);
-            o.marker.lines.push(`P&L ${o.marker.pnl > 0 ? '+' : ''}${rupees(o.marker.pnl)} · LTP ${rupees(ltp)}`);
+            o.marker.lines.push(`${pnlLabel(s)} ${o.marker.pnl > 0 ? '+' : ''}${rupees(o.marker.pnl)} · LTP ${rupees(ltp)}`);
         }
     }
 
@@ -293,7 +311,7 @@ export function useChartMarkers(
         }
 
         const fp = `${selectedToken}::${selectedTF}::${compact}::`
-            + signals.map(s => `${s.id}:${s.action}:${s.price ?? ''}:${s.qty ?? ''}:${s.reason?.length ?? 0}`).join('|')
+            + signals.map(s => `${s.id}:${s.action}:${s.price ?? ''}:${s.qty ?? ''}:${s.reason?.length ?? 0}:${s.pick ?? ''}`).join('|')
             + '::' + refused.map(r => r.ts).join('|')
             + '::' + Object.entries(liveOrders).map(([k, o]) => `${k}:${o.current_fno_price ?? 0}`).join('|');
         if (fp === lastFingerprint.current) return;

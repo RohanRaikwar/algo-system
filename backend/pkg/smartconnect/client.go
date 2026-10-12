@@ -31,6 +31,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -58,7 +59,11 @@ type Config struct {
 }
 
 type SmartConnect struct {
-	apiKey       string
+	apiKey string
+
+	// tokMu guards the session fields below: a session refresh rewrites
+	// them while order goroutines read the access token for headers.
+	tokMu        sync.RWMutex
 	accessToken  string
 	refreshToken string
 	feedToken    string
@@ -325,8 +330,8 @@ func (sc *SmartConnect) requestHeaders() http.Header {
 	h.Set("X-PrivateKey", sc.apiKey)
 	h.Set("X-UserType", sc.userType)
 	h.Set("X-SourceID", sc.sourceID)
-	if sc.accessToken != "" {
-		h.Set("Authorization", "Bearer "+sc.accessToken)
+	if tok := sc.getAccessToken(); tok != "" {
+		h.Set("Authorization", "Bearer "+tok)
 	}
 	return h
 }
@@ -475,12 +480,51 @@ func (sc *SmartConnect) delete(route string, params map[string]any) (map[string]
 
 // ---- Setters/Getters ----
 
-func (sc *SmartConnect) SetUserID(id string)      { sc.userID = id }
-func (sc *SmartConnect) GetUserID() string        { return sc.userID }
-func (sc *SmartConnect) SetAccessToken(t string)  { sc.accessToken = t }
-func (sc *SmartConnect) SetRefreshToken(t string) { sc.refreshToken = t }
-func (sc *SmartConnect) SetFeedToken(t string)    { sc.feedToken = t }
-func (sc *SmartConnect) GetFeedToken() string     { return sc.feedToken }
+func (sc *SmartConnect) SetUserID(id string) {
+	sc.tokMu.Lock()
+	sc.userID = id
+	sc.tokMu.Unlock()
+}
+func (sc *SmartConnect) GetUserID() string {
+	sc.tokMu.RLock()
+	defer sc.tokMu.RUnlock()
+	return sc.userID
+}
+func (sc *SmartConnect) SetAccessToken(t string) {
+	sc.tokMu.Lock()
+	sc.accessToken = t
+	sc.tokMu.Unlock()
+}
+// GetAccessToken returns the current session JWT (without the "Bearer "
+// prefix). SessionManager refreshes it in place, so long-lived sockets re-read it on
+// every dial.
+func (sc *SmartConnect) GetAccessToken() string { return sc.getAccessToken() }
+
+func (sc *SmartConnect) getAccessToken() string {
+	sc.tokMu.RLock()
+	defer sc.tokMu.RUnlock()
+	return sc.accessToken
+}
+func (sc *SmartConnect) SetRefreshToken(t string) {
+	sc.tokMu.Lock()
+	sc.refreshToken = t
+	sc.tokMu.Unlock()
+}
+func (sc *SmartConnect) getRefreshToken() string {
+	sc.tokMu.RLock()
+	defer sc.tokMu.RUnlock()
+	return sc.refreshToken
+}
+func (sc *SmartConnect) SetFeedToken(t string) {
+	sc.tokMu.Lock()
+	sc.feedToken = t
+	sc.tokMu.Unlock()
+}
+func (sc *SmartConnect) GetFeedToken() string {
+	sc.tokMu.RLock()
+	defer sc.tokMu.RUnlock()
+	return sc.feedToken
+}
 func (sc *SmartConnect) LoginURL() string {
 	return fmt.Sprintf("%s?api_key=%s", sc.loginURL, sc.apiKey)
 }
@@ -559,8 +603,8 @@ func (sc *SmartConnect) GenerateToken(refreshToken string) (map[string]any, erro
 // RenewAccessToken mirrors Python renewAccessToken(); returns tokenSet map
 func (sc *SmartConnect) RenewAccessToken() (map[string]any, error) {
 	res, err := sc.post("api.refresh", map[string]any{
-		"jwtToken":     sc.accessToken,
-		"refreshToken": sc.refreshToken,
+		"jwtToken":     sc.getAccessToken(),
+		"refreshToken": sc.getRefreshToken(),
 	})
 	if err != nil {
 		return res, err
@@ -575,7 +619,7 @@ func (sc *SmartConnect) RenewAccessToken() (map[string]any, error) {
 			tokenSet["refreshToken"] = rt
 		}
 	}
-	tokenSet["clientcode"] = sc.userID
+	tokenSet["clientcode"] = sc.GetUserID()
 	return tokenSet, nil
 }
 
@@ -606,40 +650,6 @@ func (sc *SmartConnect) PlaceOrder(params map[string]any) (string, error) {
 	}
 	// Accepted without an order id: the order may exist.
 	return "", fmt.Errorf("%w: place order accepted without orderid: %v", ErrOutcomeUnknown, res)
-}
-
-// PlaceOrderPaperTrade places a test order on Angel One's paper trading environment.
-// This simulates order execution without using real money.
-// The order will appear in the order book but won't affect your actual account.
-func (sc *SmartConnect) PlaceOrderPaperTrade(params map[string]any) (string, error) {
-	cleanNil(params)
-	// Add paper trading flag to the request
-	// Angel One uses "variety": "AMO" for after-market orders
-	// For paper trading, we can use a test product type or variety
-	// Note: Check Angel One's latest API docs for the exact parameter
-	if params["variety"] == nil {
-		params["variety"] = "NORMAL"
-	}
-	
-	// Some brokers use a separate endpoint or flag for paper trading
-	// If Angel One has a dedicated paper trading endpoint, use it here
-	// Otherwise, this will place a real order - use with caution!
-	
-	res, err := sc.post("api.order.place", params)
-	if err != nil {
-		return "", err
-	}
-	st, _ := res["status"].(bool)
-	if !st {
-		return "", fmt.Errorf("paper trade order failed: %v", res)
-	}
-	if data, ok := res["data"].(map[string]any); ok {
-		if oid, _ := data["orderid"].(string); oid != "" {
-			log.Printf("[smartconnect] 📋 PAPER TRADE order placed: %s", oid)
-			return oid, nil
-		}
-	}
-	return "", fmt.Errorf("invalid response format: %v", res)
 }
 
 func (sc *SmartConnect) PlaceOrderFullResponse(params map[string]any) (map[string]any, error) {
@@ -754,7 +764,7 @@ func (sc *SmartConnect) SearchScrip(exchange, searchscrip string) (map[string]an
 // Authenticated GET to arbitrary URL (used by individual order details)
 func (sc *SmartConnect) MakeAuthenticatedGET(urlStr string, accessToken string) (map[string]any, int, error) {
 	if accessToken == "" {
-		accessToken = sc.accessToken
+		accessToken = sc.getAccessToken()
 	}
 	req, err := http.NewRequest(http.MethodGet, urlStr, nil)
 	if err != nil {
@@ -787,7 +797,7 @@ func (sc *SmartConnect) MakeAuthenticatedGET(urlStr string, accessToken string) 
 
 func (sc *SmartConnect) IndividualOrderDetails(qParam string) (map[string]any, error) {
 	base := sc.rootURL + routes["api.individual.order.details"] + qParam
-	out, _, err := func() (map[string]any, int, error) { return sc.MakeAuthenticatedGET(base, sc.accessToken) }()
+	out, _, err := func() (map[string]any, int, error) { return sc.MakeAuthenticatedGET(base, sc.getAccessToken()) }()
 	return out, err
 }
 

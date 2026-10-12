@@ -48,6 +48,8 @@ function liveToRecord(sig: SignalPayload): SignalRecord {
         short: sig.short,
         fno_token: sig.fno_token,
         fno_symbol: sig.fno_symbol,
+        pick: sig.pick,
+        pick_alt: sig.pick_alt,
     };
 }
 

@@ -191,3 +191,23 @@ func TestPickerConfigCarriesRankAndDecisionCarriesScore(t *testing.T) {
 		t.Fatalf("decision score = %v, want 0.254", d.Score)
 	}
 }
+
+func TestAltPickOnlyForThisEntrysDisagreement(t *testing.T) {
+	svc := &Service{}
+	now := time.Date(2026, 10, 13, 5, 0, 0, 0, time.UTC)
+	svc.recordPickerDecision(pickerDecision{Strategy: "S", Result: "picked", Symbol: "NEW_CE", TS: now.Format(time.RFC3339)})
+
+	if got := svc.altPick("S", "OLD_CE", now); got != "NEW_CE" {
+		t.Fatalf("disagreement: got %q, want NEW_CE", got)
+	}
+	if got := svc.altPick("S", "NEW_CE", now); got != "" {
+		t.Fatalf("agreement: got %q, want empty", got)
+	}
+	if got := svc.altPick("S", "OLD_CE", now.Add(time.Minute)); got != "" {
+		t.Fatalf("stale decision: got %q, want empty", got)
+	}
+	svc.recordPickerDecision(pickerDecision{Strategy: "S", Result: "refused", TS: now.Format(time.RFC3339)})
+	if got := svc.altPick("S", "OLD_CE", now); got != "" {
+		t.Fatalf("refused: got %q, want empty", got)
+	}
+}

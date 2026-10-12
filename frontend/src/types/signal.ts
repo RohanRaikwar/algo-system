@@ -23,6 +23,10 @@ export interface SignalPayload {
     short?: boolean;
     fno_token?: string;
     fno_symbol?: string;
+    /** Picker that chose the contract: 'old' or 'new' (entries only) */
+    pick?: string;
+    /** Other picker's contract when it differed (shadow mode) */
+    pick_alt?: string;
 }
 
 export interface SignalRecord {
@@ -45,6 +49,10 @@ export interface SignalRecord {
     /** Traded option (journal + live WS); empty for older journal rows */
     fno_token?: string;
     fno_symbol?: string;
+    /** Picker that chose the contract: 'old' or 'new' (entries only) */
+    pick?: string;
+    /** Other picker's contract when it differed (shadow mode) */
+    pick_alt?: string;
     /** Multi-leg fields (live WS only; REST history carries a "[LEG STRIKE]" reason tag) */
     leg?: string;
     strike?: number;

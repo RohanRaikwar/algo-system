@@ -25,6 +25,7 @@ import (
 	"trading-systemv1/internal/circuitbreaker"
 	"trading-systemv1/internal/metrics"
 	"trading-systemv1/internal/model"
+	"trading-systemv1/internal/oms"
 	"trading-systemv1/internal/strategy"
 	"trading-systemv1/pkg/smartconnect"
 
@@ -34,9 +35,27 @@ import (
 // Config holds FNO order execution configuration.
 // Extracted from the per-service Config to avoid duplication.
 type Config struct {
-	LiveOrders     bool   // true = place real orders, false = dry-run (log only)
-	PaperTrade     bool   // true = use Angel One paper trading, false = real orders (only if LiveOrders=true)
-	Qty            int64  // default quantity per trade
+	LiveOrders bool  // true = place real orders, false = dry-run (log only)
+	Qty        int64 // quantity per paper trade
+
+	// LiveStrategies names the strategies allowed to send real orders.
+	// A real order still needs LiveOrders and a live session as well.
+	LiveStrategies []string
+
+	// Real entry size: LiveLots lots of the contract's exchange lot size
+	// (from the instrument master). An entry whose lot size is unknown, or
+	// whose quantity exceeds FreezeQty, is refused — never guessed.
+	LiveLots  int64
+	FreezeQty int64 // exchange freeze quantity in units (default 1800)
+
+	// MaxDayLossPaise blocks new real entries once a strategy's daily P&L
+	// is at or below -MaxDayLossPaise. Exits are never blocked. 0 = off.
+	MaxDayLossPaise int64
+
+	// RequireJournal refuses real entries while no order ledger is set
+	// (SetOrderLedger), so no real order is sent without a durable record.
+	RequireJournal bool
+
 	CallFNOToken   string // Angel One symbol token for CALL option
 	CallFNOSymbol  string // trading symbol for CALL option
 	PutFNOToken    string // Angel One symbol token for PUT option
@@ -47,14 +66,35 @@ type Config struct {
 
 	// FNOStopLossPaise: fixed stop loss distance below FNO entry premium,
 	// in paise. 1000 = ₹10 below buy price. Placed at the exchange via a
-	// paired GTT rule alongside the 1.5% target. 0 disables the SL GTT.
+	// GTT rule. 0 disables the SL GTT.
 	FNOStopLossPaise int64
-	FNOTickPaise     int64 // exchange tick size for GTT prices (default 5 paise)
-	AngelAPIKey      string
-	AngelClientID    string
-	AngelPassword    string
-	AngelTOTP        string
-	LogPrefix        string // log prefix, e.g. "[order_executor]" or "[order_executor_ind]"
+	// GTTTargetBps places a target GTT this many basis points above the
+	// entry price (150 = +1.5%). 0 = no target GTT (the default): the two
+	// GTT rules are not one-cancels-other, so once either fires the other
+	// stays live and can sell short on a flat position.
+	GTTTargetBps int64
+	// ProtectionMode picks how a filled real entry is protected at the
+	// exchange: ProtectionStop ("sl", one resting stop order) or
+	// ProtectionGTT ("gtt"). Empty means "gtt".
+	ProtectionMode string
+
+	// ExecMode picks how real orders are priced: ExecChase ("chase") or
+	// ExecMarket ("market", FNOOrderType as is). Empty means "market".
+	ExecMode      string
+	ChaseTicks    int64 // ticks through the touch for a marketable LIMIT (default 2)
+	ChaseReprices int   // re-prices before a BUY is cancelled / a SELL goes MARKET
+	ChaseMaxBps   int64 // a BUY is never chased more than this above its first price; 0 = no cap
+
+	// MarginBufferPct: a real BUY needs cached available margin ≥ price ×
+	// qty × (100+pct)/100 (see RefreshMargin). Negative turns the check off.
+	MarginBufferPct int64
+
+	FNOTickPaise  int64 // exchange tick size for GTT prices (default 5 paise)
+	AngelAPIKey   string
+	AngelClientID string
+	AngelPassword string
+	AngelTOTP     string
+	LogPrefix     string // log prefix, e.g. "[order_executor]" or "[order_executor_ind]"
 
 	// Paper fills cross the spread like a real order would: a paper BUY
 	// fills at LTP + slip, a SELL at LTP − slip, slip = max(LTP×bps/10000,
@@ -82,6 +122,9 @@ type OrderExecutor struct {
 
 	// keyLocks serialises orders per position key; see keyLock.
 	keyLocks sync.Map
+
+	// pushes holds terminal statuses from the order-status socket.
+	pushes pushBook
 
 	// Rate-limited order-book reader, created on first use.
 	bookOnce sync.Once
@@ -117,6 +160,20 @@ type OrderExecutor struct {
 
 	// Optional quote source for paper fills; set via SetQuoteSource.
 	quotes QuoteSource
+
+	// Optional durable order ledger; set via SetOrderLedger.
+	ledger OrderLedger
+
+	margin marginCache // see RefreshMargin
+
+	// Reconcile drift seen on the previous pass, per token (see
+	// ReconcileAndFix): a fix needs the same reading twice in a row.
+	driftSeen map[string]int64
+
+	// lotSizeOf returns the exchange lot size of a contract symbol.
+	lotSizeOf func(symbol string) (int64, error)
+
+	liveStrategies map[string]bool
 
 	mu           sync.RWMutex
 	ltp          map[string]int64 // token → latest price (paise)
@@ -173,6 +230,8 @@ type OrderRecord struct {
 	IndexExchange string    // exchange of that signal
 	GttRuleID     string    // Angel One GTT rule ID for 1.5% target (empty if none)
 	GttSLRuleID   string    // Angel One GTT rule ID for fixed stop loss (empty if none)
+	SLOrderID     string    `json:",omitempty"` // resting protective stop order (ProtectionStop)
+	SLPlacedAt    time.Time `json:",omitempty"` // when SLOrderID was placed (DAY order: gone next session)
 	Real          bool      // true when the order went to the broker (not paper/dry-run)
 	Pending       bool      // real BUY whose outcome is not yet known; being settled in background
 	ExitOrderID   string    // real SELL sent but not yet confirmed filled
@@ -206,6 +265,19 @@ func NewOrderExecutor(cfg Config) *OrderExecutor {
 
 	// Persist resolved defaults back into cfg so log lines and gauges report
 	// the values the runtime actually uses, not the zero from input cfg.
+	if cfg.FreezeQty <= 0 {
+		cfg.FreezeQty = 1800
+	}
+	if cfg.LiveLots <= 0 {
+		cfg.LiveLots = 1
+	}
+	liveStrategies := make(map[string]bool, len(cfg.LiveStrategies))
+	for _, name := range cfg.LiveStrategies {
+		if name = strings.TrimSpace(name); name != "" {
+			liveStrategies[name] = true
+		}
+	}
+
 	cfg.CBMaxFailures = cbMaxFailures
 	cfg.CBResetTimeout = cbTimeout
 	cfg.RLMaxOrders = rlMaxOrders
@@ -221,6 +293,10 @@ func NewOrderExecutor(cfg Config) *OrderExecutor {
 		live:         cfg.LiveOrders,
 		cb:           circuitbreaker.NewCircuitBreaker(cbMaxFailures, cbTimeout),
 		rl:           NewRateLimiter(rlMaxOrders, rlWindow),
+		lotSizeOf: func(symbol string) (int64, error) {
+			return GetInstrumentMaster().GetLotSize(symbol)
+		},
+		liveStrategies: liveStrategies,
 	}
 
 	prefix := cfg.LogPrefix
@@ -239,6 +315,8 @@ func NewOrderExecutor(cfg Config) *OrderExecutor {
 
 	log.Printf("%s ⚡ Circuit breaker: max_failures=%d reset_timeout=%v", prefix, cbMaxFailures, cbTimeout)
 	log.Printf("%s ⚡ Rate limiter: max_orders=%d window=%v", prefix, rlMaxOrders, rlWindow)
+	log.Printf("%s ⚡ Live strategies=%v lots=%d freeze_qty=%d max_day_loss=%d paise",
+		prefix, cfg.LiveStrategies, cfg.LiveLots, cfg.FreezeQty, cfg.MaxDayLossPaise)
 
 	if cfg.LiveOrders {
 		// Use session manager if provided (recommended for production)
@@ -249,11 +327,7 @@ func NewOrderExecutor(cfg Config) *OrderExecutor {
 			}
 			oe.sessionOK = oe.sc != nil
 			log.Printf("%s ✅ Using session manager for order execution (auto-refresh enabled)", prefix)
-			if cfg.PaperTrade {
-				log.Printf("%s 📋 PAPER TRADING MODE (test orders only)", prefix)
-			} else {
-				log.Printf("%s 🔴 LIVE ORDER MODE (real money)", prefix)
-			}
+			log.Printf("%s 🔴 LIVE ORDER MODE (real money)", prefix)
 			return oe
 		}
 
@@ -289,11 +363,7 @@ func NewOrderExecutor(cfg Config) *OrderExecutor {
 		oe.api = sc
 		oe.sessionOK = true
 
-		if cfg.PaperTrade {
-			log.Printf("%s ✅ SmartConnect session established — PAPER TRADING MODE (test orders only)", prefix)
-		} else {
-			log.Printf("%s ✅ SmartConnect session established — LIVE ORDER MODE", prefix)
-		}
+		log.Printf("%s ✅ SmartConnect session established — LIVE ORDER MODE", prefix)
 	} else {
 		log.Printf("%s 📋 Dry-run mode — orders will be logged but NOT placed", prefix)
 	}
@@ -369,10 +439,52 @@ func (oe *OrderExecutor) SetStrikePicker(picker *StrikePicker) {
 	log.Printf("%s 🎯 dynamic strike picker attached", oe.logPrefix())
 }
 
-// SetPnLTracker attaches a P&L tracker for profit cap checking.
+// SetPnLTracker attaches the P&L source for the daily max-loss gate on
+// real entries (Config.MaxDayLossPaise).
 func (oe *OrderExecutor) SetPnLTracker(tracker PnLTracker) {
+	oe.mu.Lock()
 	oe.pnlTracker = tracker
-	log.Printf("%s 💰 P&L tracker attached for profit cap monitoring", oe.logPrefix())
+	oe.mu.Unlock()
+	log.Printf("%s 💰 P&L tracker attached for daily max-loss gate", oe.logPrefix())
+}
+
+// IsRealStrategy reports whether a strategy is in the live allowlist. It
+// does not say a real order will be sent: that also needs LiveOrders and a
+// live session.
+func (oe *OrderExecutor) IsRealStrategy(name string) bool {
+	return oe.liveStrategies[name]
+}
+
+// realEntryQty is the quantity of a real entry: LiveLots lots of the
+// contract's lot size. It refuses rather than guesses: NFO rejects a
+// quantity that is not a whole number of lots, and one above the freeze
+// quantity would need slicing.
+func (oe *OrderExecutor) realEntryQty(symbol string) (int64, error) {
+	lot, err := oe.lotSizeOf(symbol)
+	if err != nil {
+		return 0, fmt.Errorf("lot size unknown for %s: %w", symbol, err)
+	}
+	if lot <= 0 {
+		return 0, fmt.Errorf("lot size %d for %s is not positive", lot, symbol)
+	}
+	qty := oe.cfg.LiveLots * lot
+	if qty > oe.cfg.FreezeQty {
+		return 0, fmt.Errorf("qty %d (%d lots × %d) exceeds freeze qty %d", qty, oe.cfg.LiveLots, lot, oe.cfg.FreezeQty)
+	}
+	return qty, nil
+}
+
+// dayLossBlocked reports whether a strategy's daily P&L has reached the
+// max-loss limit for new real entries.
+func (oe *OrderExecutor) dayLossBlocked(strategyName string) (int64, bool) {
+	oe.mu.RLock()
+	tracker := oe.pnlTracker
+	oe.mu.RUnlock()
+	if oe.cfg.MaxDayLossPaise <= 0 || tracker == nil {
+		return 0, false
+	}
+	pnl := tracker.GetStrategyDailyPnL(strategyName)
+	return pnl, pnl <= -oe.cfg.MaxDayLossPaise
 }
 
 // GetSmartConnect returns the internal SmartConnect client (e.g. for
@@ -494,12 +606,13 @@ func (oe *OrderExecutor) resolveInstrument(sig strategy.Signal, direction string
 // If the rate limit is exceeded, orders are rejected immediately.
 //
 // STRATEGY-SPECIFIC ORDER ROUTING:
-// - NIFTY50_FNO: Real orders (if LiveOrders=true AND daily profit < threshold)
-// - All other strategies: Paper trading only
+//   - Strategies in Config.LiveStrategies: real orders when LiveOrders=true
+//     and the broker session is live
+//   - All other strategies: paper trading only
 //
-// DAILY PROFIT CAP:
-// - If NIFTY50_FNO daily profit >= 10 points (1000 paise), switch to paper trading
-// - Resets at market open next day
+// Real entries also pass the daily max-loss gate, lot sizing, the rate
+// limiter and the circuit breaker. Exits pass none of these. The daily
+// profit cap lives in stratengine, before dispatch.
 func (oe *OrderExecutor) ExecuteSignal(sig strategy.Signal) {
 	prefix := oe.logPrefix()
 	defer oe.reportMetrics()
@@ -535,11 +648,11 @@ func (oe *OrderExecutor) ExecuteSignal(sig strategy.Signal) {
 	defer kl.Unlock()
 
 	// ── Routing ──
-	// Only NIFTY50_FNO places real entries. A real exit is sent only against
+	// Only allowlisted strategies place real entries. A real exit is sent only against
 	// a real tracked entry, so an exit for an entry that was never sent (kill
 	// switch, profit cap, paper) can never open a naked short.
 	live := oe.liveSession()
-	isRealOrderStrategy := sig.StrategyName == "NIFTY50_FNO"
+	isRealOrderStrategy := oe.IsRealStrategy(sig.StrategyName)
 	entry, hasEntry := oe.entry(posKey)
 	realEntry := hasEntry && entry.Real
 	sendReal := isRealOrderStrategy && live
@@ -614,9 +727,16 @@ func (oe *OrderExecutor) ExecuteSignal(sig strategy.Signal) {
 				prefix, direction, sig.StrategyName, fnoSymbol, oe.rl.Count())
 			return
 		}
-		if oe.cb.CurrentState() == circuitbreaker.StateOpen {
+		// Allow (not CurrentState) so an open breaker moves to half-open
+		// once its timeout passes and the next entry probes the broker.
+		if !oe.cb.Allow() {
 			log.Printf("%s 🔌 CIRCUIT OPEN: %s %s %s — broker unreachable, skipping order (failures=%d)",
 				prefix, direction, sig.StrategyName, fnoSymbol, oe.cb.Failures())
+			return
+		}
+		if pnl, blocked := oe.dayLossBlocked(sig.StrategyName); blocked {
+			oe.alertf("DAY LOSS LIMIT: %s daily P&L %d paise ≤ -%d — real BUY %s refused, exits still allowed",
+				sig.StrategyName, pnl, oe.cfg.MaxDayLossPaise, fnoSymbol)
 			return
 		}
 	}
@@ -632,6 +752,14 @@ func (oe *OrderExecutor) ExecuteSignal(sig strategy.Signal) {
 	qty := oe.cfg.Qty
 	if isExit && realEntry && entry.Quantity > 0 {
 		qty = entry.Quantity // sell what is held, not the configured size
+	}
+	if !isExit {
+		q, err := oe.realEntryQty(fnoSymbol)
+		if err != nil {
+			oe.alertf("real BUY %s %s refused: %v", sig.StrategyName, fnoSymbol, err)
+			return
+		}
+		qty = q
 	}
 	oe.executeReal(sig, posKey, direction, fnoToken, fnoSymbol, ltp, qty, idempotencyKey)
 }
@@ -757,6 +885,42 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 	prefix := oe.logPrefix()
 	isExit := direction == "SELL"
 
+	// ── Protective stop (exits) ──
+	// Cancel the resting stop and confirm it before selling, so the stop
+	// and this SELL can never both fill. A stop that already filled closed
+	// the position: nothing to sell.
+	if isExit && oe.stopMode() {
+		switch oe.cancelStopForExit(sig, posKey) {
+		case stopFilled:
+			return
+		case stopUnknown:
+			oe.scheduleExitRetry(sig)
+			return
+		}
+		if rec, ok := oe.entry(posKey); ok && rec.Quantity > 0 && rec.Quantity < qty {
+			qty = rec.Quantity
+		}
+	}
+
+	// ── Price ── (0 = MARKET). A chased BUY needs a price to start from;
+	// an exit without one goes out as MARKET.
+	limitPrice := oe.orderPrice(direction, fnoToken, ltp)
+	if limitPrice <= 0 && !isExit && oe.chaseMode() {
+		oe.alertf("real BUY %s %s refused: no price (LTP/quote) to build a LIMIT from", sig.StrategyName, fnoSymbol)
+		return
+	}
+	if !isExit {
+		est := limitPrice
+		if est <= 0 {
+			est = ltp
+		}
+		if need, have, short := oe.marginShort(est, qty); short {
+			oe.alertf("real BUY %s %s refused: needs ~%s with buffer, available margin %s",
+				sig.StrategyName, fnoSymbol, paiseToRupees(need), paiseToRupees(have))
+			return
+		}
+	}
+
 	// ── Intent ──
 	// Record what is about to be sent, and persist it, before the broker
 	// sees the order. A crash anywhere after placeOrder then restarts with
@@ -765,11 +929,15 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 	// executor does not know about.
 	if isExit {
 		oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = "tag:" + key })
+		oe.journalExitIntent(sig, posKey, fnoToken, fnoSymbol, qty, key)
 		if err := oe.persistIntentNow(); err != nil {
 			// Never block an exit: send it anyway.
 			log.Printf("%s ⚠️  exit intent for %s not persisted (%v) — sending anyway", prefix, posKey, err)
 		}
 	} else {
+		if !oe.journalEntryIntent(sig, posKey, fnoToken, fnoSymbol, qty, key) {
+			return
+		}
 		oe.storeEntry(sig, OrderRecord{
 			ClientOrderID: key,
 			Symbol:        fnoSymbol,
@@ -785,6 +953,7 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 		})
 		if err := oe.persistIntentNow(); err != nil {
 			oe.dropEntry(sig)
+			oe.ledgerApply(oms.Event{ClientOrderID: key, State: oms.StateAbsent, Reason: "not sent: snapshot persist failed"})
 			oe.alertf("BUY %s %s NOT sent: order intent could not be persisted (%v)", sig.StrategyName, fnoSymbol, err)
 			return
 		}
@@ -795,6 +964,7 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 	// a completed exit, not a failure.
 	var orderID string
 	var sellPositionFlat bool
+	var rejectErr error // broker refused the order on its merits
 	runCB := oe.cb.Execute
 	if isExit {
 		runCB = oe.cb.ExecuteAlways
@@ -803,7 +973,7 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 		attempt := orderAttempt{
 			tag: key,
 			place: func(tag string) (string, error) {
-				return oe.placeOrder(fnoSymbol, fnoToken, direction, ltp, qty, tag)
+				return oe.placeOrder(fnoSymbol, fnoToken, direction, limitPrice, qty, tag)
 			},
 			orderBook:    oe.readOrderBook,
 			refresh:      oe.RefreshSession,
@@ -821,8 +991,18 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 			return nil
 		}
 		log.Printf("%s ❌ ORDER FAILED: %s %s %s tag=%s — %v", prefix, direction, fnoSymbol, fnoToken, key, err)
+		if !isBrokerFault(err) {
+			// A rejection (margin, RMS, bad params) proves the broker is
+			// reachable: it must not count toward opening the breaker.
+			rejectErr = err
+			return nil
+		}
 		return err
 	})
+	if cbErr == nil && rejectErr != nil {
+		cbErr = rejectErr
+	}
+	oe.journalPlacement(key, orderID, cbErr, sellPositionFlat)
 
 	if cbErr != nil {
 		switch {
@@ -832,6 +1012,7 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 			log.Printf("%s 🔌 CIRCUIT OPEN during execution — order rejected", prefix)
 			if isExit {
 				oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = "" })
+				oe.rearmStop(posKey)
 				oe.scheduleExitRetry(sig)
 			} else {
 				oe.dropEntry(sig)
@@ -841,6 +1022,7 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 				prefix, oe.cb.Failures(), oe.cfg.CBMaxFailures, cbErr)
 			if isExit {
 				oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = "" })
+				oe.rearmStop(posKey)
 				oe.alertf("EXIT FAILED — %s position still OPEN at broker: %v", fnoSymbol, cbErr)
 				oe.scheduleExitRetry(sig)
 			} else {
@@ -858,9 +1040,11 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 		switch {
 		case perr != nil:
 			oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = "" })
+			oe.rearmStop(posKey)
 			oe.alertf("SELL %s rejected as flat but broker positions unreadable (%v) — %s kept OPEN with GTT protection; verify manually", fnoSymbol, perr, posKey)
 		case held != 0:
 			oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = "" })
+			oe.rearmStop(posKey)
 			oe.alertf("SELL %s rejected as flat but broker still holds %d — %s kept OPEN with GTT protection; close manually", fnoSymbol, held, posKey)
 		default:
 			// Closed at the exchange (GTT) at a price we don't know: book
@@ -874,7 +1058,10 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 	// ── Fill confirmation ──
 	// An accepted order is not a filled one: the broker can still reject it
 	// (e.g. margin). Use the real average price, not the signal-time LTP.
-	fill, ferr := confirmFill(oe.readOrderBook, orderID, defaultFillPollDelays)
+	fill, ferr := oe.awaitFill(orderID, direction, fnoSymbol, fnoToken, qty, limitPrice)
+	if ferr == nil {
+		oe.journalFill(key, orderID, fill, "fill-confirm")
+	}
 	if ferr == nil && fill.Rejected() && !isExit {
 		log.Printf("%s ❌ BUY %s AFTER ACCEPT: %s orderID=%s — %s",
 			prefix, strings.ToUpper(fill.Status), fnoSymbol, orderID, fill.Text)
@@ -922,7 +1109,7 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 		rec.Pending = true
 		oe.storeEntry(sig, rec)
 		log.Printf("%s ⚠️  BUY %s not confirmed filled yet (status=%q, err=%v) — pending, following in background", prefix, orderID, fill.Status, ferr)
-		oe.pollOrderAsync(posKey, "BUY "+orderID, matchByID(orderID), func(oid string, f fillResult) {
+		oe.pollOrderAsync(posKey, "BUY "+orderID, orderID, matchByID(orderID), func(oid string, f fillResult) {
 			oe.onBuySettled(sig, oid, f)
 		}, nil)
 		return
@@ -944,7 +1131,7 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 	log.Printf("%s ⏳ SELL %s not confirmed filled (status=%q, err=%v) — position kept open with GTT protection, following in background",
 		prefix, orderID, fill.Status, ferr)
 	oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = orderID })
-	oe.pollOrderAsync(posKey, "SELL "+orderID, matchByID(orderID), func(_ string, f fillResult) {
+	oe.pollOrderAsync(posKey, "SELL "+orderID, orderID, matchByID(orderID), func(_ string, f fillResult) {
 		oe.applyExitResult(sig, orderID, f)
 	}, nil)
 }
@@ -974,72 +1161,72 @@ func (oe *OrderExecutor) settleUnknown(sig strategy.Signal, posKey, direction, f
 			StrategyName:  sig.StrategyName,
 			PositionSide:  string(sig.Side),
 		})
-		oe.pollOrderAsync(posKey, "unknown BUY "+key, match, func(orderID string, f fillResult) {
+		oe.pollOrderAsync(posKey, "unknown BUY "+key, "", match, func(orderID string, f fillResult) {
 			log.Printf("%s unknown BUY %s settled: orderID=%s status=%s", prefix, key, orderID, f.Status)
 			oe.onBuySettled(sig, orderID, f)
 		}, func() {
 			log.Printf("%s ✅ unknown BUY %s settled: never reached broker — clearing", prefix, key)
+			oe.ledgerApply(oms.Event{ClientOrderID: key, State: oms.StateAbsent, Reason: "not in order book", Source: "poll"})
 			oe.dropEntry(sig)
 		})
 		return
 	}
 
 	oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = "tag:" + key })
-	oe.pollOrderAsync(posKey, "unknown SELL "+key, match, func(orderID string, f fillResult) {
+	oe.pollOrderAsync(posKey, "unknown SELL "+key, "", match, func(orderID string, f fillResult) {
 		log.Printf("%s unknown SELL %s settled: orderID=%s status=%s", prefix, key, orderID, f.Status)
 		oe.applyExitResult(sig, orderID, f)
 	}, func() {
+		oe.ledgerApply(oms.Event{ClientOrderID: key, State: oms.StateAbsent, Reason: "not in order book", Source: "poll"})
 		oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = "" })
+		oe.rearmStop(posKey)
 		oe.alertf("unknown SELL %s never reached broker — %s position still OPEN, close manually", key, fnoSymbol)
 	})
 }
 
-// placeOrder builds and sends the order request.
-func (oe *OrderExecutor) placeOrder(fnoSymbol, fnoToken, direction string, ltp, qty int64, tag string) (string, error) {
-	params := oe.buildOrderParams(fnoSymbol, fnoToken, direction, ltp, qty, tag)
+// placeOrder builds and sends the order request. price > 0 sends a LIMIT
+// at that price; 0 sends MARKET.
+func (oe *OrderExecutor) placeOrder(fnoSymbol, fnoToken, direction string, price, qty int64, tag string) (string, error) {
+	params := oe.buildOrderParams(fnoSymbol, fnoToken, direction, price, qty, tag)
 
-	// Use paper trading method if enabled
 	api := oe.brokerAPI()
 	if api == nil {
-		return "", fmt.Errorf("no broker session")
+		return "", errNoSession
 	}
-	if oe.cfg.PaperTrade {
-		log.Printf("%s 📋 Placing PAPER TRADE order: %s %s", oe.logPrefix(), direction, fnoSymbol)
-		return api.PlaceOrderPaperTrade(params)
-	}
-
 	return api.PlaceOrder(params)
 }
 
-// buildOrderParams builds the Angel One placeOrder payload. tag is sent as
-// ordertag so the order can be found in the order book if the placement
-// response is lost.
-func (oe *OrderExecutor) buildOrderParams(fnoSymbol, fnoToken, direction string, ltp, qty int64, tag string) map[string]any {
+// buildOrderParams builds the Angel One placeOrder payload: a LIMIT at
+// price when price > 0, else MARKET. tag is sent as ordertag so the order
+// can be found in the order book if the placement response is lost.
+func (oe *OrderExecutor) buildOrderParams(fnoSymbol, fnoToken, direction string, price, qty int64, tag string) map[string]any {
+	orderType := "MARKET"
+	if price > 0 {
+		orderType = "LIMIT"
+	}
 	params := map[string]any{
 		"variety":         "NORMAL",
 		"tradingsymbol":   fnoSymbol,
 		"symboltoken":     fnoToken,
 		"transactiontype": direction,
 		"exchange":        oe.cfg.FNOExchange,
-		"ordertype":       oe.cfg.FNOOrderType,
+		"ordertype":       orderType,
 		"producttype":     oe.cfg.FNOProductType,
 		"duration":        "DAY",
 		"quantity":        fmt.Sprintf("%d", qty),
 		"ordertag":        tag,
 	}
 
-	// For LIMIT orders, set the price (rupees string, tick-aligned, no float)
-	if strings.EqualFold(oe.cfg.FNOOrderType, "LIMIT") && ltp > 0 {
-		params["price"] = paiseToRupees(floorTick(ltp, oe.tickPaise()))
+	if price > 0 {
+		params["price"] = paiseToRupees(price) // rupees string, tick-aligned, no float
 	}
 	return params
 }
 
-// placeTargetGTT places a GTT SELL rule at 1.5% above the entry price.
-// This lets the exchange auto-sell when the target is hit, with zero system dependency.
-// gttTargetPaise is the GTT target at +1.5% of entry, floored to the tick.
-func gttTargetPaise(entryPaise, tickPaise int64) int64 {
-	return floorTick(entryPaise*1015/1000, tickPaise)
+// gttTargetPaise is the GTT target bps basis points above entry, floored
+// to the tick.
+func gttTargetPaise(entryPaise, bps, tickPaise int64) int64 {
+	return floorTick(entryPaise*(10000+bps)/10000, tickPaise)
 }
 
 // gttStopLossPaise is the GTT stop trigger (entry − sl, raised to the tick
@@ -1077,13 +1264,18 @@ func (oe *OrderExecutor) tickPaise() int64 {
 	return 5 // NSE F&O options tick
 }
 
+// placeTargetGTT places a GTT SELL rule GTTTargetBps above the entry
+// price, or nothing when GTTTargetBps is 0.
 func (oe *OrderExecutor) placeTargetGTT(posKey, fnoSymbol, fnoToken string, entryPricePaise, qty int64) string {
+	if oe.cfg.GTTTargetBps <= 0 {
+		return ""
+	}
 	api := oe.brokerAPI()
 	if api == nil || entryPricePaise <= 0 {
 		oe.alertf("GTT TARGET not placed for %s: entry price unknown (%d) — position has no exchange-side target", posKey, entryPricePaise)
 		return ""
 	}
-	targetPriceRupees := paiseToRupees(gttTargetPaise(entryPricePaise, oe.tickPaise()))
+	targetPriceRupees := paiseToRupees(gttTargetPaise(entryPricePaise, oe.cfg.GTTTargetBps, oe.tickPaise()))
 	params := map[string]any{
 		"tradingsymbol":   fnoSymbol,
 		"symboltoken":     fnoToken,
@@ -1100,8 +1292,8 @@ func (oe *OrderExecutor) placeTargetGTT(posKey, fnoSymbol, fnoToken string, entr
 		oe.alertf("GTT TARGET failed for %s: %v — position has no exchange-side target", posKey, err)
 		return ""
 	}
-	log.Printf("%s 🎯 GTT TARGET placed: %s SELL %d @ %s (1.5%% over entry %s) gttID=%s",
-		oe.logPrefix(), fnoSymbol, qty, targetPriceRupees, paiseToRupees(entryPricePaise), gttID)
+	log.Printf("%s 🎯 GTT TARGET placed: %s SELL %d @ %s (%d bps over entry %s) gttID=%s",
+		oe.logPrefix(), fnoSymbol, qty, targetPriceRupees, oe.cfg.GTTTargetBps, paiseToRupees(entryPricePaise), gttID)
 	return gttID
 }
 
@@ -1237,11 +1429,17 @@ func isPositionFlatError(err error) bool {
 	return false
 }
 
-// generateIdempotencyKey creates a unique key for an order signal
-// based on strategy name, side, action, and current timestamp.
-// Used for audit trail and duplicate detection.
+// generateIdempotencyKey creates the order key, sent as ordertag. An entry
+// with a market timestamp gets a deterministic key (strategy, side,
+// action, token, SignalTS), so the same signal replayed maps to the same
+// claimed intent and is refused. Everything else — exits, retries,
+// signals without SignalTS — gets a unique key from the current time:
+// exits are never refused, so they must never collide with an earlier one.
 func generateIdempotencyKey(sig strategy.Signal) string {
-	data := fmt.Sprintf("%s:%s:%s:%d", sig.StrategyName, sig.Side, sig.Action, time.Now().UnixMilli())
+	data := fmt.Sprintf("%s:%s:%s:%d", sig.StrategyName, sig.Side, sig.Action, time.Now().UnixNano())
+	if sig.Action == strategy.ActionBuy && !sig.SignalTS.IsZero() {
+		data = fmt.Sprintf("%s:%s:%s:%s:%d", sig.StrategyName, sig.Side, sig.Action, sig.Token, sig.SignalTS.UnixNano())
+	}
 	hash := sha256.Sum256([]byte(data))
 	return fmt.Sprintf("%x", hash[:8]) // 16-char hex prefix
 }

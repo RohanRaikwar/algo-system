@@ -82,6 +82,8 @@ type Service struct {
 
 	// Session manager for health monitoring
 	sessionManager *smartconnect.SessionManager
+	// orderWS is the order-status socket state for the Health page.
+	orderWS orderWSStats
 
 	streams    []string
 	tfCandleCh chan model.TFCandle
@@ -94,6 +96,9 @@ type Service struct {
 
 	// Dashboard kill switch (cmd:config_update); see killSwitchActive.
 	uiKillSwitch atomic.Bool
+	// reconcileHalt blocks new entries while broker positions disagree
+	// with the executor in a way it must not fix itself.
+	reconcileHalt atomic.Bool
 
 	// snapshotMu serialises saveSnapshot (periodic loop + after each order)
 	// so an older snapshot can never overwrite a newer one in Redis.
@@ -225,8 +230,7 @@ func New(cfg Config) (*Service, error) {
 
 	svc.tfEngine = strategy.NewTFEngine(1000)
 
-	// NIFTY50_SR is paper-only (the executor's real-order gate is
-	// NIFTY50_FNO alone).
+	// NIFTY50_SR is paper unless STRAT_LIVE_STRATEGIES names it.
 	registered := 0
 	if cfg.SREnabled {
 		svc.tfEngine.Register(svc.srStrategy)
@@ -264,7 +268,19 @@ func New(cfg Config) (*Service, error) {
 		FNOExchange:      cfg.FNOExchange,
 		FNOOrderType:     cfg.FNOOrderType,
 		FNOProductType:   cfg.FNOProductType,
-		FNOStopLossPaise: 1000, // ₹10 below entry premium, GTT stop on real orders
+		FNOStopLossPaise: cfg.GTTStopLossPaise,
+		GTTTargetBps:     cfg.GTTTargetBps,
+		LiveStrategies:   cfg.LiveStrategies,
+		LiveLots:         cfg.LiveLots,
+		FreezeQty:        cfg.FreezeQty,
+		MaxDayLossPaise:  cfg.LiveMaxDayLossPaise,
+		RequireJournal:   cfg.LiveOrders,
+		ProtectionMode:   cfg.ProtectionMode,
+		ExecMode:         cfg.ExecMode,
+		ChaseTicks:       cfg.ChaseTicks,
+		ChaseReprices:    cfg.ChaseReprices,
+		ChaseMaxBps:      cfg.ChaseMaxBps,
+		MarginBufferPct:  cfg.MarginBufferPct,
 		AngelAPIKey:      cfg.AngelAPIKey,
 		AngelClientID:    cfg.AngelClientID,
 		AngelPassword:    cfg.AngelPassword,
@@ -276,8 +292,9 @@ func New(cfg Config) (*Service, error) {
 		PaperSlippageMinPaise: cfg.PaperSlippageMinPaise,
 	})
 
-	// Attach P&L tracker for profit cap monitoring
+	// P&L source for the executor's daily max-loss gate on real entries.
 	svc.orderExecutor.SetPnLTracker(svc.pnlTracker)
+	svc.attachOrderJournal()
 
 	// ── Global option picker (off | shadow | on) ──
 	svc.picker = svc.newPicker()
@@ -312,6 +329,7 @@ func (svc *Service) Run(ctx context.Context) error {
 	// ── Dashboard kill switch + broker position reconciliation ──
 	go svc.configUpdateLoop(ctx)
 	go svc.positionReconcileLoop(ctx)
+	svc.startOrderStream(ctx)
 
 	// ── Re-subscribe the picker universe + strike ladder on market open
 	// (mdengine (re)connect), not only at midnight ──
@@ -731,9 +749,9 @@ func (svc *Service) signalLoop(ctx context.Context) {
 				orderMode := "PAPER"
 				profitCapHit := false
 				liveMode := false
-				if sig.StrategyName == "NIFTY50_FNO" && svc.cfg.LiveOrders {
+				if svc.orderExecutor.IsRealStrategy(sig.StrategyName) && svc.cfg.LiveOrders {
 					// Check profit cap BEFORE this trade
-					dailyPnL := svc.pnlTracker.GetStrategyDailyPnL("NIFTY50_FNO")
+					dailyPnL := svc.pnlTracker.GetStrategyDailyPnL(sig.StrategyName)
 					// 10 points profit cap for 65 qty = 65 × 10 × 100 paise = 65,000 paise
 					const profitCapPaise int64 = 65000 // 65 qty × 10 points = ₹650.00
 
@@ -832,6 +850,8 @@ func (svc *Service) signalLoop(ctx context.Context) {
 					"warnings":          sig.Warnings,
 					"fno_token":         rec.FNOToken,
 					"fno_symbol":        rec.FNOSymbol,
+					"pick":              sig.Pick,
+					"pick_alt":          sig.PickAlt,
 					"order_mode":        orderMode,
 					"profit_cap_hit":    profitCapHit,
 					"ts":                now.UTC().Format(time.RFC3339Nano),

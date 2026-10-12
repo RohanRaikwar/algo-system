@@ -74,7 +74,19 @@ export interface OrderSnapshot {
     cb_failures: number;
     rl_count: number;
     rl_max: number;
+    /** Broker order-status socket; absent from older stratengine builds. */
+    order_ws?: OrderWSSnapshot;
     updated_at: string;
+}
+
+/** Angel One order-status socket, as seen by stratengine. */
+export interface OrderWSSnapshot {
+    status: 'off' | 'paper' | 'connecting' | 'up' | 'down';
+    since: string;        // last status change (RFC3339), '' if never
+    reconnects: number;   // connects after the first
+    pushes: number;       // order updates received
+    last_push_at: string; // '' if none yet
+    last_error: string;   // error that ended the last failed session
 }
 
 export interface ServiceHealth {

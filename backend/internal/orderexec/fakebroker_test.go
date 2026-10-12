@@ -14,8 +14,8 @@ import (
 type fakeAPI struct {
 	mu        sync.Mutex
 	placed    []map[string]any
-	placeErr  []error         // per call; nil = accepted
-	placeGate chan struct{}   // if set, PlaceOrder blocks until closed
+	placeErr  []error          // per call; nil = accepted
+	placeGate chan struct{}    // if set, PlaceOrder blocks until closed
 	rows      []map[string]any // order book rows
 	bookErr   error
 	gttNext   int
@@ -32,6 +32,19 @@ type fakeAPI struct {
 
 	cancelErr   []error // per GTTCancelRule call; nil = success
 	cancelCalls int
+
+	orderCancels     []string // CancelOrder calls (order ids)
+	cancelOrderErr   error    // CancelOrder transport error
+	cancelLeavesOpen bool     // CancelOrder accepted but the row stays open
+	modified         []map[string]any
+	seq              []string // place/cancel calls in order
+
+	fillAfterModifies int // a resting order fills (at its price) on this many re-prices; 0 = never
+
+	bookReads int // OrderBook calls
+
+	rmsNet string // RMSLimit "net" in rupees
+	rmsErr error
 }
 
 func (f *fakeAPI) PlaceOrder(p map[string]any) (string, error) {
@@ -42,10 +55,16 @@ func (f *fakeAPI) PlaceOrder(p map[string]any) (string, error) {
 	defer f.mu.Unlock()
 	i := len(f.placed)
 	f.placed = append(f.placed, p)
+	f.seq = append(f.seq, fmt.Sprintf("place:%v:%v", p["variety"], p["transactiontype"]))
 	if i < len(f.placeErr) && f.placeErr[i] != nil {
 		return "", f.placeErr[i]
 	}
 	id := fmt.Sprintf("OID-%d", i+1)
+	if p["variety"] == stopVariety {
+		// A protective stop rests until triggered or cancelled.
+		f.rows = append(f.rows, map[string]any{"orderid": id, "ordertag": p["ordertag"], "orderstatus": "trigger pending"})
+		return id, nil
+	}
 	if f.autoStatus != "" {
 		row := map[string]any{"orderid": id, "ordertag": p["ordertag"], "orderstatus": f.autoStatus, "averageprice": f.autoAvg}
 		if f.autoFilled != "" {
@@ -56,11 +75,10 @@ func (f *fakeAPI) PlaceOrder(p map[string]any) (string, error) {
 	return id, nil
 }
 
-func (f *fakeAPI) PlaceOrderPaperTrade(p map[string]any) (string, error) { return f.PlaceOrder(p) }
-
 func (f *fakeAPI) OrderBook() (map[string]any, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.bookReads++
 	if f.bookErr != nil {
 		return nil, f.bookErr
 	}
@@ -107,6 +125,96 @@ func (f *fakeAPI) GTTCancelRule(p map[string]any) (map[string]any, error) {
 	}
 	f.gttCancel = append(f.gttCancel, fmt.Sprint(p["id"]))
 	return map[string]any{"status": true}, nil
+}
+
+// CancelOrder cancels a resting order: an order already complete,
+// cancelled or rejected refuses, like Angel One.
+func (f *fakeAPI) CancelOrder(orderID, variety string) (map[string]any, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.orderCancels = append(f.orderCancels, orderID)
+	f.seq = append(f.seq, "cancel:"+orderID)
+	if f.cancelOrderErr != nil {
+		return nil, f.cancelOrderErr
+	}
+	for i, r := range f.rows {
+		if r["orderid"] != orderID {
+			continue
+		}
+		switch r["orderstatus"] {
+		case "complete", "cancelled", "rejected":
+			return map[string]any{"status": false, "message": "order already " + fmt.Sprint(r["orderstatus"])}, nil
+		}
+		if !f.cancelLeavesOpen {
+			cp := map[string]any{}
+			for k, v := range r {
+				cp[k] = v
+			}
+			cp["orderstatus"] = "cancelled"
+			f.rows[i] = cp
+		}
+		return map[string]any{"status": true}, nil
+	}
+	return map[string]any{"status": false, "message": "order not found"}, nil
+}
+
+func (f *fakeAPI) ModifyOrder(p map[string]any) (map[string]any, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.modified = append(f.modified, p)
+	f.seq = append(f.seq, fmt.Sprintf("modify:%v:%v", p["ordertype"], p["price"]))
+	for i, r := range f.rows {
+		if r["orderid"] != p["orderid"] {
+			continue
+		}
+		switch r["orderstatus"] {
+		case "complete", "cancelled", "rejected":
+			return map[string]any{"status": false, "message": "order already " + fmt.Sprint(r["orderstatus"])}, nil
+		}
+		cp := map[string]any{}
+		for k, v := range r {
+			cp[k] = v
+		}
+		cp["modifies"], _ = cp["modifies"].(int)
+		cp["modifies"] = cp["modifies"].(int) + 1
+		switch {
+		case p["ordertype"] == "MARKET":
+			cp["orderstatus"], cp["averageprice"] = "complete", f.autoAvg
+		case f.fillAfterModifies > 0 && cp["modifies"].(int) >= f.fillAfterModifies:
+			cp["orderstatus"], cp["averageprice"] = "complete", p["price"]
+		}
+		f.rows[i] = cp
+		return map[string]any{"status": true}, nil
+	}
+	return map[string]any{"status": false, "message": "order not found"}, nil
+}
+
+func (f *fakeAPI) RMSLimit() (map[string]any, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.rmsErr != nil {
+		return nil, f.rmsErr
+	}
+	return map[string]any{"status": true, "data": map[string]any{"net": f.rmsNet}}, nil
+}
+
+func (f *fakeAPI) modifies() []map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]map[string]any(nil), f.modified...)
+}
+
+// placedStops returns the protective stop orders placed so far.
+func (f *fakeAPI) placedStops() []map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []map[string]any
+	for _, p := range f.placed {
+		if p["variety"] == stopVariety {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // setRow upserts an order-book row by orderid.
@@ -165,10 +273,13 @@ func liveExecutor(t *testing.T, fake *fakeAPI) *OrderExecutor {
 		FNOOrderType:     "MARKET",
 		FNOProductType:   "INTRADAY",
 		FNOStopLossPaise: 1000,
+		GTTTargetBps:     150,
+		LiveStrategies:   []string{"NIFTY50_FNO"},
 		LogPrefix:        "[test]",
 		RLMaxOrders:      100,
 		RLWindow:         time.Minute,
 	})
+	oe.lotSizeOf = func(string) (int64, error) { return 75, nil }
 	oe.mu.Lock()
 	oe.api = fake
 	oe.live = true

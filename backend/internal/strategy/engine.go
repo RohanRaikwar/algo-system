@@ -43,6 +43,12 @@ type Signal struct {
 	Strike    int64     `json:"strike,omitempty"`     // strike in index points
 	Short     bool      `json:"short,omitempty"`      // leg is sold to open
 
+	// Pick names the picker that chose the traded contract: "old"
+	// (pickSRStrike path) or "new" (optionpicker). PickAlt is the other
+	// picker's contract when it differs (shadow mode). Display only.
+	Pick    string `json:"pick,omitempty"`
+	PickAlt string `json:"pick_alt,omitempty"`
+
 	// TargetMove is the index move (paise) from entry to target, so the
 	// engine can check the expected option gain covers trading costs.
 	TargetMove int64 `json:"target_move,omitempty"`
@@ -50,6 +56,13 @@ type Signal struct {
 	// SameDayExpiry asks for today's expiry contract (gamma blast); every
 	// other strategy trades the nearest expiry after today.
 	SameDayExpiry bool `json:"same_day_expiry,omitempty"`
+
+	// SignalTS is the market time of the data that produced the signal:
+	// the close of the candle, or the tick's canonical time. The engine
+	// stamps it; it makes a real entry's order identity deterministic, so
+	// a replayed signal is recognised instead of sent twice. Zero when
+	// unknown (injected signals).
+	SignalTS time.Time `json:"signal_ts,omitempty"`
 }
 
 // LegSpec is one option leg of a basket signal.
@@ -263,8 +276,12 @@ func (e *TFEngine) Run(ctx context.Context, tfCandleCh <-chan model.TFCandle) {
 			}
 
 			var batch []Signal
+			closeTS := tfc.TS.Add(time.Duration(tfc.TF) * time.Second)
 			for _, s := range e.strategies {
 				if sig := s.OnTFCandle(tfc); sig != nil {
+					if sig.SignalTS.IsZero() {
+						sig.SignalTS = closeTS
+					}
 					batch = append(batch, *sig)
 				}
 			}
@@ -292,6 +309,9 @@ func (e *TFEngine) RunTicks(ctx context.Context, tickCh <-chan model.Tick) {
 			var batch []Signal
 			for _, s := range e.strategies {
 				if sig := s.OnTick(tick); sig != nil {
+					if sig.SignalTS.IsZero() {
+						sig.SignalTS = tick.CanonicalTS()
+					}
 					batch = append(batch, *sig)
 				}
 			}

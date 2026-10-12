@@ -12,7 +12,7 @@ import (
 // Partial fill then cancel: the filled part is a live position.
 func TestFillResult_CancelledWithFillsIsNotRejected(t *testing.T) {
 	book := bookWith(map[string]any{"orderid": "O1", "orderstatus": "cancelled", "filledshares": "25", "averageprice": 100.0})
-	f, err := confirmFill(func() (map[string]any, error) { return book, nil }, "O1", []time.Duration{0})
+	f, err := confirmFill(func() (map[string]any, error) { return book, nil }, nil, "O1", []time.Duration{0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestRealBuy_PartialFillThenCancel_TracksFilledQty(t *testing.T) {
 }
 
 func TestGTTPrices_RoundedToTick(t *testing.T) {
-	if got := gttTargetPaise(10003, 5); got != 10150 { // 10003*1.015=10153.04 → floor to 5 → 10150
+	if got := gttTargetPaise(10003, 150, 5); got != 10150 { // 10003*1.015=10153.04 → floor to 5 → 10150
 		t.Fatalf("target %d, want 10150", got)
 	}
 	trig, lim := gttStopLossPaise(10003, 1000, 5)

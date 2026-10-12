@@ -119,6 +119,17 @@ func (e *Engine) strikePnL(t *Trade, strike int64) int64 {
 	return out - in
 }
 
+// defaultPickHoldMinutes matches the live STRAT_PICK_HOLD_MIN default:
+// trades are held 1–5h, mostly 3–4h.
+const defaultPickHoldMinutes = 240
+
+func (e *Engine) pickHoldMinutes() float64 {
+	if e.cfg.PickHoldMinutes > 0 {
+		return e.cfg.PickHoldMinutes
+	}
+	return defaultPickHoldMinutes
+}
+
 // pickStrike runs the live option picker on a modeled chain at entry.
 // On refusal it returns the rule that dropped the most candidates.
 func (e *Engine) pickStrike(t *Trade, rank string) (int64, string, bool) {
@@ -150,7 +161,7 @@ func (e *Engine) pickStrike(t *Trade, rank string) (int64, string, bool) {
 	in := optionpicker.SingleIntent{Strategy: e.cfg.StrategyType, Option: opt, DeltaMin: lo, DeltaMax: hi, MinDTE: 1,
 		TargetMove: t.TargetMove, ThetaMaxGainPct: thetaGain, MaxGamma: maxGamma}
 	rules := optionpicker.Rules{MaxSpreadPct: 2, MaxQuoteAge: time.Minute, MaxChainAge: time.Minute, GammaDTE: 1,
-		MaxBuyIV: 25, CostMultiple: 3, RatePct: m.RatePct, Rank: rank, HoldMinutes: 60}
+		MaxBuyIV: 25, CostMultiple: 3, RatePct: m.RatePct, Rank: rank, HoldMinutes: e.pickHoldMinutes()}
 	env := optionpicker.Env{Spot: t.EntryPrice, Now: t.EntryTime, ChainAt: t.EntryTime,
 		Quote: func(tok string) (optionpicker.Quote, bool) { q, ok := quotes[tok]; return q, ok }}
 	p, rej, err := optionpicker.SelectSingle(chain, in, rules, env)

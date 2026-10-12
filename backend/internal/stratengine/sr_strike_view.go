@@ -80,6 +80,8 @@ type pickerPickView struct {
 	Expiry    string   `json:"expiry"` // YYYY-MM-DD
 	DTE       int      `json:"dte"`
 	Delta     float64  `json:"delta"`
+	Gamma     float64  `json:"gamma"`
+	Theta     float64  `json:"theta"` // rupees per calendar day
 	IV        float64  `json:"iv"`
 	Bid       float64  `json:"bid"`
 	Ask       float64  `json:"ask"`
@@ -104,7 +106,7 @@ func newPickerView(side *srSideView, p optionpicker.Pick, rej optionpicker.Rejec
 	v := &pickerPickView{
 		Strike: p.Strike, Option: p.Option, Symbol: p.Symbol, Token: p.Token,
 		Expiry: dayStart(p.Expiry).Format("2006-01-02"), DTE: p.DTE,
-		Delta: p.Delta, IV: p.IV, Bid: float64(q.Bid) / 100, Ask: float64(q.Ask) / 100, Mid: float64(q.Mid()) / 100,
+		Delta: p.Delta, Gamma: p.Gamma, Theta: p.Theta, IV: p.IV, Bid: float64(q.Bid) / 100, Ask: float64(q.Ask) / 100, Mid: float64(q.Mid()) / 100,
 		QuoteAgeS: now.Sub(q.At).Seconds(), Score: p.Score, Liquidity: p.Liquidity, Waived: p.Waived,
 	}
 	if m := q.Mid(); m > 0 {

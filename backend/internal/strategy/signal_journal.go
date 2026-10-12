@@ -63,6 +63,8 @@ func NewSignalJournal(dbPath string) (*SignalJournal, error) {
 	db.Exec(`ALTER TABLE signals ADD COLUMN profit_cap INTEGER DEFAULT 0`)
 	db.Exec(`ALTER TABLE signals ADD COLUMN fno_token TEXT NOT NULL DEFAULT ''`)
 	db.Exec(`ALTER TABLE signals ADD COLUMN fno_symbol TEXT NOT NULL DEFAULT ''`)
+	db.Exec(`ALTER TABLE signals ADD COLUMN pick TEXT NOT NULL DEFAULT ''`)
+	db.Exec(`ALTER TABLE signals ADD COLUMN pick_alt TEXT NOT NULL DEFAULT ''`)
 
 	log.Printf("[signal_journal] opened at %s", dbPath)
 	return &SignalJournal{db: db}, nil
@@ -85,6 +87,8 @@ type SignalRecord struct {
 	ProfitCap   bool   `json:"profit_cap"`
 	FNOToken    string `json:"fno_token,omitempty"`  // traded option token
 	FNOSymbol   string `json:"fno_symbol,omitempty"` // traded option, e.g. NIFTY06OCT2622500PE
+	Pick        string `json:"pick,omitempty"`       // "old" / "new": picker that chose the contract (entries)
+	PickAlt     string `json:"pick_alt,omitempty"`   // other picker's contract when it differed
 	CandleTS    string `json:"candle_ts"`
 	CreatedAt   string `json:"created_at"`
 }
@@ -124,8 +128,8 @@ func (j *SignalJournal) Record(sig Signal, candleTS time.Time, emas *EMASnapshot
 	}
 
 	_, err := j.db.Exec(
-		`INSERT OR IGNORE INTO signals (strategy, action, side, market_state, token, exchange, reason, ema_values, price, qty, live_mode, profit_cap, fno_token, fno_symbol, candle_ts)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT OR IGNORE INTO signals (strategy, action, side, market_state, token, exchange, reason, ema_values, price, qty, live_mode, profit_cap, fno_token, fno_symbol, pick, pick_alt, candle_ts)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sig.StrategyName,
 		string(sig.Action),
 		string(sig.Side),
@@ -140,6 +144,8 @@ func (j *SignalJournal) Record(sig Signal, candleTS time.Time, emas *EMASnapshot
 		profitCapInt,
 		sig.FNOToken,
 		sig.FNOSymbol,
+		sig.Pick,
+		sig.PickAlt,
 		candleTS.Format(time.RFC3339),
 	)
 	return err
@@ -156,6 +162,7 @@ func (j *SignalJournal) GetSignals(limit int) ([]SignalRecord, error) {
 		        COALESCE(live_mode,0),
 		        COALESCE(profit_cap,0),
 		        COALESCE(fno_token,''), COALESCE(fno_symbol,''),
+		        COALESCE(pick,''), COALESCE(pick_alt,''),
 		        candle_ts, created_at
 		 FROM signals ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
@@ -168,7 +175,7 @@ func (j *SignalJournal) GetSignals(limit int) ([]SignalRecord, error) {
 		var r SignalRecord
 		var liveModeInt, profitCapInt int
 		if err := rows.Scan(&r.ID, &r.Strategy, &r.Action, &r.Side, &r.MarketState, &r.Token, &r.Exchange,
-			&r.Reason, &r.EMAValues, &r.Price, &r.Qty, &liveModeInt, &profitCapInt, &r.FNOToken, &r.FNOSymbol, &r.CandleTS, &r.CreatedAt); err != nil {
+			&r.Reason, &r.EMAValues, &r.Price, &r.Qty, &liveModeInt, &profitCapInt, &r.FNOToken, &r.FNOSymbol, &r.Pick, &r.PickAlt, &r.CandleTS, &r.CreatedAt); err != nil {
 			continue
 		}
 		r.LiveMode = liveModeInt == 1
