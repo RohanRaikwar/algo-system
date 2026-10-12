@@ -852,13 +852,42 @@ func medianFloat(values []float64) float64 {
 	return (cp[mid-1] + cp[mid]) / 2
 }
 
+// automationExpiries returns the two nearest expiries for the greeks chain.
+// It uses the instrument master's listed expiries, so a holiday-shifted week
+// (e.g. Mon 19 Oct 2026 for the Tue 20 Oct holiday) is fetched as listed;
+// without them it falls back to the weekly-Tuesday rule. Today's expiry
+// counts until 15:30, as in nextWeeklyExpiryDay.
 func (sp *StrikePicker) automationExpiries(entryTime time.Time) []time.Time {
+	if listed := sp.upcomingListedExpiries(entryTime); len(listed) >= 2 {
+		return listed[:2]
+	}
 	current := sp.nextWeeklyExpiryDay(entryTime)
 	next := current.AddDate(0, 0, 7)
 	if sameExpiryDay(current, next) {
 		return []time.Time{current}
 	}
 	return []time.Time{current, next}
+}
+
+// upcomingListedExpiries returns the listed NIFTY option expiries that are
+// not over at now (today's ends at 15:30 IST).
+func (sp *StrikePicker) upcomingListedExpiries(now time.Time) []time.Time {
+	src := sp.listedExpiries
+	if src == nil {
+		src = func(from time.Time) []time.Time { return GetInstrumentMaster().OptionExpiries("NIFTY", from) }
+	}
+	now = now.In(istZone)
+	closed := now.Hour() > 15 || (now.Hour() == 15 && now.Minute() >= 30)
+	today := normalizeExpiryDay(now)
+	var out []time.Time
+	for _, e := range src(now) {
+		e = normalizeExpiryDay(e)
+		if e.Before(today) || (e.Equal(today) && closed) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 func (sp *StrikePicker) nextWeeklyExpiryDay(now time.Time) time.Time {

@@ -56,6 +56,9 @@ type StrikePicker struct {
 	legCache map[string]StrikeInfo
 	expiry   time.Time
 	lookup   func(symbol string) (token string, lotSize int64, err error) // test hook
+	// listedExpiries returns real NIFTY option expiries on or after a day
+	// (instrument master); nil = InstrumentMaster().OptionExpiries. Test hook.
+	listedExpiries func(from time.Time) []time.Time
 }
 
 // NewStrikePicker creates a new picker that uses the given SmartConnect client.
