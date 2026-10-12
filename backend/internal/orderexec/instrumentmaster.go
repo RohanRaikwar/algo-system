@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -529,6 +530,36 @@ func (im *InstrumentMaster) SymbolForToken(exchSeg, token string) string {
 		return inst.Symbol
 	}
 	return ""
+}
+
+// OptionExpiries returns the distinct expiry dates (IST midnight, sorted) of
+// the NFO options on name (e.g. "NIFTY") on or after from's IST date, or nil
+// when the master is not loaded. These are the real listed expiries, so a
+// holiday-shifted week (Tue 20 Oct 2026 → Mon 19 Oct) is reported as listed.
+func (im *InstrumentMaster) OptionExpiries(name string, from time.Time) []time.Time {
+	im.mu.RLock()
+	defer im.mu.RUnlock()
+	if !im.loaded {
+		return nil
+	}
+	from = from.In(istZone)
+	day := time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, istZone)
+	seen := make(map[string]bool)
+	var out []time.Time
+	for _, inst := range im.instruments {
+		if inst.Name != name || inst.ExchSeg != "NFO" || seen[inst.Expiry] ||
+			!(strings.HasSuffix(inst.Symbol, "CE") || strings.HasSuffix(inst.Symbol, "PE")) {
+			continue
+		}
+		seen[inst.Expiry] = true
+		exp, err := time.ParseInLocation("02Jan2006", inst.Expiry, istZone)
+		if err != nil || exp.Before(day) {
+			continue
+		}
+		out = append(out, exp)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Before(out[j]) })
+	return out
 }
 
 // IsLoaded returns true if instrument master is loaded
