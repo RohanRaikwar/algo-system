@@ -222,6 +222,8 @@ func New(cfg Config) (*Service, error) {
 	srCfg.BoxBars, srCfg.BoxATRPct, srCfg.GateMode = cfg.SRBoxBars, cfg.SRBoxATRPct, cfg.SRGateMode
 	srCfg.AdvicePullFastEMA, srCfg.AdviceContinueMin = cfg.SRAdvicePullFastEMA, cfg.SRAdviceContinueMin
 	srCfg.AdviceMaxRiskATRPct, srCfg.StrongTrendADX = cfg.SRAdviceMaxRiskATRPct, cfg.SRStrongTrendADX
+	srCfg.SupportStopMode, srCfg.SupportStopTouches = cfg.SRSupportStopMode, cfg.SRSupportStopTouches
+	srCfg.SupportStopZonePts = cfg.SRSupportStopZonePts
 	svc.srStrategy = strategy.NewNifty50SR(cfg.Qty, srCfg)
 	svc.srStrategy.SetExpiry(orderexec.NewStrikePicker(nil).NextExpiry(time.Now()))
 

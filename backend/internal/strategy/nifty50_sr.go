@@ -794,7 +794,7 @@ func (s *Nifty50SR) open(candle model.TFCandle, st *nifty50SRState, ss SRState, 
 
 	st.Side, st.Kind, st.Regime = side, kind, ss.Regime
 	st.IndexEntry, st.StopLevel, st.TargetLevel, st.Risk = entry, stop, target, risk
-	st.Breakeven = false
+	st.Breakeven, st.SupportLvl, st.BreakBars = false, 0, 0
 	st.EntryTS, st.MaxGain = candle.TS, 0
 	st.LastSide, st.LastADX = side, ss.Range.ADX
 	st.FNOToken, st.FNOEntryPrice, st.FNOBestPrice = "", 0, 0
@@ -917,12 +917,32 @@ func (s *Nifty50SR) evaluateExit(candle model.TFCandle, st *nifty50SRState) *Sig
 	if gain > st.MaxGain {
 		st.MaxGain = gain
 	}
-	if !st.Breakeven && s.cfg.BreakevenAtR > 0 && gain*100 >= st.Risk*s.cfg.BreakevenAtR {
-		st.StopLevel, st.Breakeven = st.IndexEntry, true
-		log.Printf("[strategy] %s: %s stop to breakeven %d (gain %d)", s.Name(), st.Side, st.IndexEntry, gain)
+	support := s.supportStopOn()
+	switch {
+	case !st.Breakeven && s.cfg.BreakevenAtR > 0 && gain*100 >= st.Risk*s.cfg.BreakevenAtR:
+		st.Breakeven = true
+		if support {
+			s.raiseSupportStop(st, close)
+		} else {
+			st.StopLevel = st.IndexEntry
+			log.Printf("[strategy] %s: %s stop to breakeven %d (gain %d)", s.Name(), st.Side, st.IndexEntry, gain)
+		}
+	case st.Breakeven && support && s.cfg.SupportStopMode == "trail":
+		s.raiseSupportStop(st, close)
+	}
+	beyond := (close-st.StopLevel)*sign <= 0
+	if beyond && st.SupportLvl != 0 {
+		st.BreakBars++
+		beyond = st.BreakBars >= s.cfg.SupportStopConfirm
+	} else if !beyond {
+		st.BreakBars = 0
 	}
 	switch {
-	case (close-st.StopLevel)*sign <= 0:
+	case beyond:
+		if st.SupportLvl != 0 {
+			return s.exit(candle.Exchange, candle.Token, st, fmt.Sprintf("SR %s STOP stop=%d close=%d support=%d broke",
+				st.Side, st.StopLevel, close, st.SupportLvl))
+		}
 		return s.exit(candle.Exchange, candle.Token, st, fmt.Sprintf("SR %s STOP stop=%d close=%d", st.Side, st.StopLevel, close))
 	case (close-st.TargetLevel)*sign >= 0:
 		return s.exit(candle.Exchange, candle.Token, st, fmt.Sprintf("SR %s TARGET target=%d close=%d", st.Side, st.TargetLevel, close))
@@ -948,6 +968,41 @@ func (s *Nifty50SR) noProgress(candle model.TFCandle, st *nifty50SRState) bool {
 
 // exit closes the position, books its index result against the day's caps
 // (at the last 1m close) and returns the exit signal.
+func (s *Nifty50SR) supportStopOn() bool {
+	m := s.cfg.SupportStopMode
+	return m == "breakeven" || m == "trail"
+}
+
+// raiseSupportStop moves the stop under the nearest strong support below
+// close (above it for a PUT), zone points beyond the level. A dip into the
+// zone is the level holding; the stop only ever tightens, and with no
+// strong level the stop stays where it is.
+func (s *Nifty50SR) raiseSupportStop(st *nifty50SRState, close int64) {
+	ss := st.ctx.State()
+	zone := s.cfg.SupportStopZonePts
+	if s.cfg.SupportStopZoneATRPct > 0 && ss.Range.ATR15 > 0 {
+		zone = ss.Range.ATR15 * s.cfg.SupportStopZoneATRPct / 100
+	}
+	var lvl, stop int64
+	if st.Side == SideCall {
+		if lvl = strongLevelBelow(ss.Levels, close, s.cfg.SupportStopTouches); lvl == 0 {
+			return
+		}
+		if stop = lvl - zone; stop <= st.StopLevel {
+			return
+		}
+	} else {
+		if lvl = strongLevelAbove(ss.Levels, close, s.cfg.SupportStopTouches); lvl == 0 {
+			return
+		}
+		if stop = lvl + zone; stop >= st.StopLevel {
+			return
+		}
+	}
+	st.StopLevel, st.SupportLvl, st.BreakBars = stop, lvl, 0
+	log.Printf("[strategy] %s: %s stop to %d under level %d (zone %d)", s.Name(), st.Side, stop, lvl, zone)
+}
+
 func (s *Nifty50SR) exit(exch, token string, st *nifty50SRState, reason string) *Signal {
 	side := st.Side
 	s.book(st)
@@ -1073,7 +1128,7 @@ func (s *Nifty50SR) getOrCreate(key string) *nifty50SRState {
 func (s *Nifty50SR) resetPosition(st *nifty50SRState) {
 	st.Side, st.Kind, st.Regime = SideNone, "", SRRegimeNone
 	st.IndexEntry, st.StopLevel, st.TargetLevel, st.Risk = 0, 0, 0, 0
-	st.Breakeven = false
+	st.Breakeven, st.SupportLvl, st.BreakBars = false, 0, 0
 	st.EntryTS, st.MaxGain = time.Time{}, 0
 	st.Strike, st.FNOToken, st.FNOEntryPrice, st.FNOBestPrice = 0, "", 0, 0
 	st.CooldownLeft = s.cfg.CooldownCandles

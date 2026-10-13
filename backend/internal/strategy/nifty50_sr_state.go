@@ -60,6 +60,18 @@ type Nifty50SRConfig struct {
 	MinRewardRiskPct int64 // index reward ≥ this % of risk (150 = 1.5:1)
 	BreakevenAtR     int64 // move the stop to entry once gain ≥ this R (×100), 0 = off
 
+	// Support stop: when BreakevenAtR arms, the stop goes under the nearest
+	// strong support (resistance for a PUT) instead of to entry. A dip into
+	// the support zone that comes back is the level holding, not an exit;
+	// only closes beyond level ∓ zone exit. The stop never loosens.
+	// Mode "" / "off" keeps the stop-to-entry rule, "breakeven" moves once,
+	// "trail" re-checks every 1m close and steps up to newer levels.
+	SupportStopMode       string
+	SupportStopTouches    int   // a level needs at least this many touches
+	SupportStopZonePts    int64 // zone width beyond the level (paise)…
+	SupportStopZoneATRPct int64 // …or this % of 15m ATR when > 0
+	SupportStopConfirm    int   // 1m closes beyond the zone needed to exit (≤1 = first close)
+
 	// No-progress exit: flat once NoProgressMin minutes have passed since
 	// entry without any 1m close reaching NoProgressRPct of R in favour.
 	// 0 = off.
@@ -167,6 +179,15 @@ func DefaultNifty50SRConfig() Nifty50SRConfig {
 		MinRewardRiskPct: 150,
 		BreakevenAtR:     50, // 0.5R: −₹13.3k vs −₹22.1k at 1R (Mar–Sep 2026 option-model backtest), better in both halves
 
+		// Stop under the ×3 support by 3 pts at breakeven, not at entry:
+		// −₹6 / −₹124 / +₹40 per unit vs −₹147 / −₹91 / −₹114 for stop to
+		// entry (full / Mar–mid-Jun / mid-Jun–Oct 9 2026). Zones 0–3 pts
+		// score alike, wider is steadily worse; 4 touches −₹80, trail worse.
+		SupportStopMode:    "breakeven",
+		SupportStopTouches: 3,
+		SupportStopZonePts: 300, // 3 pts
+		SupportStopConfirm: 1,
+
 		// CALL only, top 20% after 60 pts: −₹56/−₹141 vs −₹91/−₹177 off per unit
 		// (Mar–mid-Jun / mid-Jun–Oct 2026); blocking PUTs too lost in every setting.
 		DayExtremePct: 80,
@@ -223,6 +244,8 @@ type nifty50SRState struct {
 	TargetLevel int64
 	Risk        int64     // |entry − initial stop|
 	Breakeven   bool      // stop moved to entry
+	SupportLvl  int64     // support stop: level the stop sits under, 0 = none
+	BreakBars   int       // support stop: consecutive closes beyond the stop
 	EntryTS     time.Time // bucket start of the entry bar
 	MaxGain     int64     // best 1m-close gain since entry, index paise
 
@@ -271,6 +294,8 @@ type nifty50SRSnapshot struct {
 	TargetLevel   int64        `json:"target_level"`
 	Risk          int64        `json:"risk"`
 	Breakeven     bool         `json:"breakeven"`
+	SupportLvl    int64        `json:"support_lvl,omitempty"`
+	BreakBars     int          `json:"break_bars,omitempty"`
 	EntryTS       time.Time    `json:"entry_ts,omitempty"`
 	MaxGain       int64        `json:"max_gain,omitempty"`
 	Strike        int64        `json:"strike"`
@@ -307,6 +332,7 @@ func snapshotNifty50SR(key string, s *nifty50SRState) nifty50SRSnapshot {
 		Key: key, Context: s.ctx.snapshot(),
 		Side: s.Side, Kind: s.Kind, Regime: s.Regime, IndexEntry: s.IndexEntry,
 		StopLevel: s.StopLevel, TargetLevel: s.TargetLevel, Risk: s.Risk, Breakeven: s.Breakeven,
+		SupportLvl: s.SupportLvl, BreakBars: s.BreakBars,
 		EntryTS: s.EntryTS, MaxGain: s.MaxGain,
 		Strike: s.Strike, FNOToken: s.FNOToken, FNOEntryPrice: s.FNOEntryPrice, FNOBestPrice: s.FNOBestPrice,
 		PendingSide: s.PendingSide, PendingLevel: s.PendingLevel, PendingLeft: s.PendingLeft,
@@ -321,6 +347,7 @@ func restoreNifty50SR(cfg Nifty50SRConfig, snap nifty50SRSnapshot) *nifty50SRSta
 		ctx:  restoreSRContext(cfg.Context, snap.Context),
 		Side: snap.Side, Kind: snap.Kind, Regime: snap.Regime, IndexEntry: snap.IndexEntry,
 		StopLevel: snap.StopLevel, TargetLevel: snap.TargetLevel, Risk: snap.Risk, Breakeven: snap.Breakeven,
+		SupportLvl: snap.SupportLvl, BreakBars: snap.BreakBars,
 		EntryTS: snap.EntryTS, MaxGain: snap.MaxGain,
 		Strike: snap.Strike, FNOToken: snap.FNOToken, FNOEntryPrice: snap.FNOEntryPrice, FNOBestPrice: snap.FNOBestPrice,
 		PendingSide: snap.PendingSide, PendingLevel: snap.PendingLevel, PendingLeft: snap.PendingLeft,
