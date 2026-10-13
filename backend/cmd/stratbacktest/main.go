@@ -52,6 +52,11 @@ func main() {
 	srNoProgMin := flag.Int("sr-noprog-min", 0, "nifty50_sr: exit when no 1m close reached -sr-noprog-r of R within this many minutes (0 = off)")
 	srNoProgR := flag.Int64("sr-noprog-r", 50, "nifty50_sr: progress needed by -sr-noprog-min, %% of R")
 	srBreakeven := flag.Int64("sr-breakeven-r", 0, "nifty50_sr: move the stop to entry at this %% of R (0 = default 50)")
+	srSupStop := flag.String("sr-support-stop", "", "nifty50_sr: support stop off|breakeven|trail (empty = default)")
+	srSupTouches := flag.Int("sr-support-touches", 0, "nifty50_sr: support stop level needs this many touches (0 = default 3)")
+	srSupZone := flag.Int64("sr-support-zone-pts", -1, "nifty50_sr: support stop zone beyond the level, index points (-1 = default 10)")
+	srSupZoneATR := flag.Int64("sr-support-zone-atr", -1, "nifty50_sr: support stop zone as %% of 15m ATR, overrides points when > 0 (-1 = default)")
+	srSupConfirm := flag.Int("sr-support-confirm", 0, "nifty50_sr: 1m closes beyond the zone needed to exit (0 = default 1)")
 	srHardSL := flag.Int64("sr-hard-sl", 0, "nifty50_sr: premium hard SL %% below entry (0 = default 20)")
 	srReentryADX := flag.Float64("sr-reentry-adx", 0, "nifty50_sr: same-side re-entry needs 15m ADX ≥ this or above the last entry's (0 = off)")
 	srDayExtreme := flag.Int64("sr-day-extreme-pct", -1, "nifty50_sr: no CALL in the top N%% of today's range (PUT: bottom) after -sr-day-run pts; 0 = off (-1 = default)")
@@ -93,8 +98,9 @@ func main() {
 		Output:       *output,
 		OutDir:       *outDir,
 		StrategyType: *stratFlag,
-		StrategyCfgSR: srAdviceOverrides(srOverrides(*srRangeADX, *srTrendADX, *srConfirm, *srMaxTrades, *srMaxLosses, *srDayLoss, *srStopATR, *srStopMin, *srEntryTF, *srSetups, *srNoProgMin, *srNoProgR, *srBreakeven, *srHardSL, *srReentryADX, *srDayExtreme, *srDayRun, *srDayPuts, *srDayFrom, *srRetestTol, *srBoxBars, *srBoxATR, *srBoxFade, *srGate),
+		StrategyCfgSR: srSupportOverrides(srAdviceOverrides(srOverrides(*srRangeADX, *srTrendADX, *srConfirm, *srMaxTrades, *srMaxLosses, *srDayLoss, *srStopATR, *srStopMin, *srEntryTF, *srSetups, *srNoProgMin, *srNoProgR, *srBreakeven, *srHardSL, *srReentryADX, *srDayExtreme, *srDayRun, *srDayPuts, *srDayFrom, *srRetestTol, *srBoxBars, *srBoxATR, *srBoxFade, *srGate),
 			*srAdvFast, *srAdvCont, *srAdvRisk, *srStrongADX, *srAdvTrades),
+			*srSupStop, *srSupTouches, *srSupZone, *srSupZoneATR, *srSupConfirm),
 		Option: backtest.OptionModel{
 			Enabled: *optModel, IVPct: *optIV, RatePct: 6.5, PremiumSLPct: *premSL,
 			SlippageBps: 50, SlippageMinPsa: 50, StrikeStep: 50,
@@ -248,6 +254,34 @@ func srOverrides(rangeADX, trendADX float64, confirm, maxTrades, maxLosses int, 
 		cfg.FadeEnabled, cfg.RetestEnabled, cfg.PullbackEnabled = on["fade"], on["retest"], on["pullback"]
 	}
 	return &cfg
+}
+
+// srSupportOverrides applies the support-stop flags on top of cfg (nil =
+// strategy defaults).
+func srSupportOverrides(cfg *strategy.Nifty50SRConfig, mode string, touches int, zonePts, zoneATR int64, confirm int) *strategy.Nifty50SRConfig {
+	if mode == "" && touches <= 0 && zonePts < 0 && zoneATR < 0 && confirm <= 0 {
+		return cfg
+	}
+	if cfg == nil {
+		c := strategy.DefaultNifty50SRConfig()
+		cfg = &c
+	}
+	if mode != "" {
+		cfg.SupportStopMode = mode
+	}
+	if touches > 0 {
+		cfg.SupportStopTouches = touches
+	}
+	if zonePts >= 0 {
+		cfg.SupportStopZonePts = zonePts * 100
+	}
+	if zoneATR >= 0 {
+		cfg.SupportStopZoneATRPct = zoneATR
+	}
+	if confirm > 0 {
+		cfg.SupportStopConfirm = confirm
+	}
+	return cfg
 }
 
 // srAdviceOverrides applies the entry-advice flags on top of cfg (nil =

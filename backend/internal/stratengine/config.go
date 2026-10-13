@@ -113,6 +113,12 @@ type Config struct {
 	SRBoxBars   int
 	SRBoxATRPct int64
 	SRGateMode  string // warn (default: flag the entry) | block
+	// SR support stop: at breakeven the stop goes under the nearest strong
+	// support (≥ SRSupportStopTouches touches) by SRSupportStopZonePts
+	// instead of to entry. off | breakeven | trail.
+	SRSupportStopMode    string
+	SRSupportStopTouches int
+	SRSupportStopZonePts int64 // paise
 	// SR entry advice (WATCH_BUY, signal only, never an order): fast-EMA
 	// pullback and break continuation on strong-trend days.
 	SRAdvicePullFastEMA   bool
@@ -218,6 +224,9 @@ func LoadConfig() Config {
 		SRBoxBars:             config.GetEnvInt("STRAT_SR_BOX_BARS", 6),
 		SRBoxATRPct:           config.GetEnvInt64("STRAT_SR_BOX_ATR_PCT", 150),
 		SRGateMode:            config.GetEnv("STRAT_SR_GATE_MODE", "warn"),
+		SRSupportStopMode:     config.GetEnv("STRAT_SR_SUPPORT_STOP", "breakeven"),
+		SRSupportStopTouches:  config.GetEnvInt("STRAT_SR_SUPPORT_STOP_TOUCHES", 3),
+		SRSupportStopZonePts:  config.GetEnvInt64("STRAT_SR_SUPPORT_STOP_ZONE_PAISE", 300),
 		SRAdvicePullFastEMA:   config.GetEnvBool("STRAT_SR_ADVICE_PULL_FAST_EMA", true),
 		SRAdviceContinueMin:   config.GetEnvInt("STRAT_SR_ADVICE_CONTINUE_MIN", 15),
 		SRAdviceMaxRiskATRPct: config.GetEnvInt64("STRAT_SR_ADVICE_MAX_RISK_ATR_PCT", 150),

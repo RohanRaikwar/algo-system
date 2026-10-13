@@ -247,6 +247,7 @@ func TestSRDailyCaps(t *testing.T) {
 
 func TestSRExitBooksLossesAndBreakeven(t *testing.T) {
 	s, st := srTest(t)
+	s.cfg.SupportStopMode = "off" // stop-to-entry rule; support stop has its own tests
 	ss, prev, cur := fadeSetup()
 	if s.evaluateFade(srCandle(cur.Close), st, ss, prev, cur, srMin) == nil {
 		t.Fatal("no entry")

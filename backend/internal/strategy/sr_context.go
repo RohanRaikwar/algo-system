@@ -324,6 +324,30 @@ func levelAbove(levels []SRLevel, price int64) int64 {
 	return best
 }
 
+// strongLevelBelow is the highest level strictly below price with at
+// least minTouches touches, 0 if none.
+func strongLevelBelow(levels []SRLevel, price int64, minTouches int) int64 {
+	var best int64
+	for _, l := range levels {
+		if l.Touches >= minTouches && l.Price < price && l.Price > best {
+			best = l.Price
+		}
+	}
+	return best
+}
+
+// strongLevelAbove is the lowest level strictly above price with at least
+// minTouches touches, 0 if none.
+func strongLevelAbove(levels []SRLevel, price int64, minTouches int) int64 {
+	var best int64
+	for _, l := range levels {
+		if l.Touches >= minTouches && l.Price > price && (best == 0 || l.Price < best) {
+			best = l.Price
+		}
+	}
+	return best
+}
+
 // ── Snapshot / restore ──
 // The range context is saved as bar history; the 5m EMAs are rebuilt
 // from its 5m bars, VWAP and the opening range are plain sums.
