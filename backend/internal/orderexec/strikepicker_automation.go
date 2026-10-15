@@ -1,6 +1,7 @@
 package orderexec
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -919,7 +920,7 @@ func (sp *StrikePicker) loadOptionGreekExpiry(expiry time.Time) ([]OptionContrac
 
 	items, ok := rawData.([]interface{})
 	if !ok {
-		return nil, fmt.Errorf("OptionGreek(%s): unexpected data format", expiry.Format("02Jan2006"))
+		return nil, fmt.Errorf("OptionGreek(%s): unexpected data format: %s", expiry.Format("02Jan2006"), describeGreekReply(res))
 	}
 
 	contracts := make([]OptionContract, 0, len(items))
@@ -956,6 +957,17 @@ func (sp *StrikePicker) loadOptionGreekExpiry(expiry time.Time) ([]OptionContrac
 		})
 	}
 	return contracts, nil
+}
+
+// describeGreekReply summarises an OptionGreek reply whose data is not a list,
+// so the log shows what the broker actually sent.
+func describeGreekReply(res map[string]any) string {
+	preview, _ := json.Marshal(res["data"])
+	if len(preview) > 200 {
+		preview = append(preview[:200], "..."...)
+	}
+	return fmt.Sprintf("status=%v message=%q errorcode=%v data(%T)=%s",
+		res["status"], res["message"], res["errorcode"], res["data"], preview)
 }
 
 func readString(row map[string]interface{}, keys ...string) string {
