@@ -57,7 +57,7 @@ func earliestTS(ctx context.Context, db *sql.DB, tables []dayTable) (ts int64, o
 			continue
 		}
 		var v sql.NullInt64
-		if err := db.QueryRowContext(ctx, `SELECT MIN(`+t.expr()+`) FROM `+t.name).Scan(&v); err != nil {
+		if err := db.QueryRowContext(ctx, `SELECT MIN(`+t.expr()+`) FROM `+t.name+` WHERE `+t.cond()).Scan(&v); err != nil {
 			return 0, false, fmt.Errorf("min ts %s: %w", t.name, err)
 		}
 		if v.Valid && (!ok || v.Int64 < ts) {
@@ -99,7 +99,7 @@ func exportDay(ctx context.Context, db *sql.DB, tables []dayTable, start, end in
 	var total int64
 	for _, t := range present {
 		res, err := db.ExecContext(ctx,
-			`INSERT INTO a.`+t.name+` SELECT * FROM main.`+t.name+` WHERE `+t.expr()+` >= ? AND `+t.expr()+` < ?`, start, end)
+			`INSERT INTO a.`+t.name+` SELECT * FROM main.`+t.name+` WHERE `+t.cond()+` AND `+t.expr()+` >= ? AND `+t.expr()+` < ?`, start, end)
 		if err != nil {
 			return 0, fmt.Errorf("export %s: %w", t.name, err)
 		}
@@ -109,34 +109,35 @@ func exportDay(ctx context.Context, db *sql.DB, tables []dayTable, start, end in
 	return total, nil
 }
 
-// DirtyTable lists IST days ("2006-01-02") that received rows after they
+// DirtyTable lists (source, IST day) pairs that received rows after they
 // may have been archived. Writers of late rows (the candle backfill) mark
-// days here; the archiver merges them into the uploaded file and clears
+// them here; the archiver merges them into the uploaded file and clears
 // them.
 const DirtyTable = "archive_dirty"
 
-// MarkDirty records day in db's DirtyTable.
-func MarkDirty(ctx context.Context, db *sql.DB, day string) error {
-	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS `+DirtyTable+` (day TEXT PRIMARY KEY)`); err != nil {
+// MarkDirty records source's day ("2006-01-02") in db's DirtyTable.
+func MarkDirty(ctx context.Context, db *sql.DB, source, day string) error {
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS `+DirtyTable+
+		` (source TEXT NOT NULL, day TEXT NOT NULL, PRIMARY KEY (source, day))`); err != nil {
 		return err
 	}
-	_, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO `+DirtyTable+` (day) VALUES (?)`, day)
+	_, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO `+DirtyTable+` (source, day) VALUES (?, ?)`, source, day)
 	return err
 }
 
-func isDirty(ctx context.Context, db *sql.DB, day string) bool {
+func isDirty(ctx context.Context, db *sql.DB, source, day string) bool {
 	var n int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+DirtyTable+` WHERE day = ?`, day).Scan(&n); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+DirtyTable+` WHERE source = ? AND day = ?`, source, day).Scan(&n); err != nil {
 		return false // no table: nothing marked
 	}
 	return n > 0
 }
 
-func clearDirty(ctx context.Context, db *sql.DB, day string) error {
+func clearDirty(ctx context.Context, db *sql.DB, source, day string) error {
 	if ok, err := tableExists(ctx, db, DirtyTable); err != nil || !ok {
 		return err
 	}
-	_, err := db.ExecContext(ctx, `DELETE FROM `+DirtyTable+` WHERE day = ?`, day)
+	_, err := db.ExecContext(ctx, `DELETE FROM `+DirtyTable+` WHERE source = ? AND day = ?`, source, day)
 	return err
 }
 
@@ -215,7 +216,7 @@ func mergeIntoFile(ctx context.Context, db *sql.DB, path string, tables []dayTab
 		list := `"` + strings.Join(cols, `","`) + `"`
 		if _, err := db.ExecContext(ctx,
 			`INSERT OR IGNORE INTO a.`+t.name+` (`+list+`) SELECT `+list+` FROM main.`+t.name+
-				` WHERE `+t.expr()+` >= ? AND `+t.expr()+` < ?`, start, end); err != nil {
+				` WHERE `+t.cond()+` AND `+t.expr()+` >= ? AND `+t.expr()+` < ?`, start, end); err != nil {
 			return fmt.Errorf("merge %s: %w", t.name, err)
 		}
 	}

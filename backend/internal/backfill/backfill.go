@@ -103,7 +103,7 @@ func Run(ctx context.Context, cfg Config, api CandleAPI, db *sql.DB) (int, error
 				if ins > 0 {
 					// The day may already be in MEGA without these rows:
 					// have the archiver merge them into its day file.
-					if err := archiver.MarkDirty(ctx, db, day.Format("2006-01-02")); err != nil {
+					if err := archiver.MarkDirty(ctx, db, archiver.CandleSource(p.Key), day.Format("2006-01-02")); err != nil {
 						return total, err
 					}
 				}

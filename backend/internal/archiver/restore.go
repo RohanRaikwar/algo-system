@@ -15,6 +15,7 @@ import (
 
 	"trading-systemv1/internal/markethours"
 	"trading-systemv1/internal/store/sqlite"
+	"trading-systemv1/internal/underlying"
 )
 
 // Restore refills a fresh volume (a new Railway account or a lost disk)
@@ -195,7 +196,7 @@ func (s *Service) restoreSource(ctx context.Context, f *dayFetcher, src daySourc
 	if err := os.MkdirAll(filepath.Dir(src.path), 0o755); err != nil {
 		return err
 	}
-	if src.name == "candles" {
+	if src.name == legacyCandles || strings.HasPrefix(src.name, "candles-") {
 		// mdengine's writer owns this schema (primary keys that its
 		// INSERT OR REPLACE relies on); older day files lack them.
 		w, err := sqlite.New(sqlite.WriterConfig{DBPath: src.path})
@@ -223,7 +224,7 @@ func (s *Service) restoreSource(ctx context.Context, f *dayFetcher, src daySourc
 		if err != nil {
 			return fmt.Errorf("%s: %w", dayKey(rd.day), err)
 		}
-		n, err := mergeDayFile(ctx, db, path, src.tables, cutoff)
+		n, err := mergeDayFile(ctx, db, path, restoreTables(src), cutoff)
 		os.Remove(path)
 		if err != nil {
 			return fmt.Errorf("%s: %w", dayKey(rd.day), err)
@@ -268,7 +269,7 @@ func mergeDayFile(ctx context.Context, db *sql.DB, path string, tables []dayTabl
 		}
 		list := `"` + strings.Join(cols, `","`) + `"`
 		res, err := db.ExecContext(ctx,
-			`INSERT OR IGNORE INTO main.`+t.name+` (`+list+`) SELECT `+list+` FROM a.`+t.name+` WHERE `+t.expr()+` >= ?`,
+			`INSERT OR IGNORE INTO main.`+t.name+` (`+list+`) SELECT `+list+` FROM a.`+t.name+` WHERE `+t.cond()+` AND `+t.expr()+` >= ?`,
 			cutoff[t.name])
 		if err != nil {
 			return total, fmt.Errorf("merge %s: %w", t.name, err)
@@ -318,4 +319,30 @@ func (m *manifest) empty(ctx context.Context) (bool, error) {
 	var n int
 	err := m.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM archived`).Scan(&n)
 	return n == 0, err
+}
+
+// restoreTables is the row filter applied when a source's day files are
+// merged back. Per-index candle files hold only that index; a legacy
+// combined candle file (before the split) also held option candles, of
+// which only the index rows are restored: no option data is kept.
+func restoreTables(src daySource) []dayTable {
+	if src.name != legacyCandles {
+		out := make([]dayTable, len(src.tables))
+		for i, t := range src.tables {
+			t.where = ""
+			out[i] = t
+		}
+		return out
+	}
+	var keys []string
+	for _, p := range underlying.All() {
+		keys = append(keys, "'"+p.IndexKey()+"'")
+	}
+	in := "exchange || ':' || token IN (" + strings.Join(keys, ",") + ")"
+	out := make([]dayTable, len(src.tables))
+	for i, t := range src.tables {
+		t.where = in
+		out[i] = t
+	}
+	return out
 }

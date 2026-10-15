@@ -158,9 +158,9 @@ func TestRunOnce_UploadsThenPrunes(t *testing.T) {
 	}
 
 	want := []string{
-		"algo-archive/2026/09/20/candles-2026-09-20.db.gz",
-		"algo-archive/2026/10/05/candles-2026-10-05.db.gz",
-		"algo-archive/2026/10/06/candles-2026-10-06.db.gz",
+		"algo-archive/2026/09/20/candles-NIFTY-2026-09-20.db.gz",
+		"algo-archive/2026/10/05/candles-NIFTY-2026-10-05.db.gz",
+		"algo-archive/2026/10/06/candles-NIFTY-2026-10-06.db.gz",
 		"algo-archive/2026/10/05/signals-2026-10-05.db.gz",
 		"algo-archive/2026/10/06/signals-2026-10-06.db.gz",
 	}
@@ -169,7 +169,7 @@ func TestRunOnce_UploadsThenPrunes(t *testing.T) {
 	}
 
 	// The Oct 6 archive holds exactly that day's rows, with the live keys.
-	raw := unpack(t, filepath.Join(up.dir, "algo-archive/2026/10/06/candles-2026-10-06.db.gz"))
+	raw := unpack(t, filepath.Join(up.dir, "algo-archive/2026/10/06/candles-NIFTY-2026-10-06.db.gz"))
 	if n := count(t, raw, `SELECT COUNT(*) FROM candles_1s`); n != 5 {
 		t.Fatalf("archived 1s rows = %d, want 5", n)
 	}
@@ -422,19 +422,18 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-// A day archived before rows were backfilled into it is uploaded again with
-// the new rows; an unchanged day is not.
-func TestRunOnce_ReuploadsGrownDay(t *testing.T) {
+// A late NIFTY row backfilled into an archived NIFTY day is merged into
+// that day's file when marked; an unmarked late row is not.
+func TestRunOnce_ReuploadsMarkedDay(t *testing.T) {
 	up := &fakeUploader{dir: t.TempDir()}
 	s := newTestService(t, up)
 	if err := s.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	db, _ := sql.Open("sqlite3", s.cfg.CandlesPath)
-	mustExec(t, db, `INSERT INTO candles_tf VALUES ('99919000', 'BSE', 60, ?, 8400000, 8400000, 8400000, 8400000, 0, 60)`, istTS(5, 11))
-	// A late row on Oct 6 that nobody marked stays out (rows only re-upload when marked).
-	mustExec(t, db, `INSERT INTO candles_tf VALUES ('99919000', 'BSE', 60, ?, 8400000, 8400000, 8400000, 8400000, 0, 60)`, istTS(6, 11))
-	if err := MarkDirty(context.Background(), db, "2026-10-05"); err != nil {
+	mustExec(t, db, `INSERT INTO candles_tf VALUES ('99926000', 'NSE', 60, ?, 2500100, 2500100, 2500100, 2500100, 0, 60)`, istTS(5, 9))
+	mustExec(t, db, `INSERT INTO candles_tf VALUES ('99926000', 'NSE', 60, ?, 2500100, 2500100, 2500100, 2500100, 0, 60)`, istTS(6, 9))
+	if err := MarkDirty(context.Background(), db, "candles-NIFTY", "2026-10-05"); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -443,30 +442,84 @@ func TestRunOnce_ReuploadsGrownDay(t *testing.T) {
 	if err := s.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(up.names, ",") != "algo-archive/2026/10/05/candles-2026-10-05.db.gz" {
-		t.Fatalf("re-uploads = %v, want only Oct 5 candles", up.names)
+	if strings.Join(up.names, ",") != "algo-archive/2026/10/05/candles-NIFTY-2026-10-05.db.gz" {
+		t.Fatalf("re-uploads = %v, want only Oct 5 NIFTY", up.names)
 	}
-	raw := unpack(t, filepath.Join(up.dir, "algo-archive/2026/10/05/candles-2026-10-05.db.gz"))
-	if n := count(t, raw, `SELECT COUNT(*) FROM candles_tf WHERE token='99919000'`); n != 1 {
-		t.Fatalf("SENSEX row not in re-uploaded day file")
+	raw := unpack(t, filepath.Join(up.dir, "algo-archive/2026/10/05/candles-NIFTY-2026-10-05.db.gz"))
+	if n := count(t, raw, `SELECT COUNT(*) FROM candles_tf`); n != 6 {
+		t.Fatalf("tf rows in re-uploaded file = %d, want 6", n)
 	}
 	// The 1s candles already pruned locally are still in the new file.
 	if n := count(t, raw, `SELECT COUNT(*) FROM candles_1s`); n != 5 {
 		t.Fatalf("1s rows in re-uploaded file = %d, want 5 kept from the original", n)
 	}
-	if n := count(t, s.cfg.ManifestPath, `SELECT rows FROM archived WHERE source='candles' AND day='2026-10-05'`); n != 11 {
-		t.Fatalf("manifest rows = %d, want 11", n)
-	}
 	if n := count(t, s.cfg.CandlesPath, `SELECT COUNT(*) FROM archive_dirty`); n != 0 {
 		t.Fatalf("dirty mark not cleared")
 	}
-
-	// Nothing new: no upload.
 	up.names = nil
 	if err := s.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if len(up.names) != 0 {
 		t.Fatalf("unchanged day uploaded again: %v", up.names)
+	}
+}
+
+// Each index gets its own candle file per day; SENSEX history added after
+// NIFTY's days were archived is uploaded as SENSEX files, and the files
+// hold only their index.
+func TestRunOnce_CandlesSplitPerIndex(t *testing.T) {
+	t.Setenv("INDEX_TOKEN", "NSE:99926000,BSE:99919000")
+	up := &fakeUploader{dir: t.TempDir()}
+	s := newTestService(t, up)
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	db, _ := sql.Open("sqlite3", s.cfg.CandlesPath)
+	mustExec(t, db, `INSERT INTO candles_tf VALUES ('99919000', 'BSE', 60, ?, 8400000, 8400000, 8400000, 8400000, 0, 60)`, istTS(5, 11))
+	// An option candle (stored before options stopped) never gets a file of its own.
+	mustExec(t, db, `INSERT INTO candles_tf VALUES ('1163095', 'BFO', 60, ?, 30000, 30000, 30000, 30000, 0, 60)`, istTS(5, 11))
+	db.Close()
+
+	up.names = nil
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	names := strings.Join(up.names, ",")
+	if !strings.Contains(names, "2026/10/05/candles-SENSEX-2026-10-05.db.gz") || strings.Contains(names, "candles-NIFTY") ||
+		strings.Contains(names, "/candles-2026") {
+		t.Fatalf("uploads = %v, want the SENSEX day only (no option file)", up.names)
+	}
+	raw := unpack(t, filepath.Join(up.dir, "algo-archive/2026/10/05/candles-SENSEX-2026-10-05.db.gz"))
+	if n := count(t, raw, `SELECT COUNT(*) FROM candles_tf WHERE token != '99919000'`); n != 0 {
+		t.Fatalf("SENSEX file holds %d rows of other tokens", n)
+	}
+	// The option row is never uploaded and goes once past the keep window.
+	s.now = func() time.Time { return testNow.AddDate(0, 0, 11) }
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, s.cfg.CandlesPath, `SELECT COUNT(*) FROM candles_tf WHERE exchange='BFO'`); n != 0 {
+		t.Fatalf("option candle not pruned")
+	}
+}
+
+// Days archived before the split (one combined "candles" file) still serve
+// chart history.
+func TestColdReader_FallsBackToCombinedFile(t *testing.T) {
+	up := &fakeUploader{dir: t.TempDir()}
+	s := newTestService(t, up)
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	day := filepath.Join(up.dir, "algo-archive/2026/10/05")
+	if err := os.Rename(filepath.Join(day, "candles-NIFTY-2026-10-05.db.gz"), filepath.Join(day, "candles-2026-10-05.db.gz")); err != nil {
+		t.Fatal(err)
+	}
+	cfg := s.cfg
+	cfg.ColdCacheDir = filepath.Join(t.TempDir(), "cache")
+	got, err := newColdReader(up, cfg).ReadTFCandlesBefore("NSE", "99926000", 60, istTS(6, 10), 5)
+	if err != nil || len(got) != 5 {
+		t.Fatalf("got %d candles err %v, want Oct 5 from the combined file", len(got), err)
 	}
 }

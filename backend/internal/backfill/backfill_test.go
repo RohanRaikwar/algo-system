@@ -108,8 +108,8 @@ func TestRun_FillsEveryUnderlying(t *testing.T) {
 	}
 
 	// Every filled day is marked for the archiver.
-	if c := count(t, db, `SELECT COUNT(*) FROM archive_dirty`); c != 3 {
-		t.Fatalf("dirty days = %d, want 3", c)
+	if c := count(t, db, `SELECT COUNT(*) FROM archive_dirty WHERE source='candles-SENSEX'`); c != 3 {
+		t.Fatalf("SENSEX dirty days = %d, want 3", c)
 	}
 
 	// A second run finds complete days and calls nothing.
