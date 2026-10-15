@@ -163,3 +163,26 @@ func TestPublishSRXState_KeyedByIndex(t *testing.T) {
 		t.Fatalf("NIFTY pub:sr published from a SENSEX candle: %v", sr)
 	}
 }
+
+// In shadow mode the SENSEX picker decides, the decision is recorded, and
+// the old greek path still buys.
+func TestPickExtraEntry_ShadowRecordsOnly(t *testing.T) {
+	svc, ex := sensexService(t)
+	svc.cfg.PickerMode, svc.cfg.SREnabled = "shadow", true
+	svc.buildExtraPickers()
+	if ex.optPicker == nil {
+		t.Fatal("no SENSEX picker in shadow mode")
+	}
+	ex.optPicker.OnTick(model.Tick{Token: "99919000", Exchange: "BSE", Price: 8420000})
+	if st := ex.optPicker.Status(time.Now()); st.Spot != 8420000 {
+		t.Fatalf("SENSEX picker spot = %d", st.Spot)
+	}
+	sig := strategy.Signal{StrategyName: "SENSEX_SR", Action: strategy.ActionBuy, Side: strategy.SideCall, Strike: 84200}
+	decided, err := svc.pickExtraEntry(ex, &sig, time.Now())
+	if decided || err != nil {
+		t.Fatalf("shadow decided=%v err=%v", decided, err)
+	}
+	if d := svc.lastPickerDecision("SENSEX_SR"); d.Strategy != "SENSEX_SR" || d.Mode != "shadow" {
+		t.Fatalf("decision = %+v", d)
+	}
+}

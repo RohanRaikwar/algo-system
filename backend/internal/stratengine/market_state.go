@@ -25,6 +25,11 @@ func (svc *Service) onMarketState(state string) {
 	if state != "open" {
 		return
 	}
+	for _, ex := range svc.srExtras {
+		if ex.optPicker != nil {
+			ex.optPicker.NewSession()
+		}
+	}
 	if svc.picker != nil {
 		svc.picker.NewSession()
 	}
@@ -44,6 +49,14 @@ func (svc *Service) resetLadderSession() {
 	svc.ladderSubscribed = nil
 	svc.ladderCenter.Store(0)
 	svc.ladderBusy.Store(false)
+	for _, ex := range svc.srExtras {
+		for !ex.ladderBusy.CompareAndSwap(false, true) {
+			time.Sleep(time.Millisecond)
+		}
+		ex.ladderSubscribed = nil
+		ex.ladderCenter.Store(0)
+		ex.ladderBusy.Store(false)
+	}
 }
 
 // marketStateLoop follows pub:market:state, calling onMarketState on every

@@ -9,9 +9,11 @@ import (
 	"trading-systemv1/internal/model"
 )
 
+// SpotToken is the default index token (NIFTY 50) whose ticks set spot.
 const SpotToken = "99926000"
 
 type Config struct {
+	SpotToken     string // index token whose ticks are spot; "" = SpotToken
 	Rules         Rules
 	LadderStrikes int
 	StrikeStep    int64
@@ -51,7 +53,7 @@ func New(cfg Config, src ChainSource, res Resolver, sub Subscriber) *Picker {
 
 // OnTick is on the tick path: an atomic store or one QuoteBook write.
 func (p *Picker) OnTick(t model.Tick) {
-	if t.Token == SpotToken {
+	if t.Token == p.spotToken() {
 		if t.Price > 0 {
 			p.spot.Store(t.Price)
 		}
@@ -61,6 +63,13 @@ func (p *Picker) OnTick(t model.Tick) {
 }
 
 func (p *Picker) Quotes() *QuoteBook { return p.quotes }
+
+func (p *Picker) spotToken() string {
+	if p.cfg.SpotToken != "" {
+		return p.cfg.SpotToken
+	}
+	return SpotToken
+}
 
 func (p *Picker) Run(ctx context.Context, active func(time.Time) bool) {
 	go p.chain.Run(ctx, active)

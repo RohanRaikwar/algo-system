@@ -308,6 +308,7 @@ func New(cfg Config) (*Service, error) {
 
 	// ── Global option picker (off | shadow | on) ──
 	svc.picker = svc.newPicker()
+	svc.buildExtraPickers()
 
 	// ── Dynamic Strike Picker ──
 	if cfg.DynamicStrikes {
@@ -477,6 +478,11 @@ func (svc *Service) tickRouterLoop(ctx context.Context, tfTickCh chan<- model.Ti
 			svc.orderExecutor.UpdateLTP(tick)
 			if svc.picker != nil {
 				svc.picker.OnTick(tick)
+			}
+			for _, ex := range svc.srExtras {
+				if ex.optPicker != nil {
+					ex.optPicker.OnTick(tick)
+				}
 			}
 			svc.updateLiveOrdersFromTick(ctx, tick)
 			svc.exitPolicyTick(tick)

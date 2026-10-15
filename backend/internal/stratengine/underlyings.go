@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"trading-systemv1/config"
+	"trading-systemv1/internal/markethours"
 	"trading-systemv1/internal/model"
+	"trading-systemv1/internal/optionpicker"
 	"trading-systemv1/internal/orderexec"
 	"trading-systemv1/internal/strategy"
 	"trading-systemv1/internal/underlying"
@@ -44,6 +46,8 @@ type srExtra struct {
 	ladderSubscribed map[string]bool // touched only by the ladder goroutine
 
 	noGreeksLogged atomic.Bool
+
+	optPicker *optionpicker.Picker // STRAT_PICKER_MODE shadow/on; nil when off
 }
 
 // extraResolver resolves an extra underlying's contracts. Satisfied by
@@ -178,6 +182,12 @@ func (svc *Service) extraPicker(ex *srExtra) *orderexec.StrikePicker {
 
 // extraChain returns ex's option chain with greeks, cached deltaChainTTL.
 func (svc *Service) extraChain(ex *srExtra, now time.Time) ([]orderexec.OptionContract, error) {
+	return svc.extraChainFresh(ex, now, deltaChainTTL)
+}
+
+// extraChainFresh is extraChain with an explicit TTL (the picker refreshes
+// every 15s and shares this cache, as NIFTY's picker shares optionChain).
+func (svc *Service) extraChainFresh(ex *srExtra, now time.Time, ttl time.Duration) ([]orderexec.OptionContract, error) {
 	src := ex.greeks
 	if src == nil {
 		p := svc.extraPicker(ex)
@@ -188,7 +198,7 @@ func (svc *Service) extraChain(ex *srExtra, now time.Time) ([]orderexec.OptionCo
 	}
 	ex.mu.Lock()
 	defer ex.mu.Unlock()
-	if ex.chain != nil && now.Sub(ex.chainAt) < deltaChainTTL && !now.Before(ex.chainAt) {
+	if ex.chain != nil && now.Sub(ex.chainAt) < ttl && !now.Before(ex.chainAt) {
 		return ex.chain, nil
 	}
 	chain, err := src.LoadOptionChain(now)
@@ -208,6 +218,13 @@ func (svc *Service) extraChain(ex *srExtra, now time.Time) ([]orderexec.OptionCo
 // takes the strategy's ATM strike on the nearest listed expiry and says so
 // once. A contract with no premium yet is subscribed and the entry refused.
 func (svc *Service) resolveExtraEntry(ctx context.Context, ex *srExtra, sig *strategy.Signal, now time.Time) error {
+	// STRAT_PICKER_MODE=on: the picker's contract or a refusal, as for NIFTY.
+	if decided, err := svc.pickExtraEntry(ex, sig, now); decided {
+		if err == nil {
+			sig.Pick = "new"
+		}
+		return err
+	}
 	picker := svc.resolverOf(ex)
 	opt := optionTypeFor(sig.Side)
 	strike, expiry := sig.Strike, time.Time{}
@@ -254,8 +271,104 @@ func (svc *Service) resolveExtraEntry(ctx context.Context, ex *srExtra, sig *str
 	}
 	sig.Strike = info.Strike
 	sig.FNOToken, sig.FNOSymbol = info.Token, info.Symbol
-	sig.Pick = "old"
+	svc.recordOldChoice(sig.StrategyName, sig.FNOSymbol)
+	sig.Pick, sig.PickAlt = "old", svc.altPick(sig.StrategyName, sig.FNOSymbol, now)
 	return nil
+}
+
+// ── Option picker per extra underlying ──
+
+// buildExtraPickers gives each extra underlying its own option picker
+// (spot from its index, chain from its OptionGreek, contracts on its
+// segment) when STRAT_PICKER_MODE is shadow or on.
+func (svc *Service) buildExtraPickers() {
+	if !svc.pickerEnabled() || !svc.cfg.SREnabled || svc.orderExecutor == nil {
+		return
+	}
+	for _, ex := range svc.srExtras {
+		cfg := svc.pickerConfig()
+		cfg.SpotToken, cfg.StrikeStep = ex.prof.IndexToken, ex.prof.StrikeStep
+		ex.optPicker = optionpicker.New(cfg, extraChainAdapter{svc, ex}, extraResolverAdapter{svc, ex}, extraSubscriber{svc, ex})
+		log.Printf("[stratengine] 🎯 %s option picker mode=%s", ex.prof.Key, svc.cfg.PickerMode)
+	}
+}
+
+// runExtraPickers starts each extra picker's background refresh.
+func (svc *Service) runExtraPickers(ctx context.Context) {
+	for _, ex := range svc.srExtras {
+		if ex.optPicker != nil {
+			go ex.optPicker.Run(ctx, markethours.IsMarketOpen)
+		}
+	}
+}
+
+// pickExtraEntry is pickEntry for an extra underlying's SR entry.
+func (svc *Service) pickExtraEntry(ex *srExtra, sig *strategy.Signal, now time.Time) (bool, error) {
+	if ex.optPicker == nil || !svc.pickerEnabled() || sig.Action != strategy.ActionBuy {
+		return false, nil
+	}
+	in := svc.srPickerIntent(optionTypeFor(sig.Side), sig.TargetMove)
+	in.Strategy = ex.strat.Name()
+	p, _, err := ex.optPicker.PickSingle(in, now)
+	svc.recordPickerDecision(decisionFor(sig.StrategyName, svc.cfg.PickerMode, p, err, now))
+	if svc.cfg.PickerMode != "on" {
+		return false, nil
+	}
+	if err != nil {
+		return true, fmt.Errorf("picker: %w", err)
+	}
+	sig.Strike, sig.FNOToken, sig.FNOSymbol = p.Strike, p.Token, p.Symbol
+	svc.noteEntryGreeks(sig.StrategyName, p.Delta, p.Theta)
+	return true, nil
+}
+
+type extraChainAdapter struct {
+	svc *Service
+	ex  *srExtra
+}
+
+func (a extraChainAdapter) Load(now time.Time) ([]optionpicker.Contract, error) {
+	chain, err := a.svc.extraChainFresh(a.ex, now, 15*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]optionpicker.Contract, 0, len(chain))
+	for _, c := range chain {
+		out = append(out, optionpicker.Contract{
+			Strike: c.Strike, Option: string(c.OptionType), Expiry: c.Expiry,
+			IV: normIV(c.IV), Liquidity: c.LiquidityScore,
+		})
+	}
+	return out, nil
+}
+
+// extraResolverAdapter looks contracts up through ex's current strike
+// picker (rebuilt once a broker session exists).
+type extraResolverAdapter struct {
+	svc *Service
+	ex  *srExtra
+}
+
+func (r extraResolverAdapter) Lookup(e time.Time, k int64, o string) (string, string, bool) {
+	info, ok := r.svc.extraPicker(r.ex).LookupOn(e, k, o)
+	return info.Token, info.Symbol, ok
+}
+
+func (r extraResolverAdapter) Search(e time.Time, k int64, o string) (string, string, error) {
+	info, err := r.svc.extraPicker(r.ex).ResolveStrikeOn(e, k, o)
+	return info.Token, info.Symbol, err
+}
+
+// extraSubscriber streams the picker's universe on ex's segment.
+type extraSubscriber struct {
+	svc *Service
+	ex  *srExtra
+}
+
+func (s extraSubscriber) SubscribeOptions(tokens []string) {
+	if s.svc.redisWriter != nil {
+		s.svc.publishSubscriptionMode(context.Background(), s.ex.prof.FNOExchType, smartSnapQuote, tokens...)
+	}
 }
 
 // extraIndexTick keeps each extra underlying's strike ladder subscribed
