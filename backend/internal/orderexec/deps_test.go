@@ -9,15 +9,16 @@ import (
 	"testing"
 )
 
-// TestOrderexecDependencyRule: execution depends on model types, never on
-// the strategy package (strategies produce model.Signal; the executor
-// consumes it).
+// TestOrderexecDependencyRule: execution depends on model types and its own
+// consumer interfaces, never on strategy (strategies produce model.Signal)
+// or instruments (the strike picker is a ContractSource, lot sizes come in
+// through Config.LotSizeOf).
 func TestOrderexecDependencyRule(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	forbidden := []string{"trading-systemv1/internal/strategy"}
+	forbidden := []string{"trading-systemv1/internal/strategy", "trading-systemv1/internal/instruments"}
 	fset := token.NewFileSet()
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {

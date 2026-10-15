@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/instruments"
 	"trading-systemv1/pkg/smartconnect"
 
 	"github.com/pquerna/otp/totp"
@@ -56,7 +56,7 @@ func main() {
 	log.Println("✅ Logged in successfully")
 
 	// Create StrikePicker
-	picker := orderexec.NewStrikePicker(sc)
+	picker := instruments.NewStrikePicker(sc)
 
 	// Test with current NIFTY spot price (example: 23850)
 	indexPrice := int64(23850 * 100) // Convert to paise: 2385000
@@ -75,16 +75,16 @@ func main() {
 	fmt.Println("TEST 1: ATM Strike Selection (Default)")
 	fmt.Println(strings.Repeat("═", 70))
 	
-	inputATM := orderexec.AutomationInput{
-		SignalType:       orderexec.SignalBuyCall,
+	inputATM := instruments.AutomationInput{
+		SignalType:       instruments.SignalBuyCall,
 		IsExpiryDay:      false,
 		EntryTime:        time.Now(),
-		MarketState:      orderexec.MarketStateTrending,
-		TrendStrength:    orderexec.StrengthHigh,
-		MomentumStrength: orderexec.StrengthHigh,
-		HoldType:         orderexec.HoldTypeIntraday,
+		MarketState:      instruments.MarketStateTrending,
+		TrendStrength:    instruments.StrengthHigh,
+		MomentumStrength: instruments.StrengthHigh,
+		HoldType:         instruments.HoldTypeIntraday,
 		OptionChain:      chain,
-		ExpectedIVMove:   orderexec.IVMoveNeutral,
+		ExpectedIVMove:   instruments.IVMoveNeutral,
 		SpotPrice:        indexPrice,
 		StrikeMode:       "ATM",
 	}
@@ -101,16 +101,16 @@ func main() {
 	fmt.Println("TEST 2: OTM1 Strike Selection (1 Strike Out-of-Money)")
 	fmt.Println(strings.Repeat("═", 70))
 	
-	inputOTM1 := orderexec.AutomationInput{
-		SignalType:       orderexec.SignalBuyCall,
+	inputOTM1 := instruments.AutomationInput{
+		SignalType:       instruments.SignalBuyCall,
 		IsExpiryDay:      false,
 		EntryTime:        time.Now(),
-		MarketState:      orderexec.MarketStateTrending,
-		TrendStrength:    orderexec.StrengthHigh,
-		MomentumStrength: orderexec.StrengthHigh,
-		HoldType:         orderexec.HoldTypeIntraday,
+		MarketState:      instruments.MarketStateTrending,
+		TrendStrength:    instruments.StrengthHigh,
+		MomentumStrength: instruments.StrengthHigh,
+		HoldType:         instruments.HoldTypeIntraday,
 		OptionChain:      chain,
-		ExpectedIVMove:   orderexec.IVMoveNeutral,
+		ExpectedIVMove:   instruments.IVMoveNeutral,
 		SpotPrice:        indexPrice,
 		StrikeMode:       "OTM1",
 	}
@@ -127,16 +127,16 @@ func main() {
 	fmt.Println("TEST 3: OTM Strike with ₹200-250 Premium Filter (Short/Sell Strategy)")
 	fmt.Println(strings.Repeat("═", 70))
 	
-	inputShort := orderexec.AutomationInput{
-		SignalType:       orderexec.SignalBuyPut,
+	inputShort := instruments.AutomationInput{
+		SignalType:       instruments.SignalBuyPut,
 		IsExpiryDay:      false,
 		EntryTime:        time.Now(),
-		MarketState:      orderexec.MarketStateTrending,
-		TrendStrength:    orderexec.StrengthMedium,
-		MomentumStrength: orderexec.StrengthMedium,
-		HoldType:         orderexec.HoldTypeIntraday,
+		MarketState:      instruments.MarketStateTrending,
+		TrendStrength:    instruments.StrengthMedium,
+		MomentumStrength: instruments.StrengthMedium,
+		HoldType:         instruments.HoldTypeIntraday,
 		OptionChain:      chain,
-		ExpectedIVMove:   orderexec.IVMoveNeutral,
+		ExpectedIVMove:   instruments.IVMoveNeutral,
 		SpotPrice:        indexPrice,
 		StrikeMode:       "OTM2", // 2 strikes OTM for short strategy
 		MinPremium:       20000,  // ₹200 in paise
@@ -158,7 +158,7 @@ func main() {
 	displayOTMStrikes(chain, indexPrice)
 }
 
-func displayPick(label string, pick orderexec.AutomationPick) {
+func displayPick(label string, pick instruments.AutomationPick) {
 	fmt.Printf("\n%s Selection:\n", label)
 	fmt.Printf("   Strike:        %d\n", pick.Contract.Strike)
 	fmt.Printf("   Symbol:        %s\n", pick.Contract.Symbol)
@@ -173,7 +173,7 @@ func displayPick(label string, pick orderexec.AutomationPick) {
 	fmt.Printf("   Used Fallback: %v\n", pick.UsedFallback)
 }
 
-func displayOTMStrikes(chain []orderexec.OptionContract, spotPrice int64) {
+func displayOTMStrikes(chain []instruments.OptionContract, spotPrice int64) {
 	spotRupees := float64(spotPrice) / 100.0
 	atmStrike := int64(spotRupees/50) * 50
 	
@@ -195,7 +195,7 @@ func displayOTMStrikes(chain []orderexec.OptionContract, spotPrice int64) {
 	fmt.Println(strings.Repeat("-", 50))
 	
 	for _, c := range chain {
-		if c.OptionType != orderexec.OptionTypeCall {
+		if c.OptionType != instruments.OptionTypeCall {
 			continue
 		}
 		if !c.Expiry.Equal(currentExpiry) {
@@ -224,7 +224,7 @@ func displayOTMStrikes(chain []orderexec.OptionContract, spotPrice int64) {
 	fmt.Println(strings.Repeat("-", 50))
 	
 	for _, c := range chain {
-		if c.OptionType != orderexec.OptionTypePut {
+		if c.OptionType != instruments.OptionTypePut {
 			continue
 		}
 		if !c.Expiry.Equal(currentExpiry) {

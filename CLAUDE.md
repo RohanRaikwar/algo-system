@@ -115,6 +115,8 @@ Real entries additionally pass, in `ExecuteSignal`: rate limiter, circuit breake
 
 Execution (`STRAT_EXEC_MODE`, `internal/orderexec/chase.go`): default `chase` sends a marketable LIMIT (quote/LTP ± `STRAT_CHASE_TICKS`), re-priced up to `STRAT_CHASE_REPRICES` times. An unfilled BUY is cancelled (partial fill kept) and never chased more than `STRAT_CHASE_MAX_BPS` above its first price; a SELL ends as MARKET. A BUY with no price is refused. `market` uses `STRAT_FNO_ORDER_TYPE` as before.
 
+Strike picker and instrument master live in `internal/instruments`; orderexec never imports it (or `internal/strategy`, test-enforced in `deps_test.go`). The executor sees the picker as `ContractSource` and gets lot sizes through `Config.LotSizeOf`; without it every real entry is refused.
+
 Margin (`internal/orderexec/margin.go`): a real BUY is refused when the cached RMS margin (`RefreshMargin`, refreshed by the reconcile loop) is below price × qty × (100+`STRAT_MARGIN_BUFFER_PCT`)/100. An unknown or stale (>3 min) cache lets the BUY through — the broker still checks. No network call on the order path.
 
 Reconcile (`ReconcileAndFix`, every 60s in market hours): when the broker holds **less** of a tracked position on two consecutive passes, the executor books the outside sale at LTP and closes/reduces the position (resizing the stop). Anything else — broker holds more, an unknown position, a short, a `status=false` read — is unsafe: alert and halt new entries (`reconcileHalt`, same effect as the kill switch) until a pass is clean. It never places a trade.

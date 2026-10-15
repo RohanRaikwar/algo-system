@@ -3,7 +3,7 @@
 // StrikePicker dynamically resolves ATM NIFTY CE/PE strike tokens
 // at market open using the Angel One SearchScrip API. This removes
 // the need to manually update F&O token/symbol env vars each day.
-package orderexec
+package instruments
 
 import (
 	"fmt"
@@ -153,6 +153,20 @@ func (sp *StrikePicker) GetPutToken() StrikeInfo {
 	sp.mu.RLock()
 	defer sp.mu.RUnlock()
 	return sp.currentPE
+}
+
+// CallContract returns the current CALL token and symbol
+// (orderexec.ContractSource).
+func (sp *StrikePicker) CallContract() (token, symbol string) {
+	ce := sp.GetCallToken()
+	return ce.Token, ce.Symbol
+}
+
+// PutContract returns the current PUT token and symbol
+// (orderexec.ContractSource).
+func (sp *StrikePicker) PutContract() (token, symbol string) {
+	pe := sp.GetPutToken()
+	return pe.Token, pe.Symbol
 }
 
 // ResolveATM resolves ATM CE and PE strikes for the given spot price.

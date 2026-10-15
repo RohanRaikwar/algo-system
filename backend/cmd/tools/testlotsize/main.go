@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"log"
 	"time"
-	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/instruments"
 )
 
 func main() {
 	log.Println("🧪 Testing Instrument Master Lot Size Fetching")
 	log.Println("=" + string(make([]byte, 50)))
 
-	im := orderexec.GetInstrumentMaster()
+	im := instruments.GetInstrumentMaster()
 
 	// Check if loaded from cache
 	if im.IsLoaded() {

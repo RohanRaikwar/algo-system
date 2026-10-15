@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/instruments"
 )
 
 func main() {
@@ -21,7 +21,7 @@ func main() {
 	os.Setenv("INSTRUMENT_MASTER_STARTUP_DOWNLOAD", "false")
 	
 	// Create a new instance
-	im := orderexec.GetInstrumentMaster()
+	im := instruments.GetInstrumentMaster()
 	
 	// Wait for startup operations
 	time.Sleep(3 * time.Second)

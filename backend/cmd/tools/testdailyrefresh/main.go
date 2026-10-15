@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 	"time"
-	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/instruments"
 )
 
 func main() {
@@ -11,7 +11,7 @@ func main() {
 	log.Println("=" + string(make([]byte, 50)))
 
 	// Get instrument master instance
-	im := orderexec.GetInstrumentMaster()
+	im := instruments.GetInstrumentMaster()
 
 	// Wait a moment for scheduler to start
 	time.Sleep(2 * time.Second)

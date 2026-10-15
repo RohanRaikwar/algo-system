@@ -8,20 +8,20 @@ import (
 	"testing"
 	"time"
 
-	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/instruments"
 	"trading-systemv1/internal/strategy"
 )
 
 // gatedGreeks blocks LoadOptionChain until gate is closed, like a slow
 // OptionGreek call.
 type gatedGreeks struct {
-	chain   []orderexec.OptionContract
+	chain   []instruments.OptionContract
 	started chan struct{}
 	gate    chan struct{}
 	once    sync.Once
 }
 
-func (g *gatedGreeks) LoadOptionChain(time.Time) ([]orderexec.OptionContract, error) {
+func (g *gatedGreeks) LoadOptionChain(time.Time) ([]instruments.OptionContract, error) {
 	g.once.Do(func() { close(g.started) })
 	<-g.gate
 	return g.chain, nil
@@ -30,7 +30,7 @@ func (g *gatedGreeks) LoadOptionChain(time.Time) ([]orderexec.OptionContract, er
 // An entry must not wait for a chain load in progress: the signal path reads
 // the cache only.
 func TestEntryChainDoesNotWaitOnLoad(t *testing.T) {
-	g := &gatedGreeks{chain: []orderexec.OptionContract{contract(24000, "CE", 0.5)},
+	g := &gatedGreeks{chain: []instruments.OptionContract{contract(24000, "CE", 0.5)},
 		started: make(chan struct{}), gate: make(chan struct{})}
 	svc := &Service{legResolver: symbolResolver{}}
 	svc.greeks = g
@@ -67,7 +67,7 @@ func TestEntryChainDoesNotWaitOnLoad(t *testing.T) {
 // next signal finds the chain.
 func TestEntryColdChainRefusesThenRefreshes(t *testing.T) {
 	c := srContract(24050, "CE", 0.52, 0.001, -3, 0, testExpiry)
-	g := &fakeGreeks{chain: []orderexec.OptionContract{c}}
+	g := &fakeGreeks{chain: []instruments.OptionContract{c}}
 	svc := deltaSvc(g, 2400000, "CE24050")
 	svc.cfg.SRDeltaMin, svc.cfg.SRDeltaMax, svc.cfg.SRThetaMaxGainPct = 0.45, 0.60, 25
 	svc.srStrategy = strategy.NewNifty50SR(65, strategy.DefaultNifty50SRConfig())
@@ -98,7 +98,7 @@ func TestEntryColdChainRefusesThenRefreshes(t *testing.T) {
 
 // A stale cache is refused even though a chain source exists.
 func TestEntryChainMaxAge(t *testing.T) {
-	g := &fakeGreeks{chain: []orderexec.OptionContract{contract(24000, "CE", 0.5)}}
+	g := &fakeGreeks{chain: []instruments.OptionContract{contract(24000, "CE", 0.5)}}
 	svc := deltaSvc(g, 2400000)
 	svc.cfg.EntryChainMaxAge = time.Minute
 	t0 := time.Now()
@@ -120,25 +120,25 @@ type offlineFake struct {
 	broker int
 }
 
-func (f *offlineFake) info(strike int64, opt string) orderexec.StrikeInfo {
-	return orderexec.StrikeInfo{Token: opt + itoa(strike), Symbol: "NIFTY06OCT26" + itoa(strike) + opt, Strike: strike}
+func (f *offlineFake) info(strike int64, opt string) instruments.StrikeInfo {
+	return instruments.StrikeInfo{Token: opt + itoa(strike), Symbol: "NIFTY06OCT26" + itoa(strike) + opt, Strike: strike}
 }
 
-func (f *offlineFake) lookup(strike int64, opt string) (orderexec.StrikeInfo, bool) {
+func (f *offlineFake) lookup(strike int64, opt string) (instruments.StrikeInfo, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.info(strike, opt), f.known[strike]
 }
 
-func (f *offlineFake) LookupOn(_ time.Time, strike int64, opt string) (orderexec.StrikeInfo, bool) {
+func (f *offlineFake) LookupOn(_ time.Time, strike int64, opt string) (instruments.StrikeInfo, bool) {
 	return f.lookup(strike, opt)
 }
 
-func (f *offlineFake) LookupNearest(_ time.Time, strike int64, opt string) (orderexec.StrikeInfo, bool) {
+func (f *offlineFake) LookupNearest(_ time.Time, strike int64, opt string) (instruments.StrikeInfo, bool) {
 	return f.lookup(strike, opt)
 }
 
-func (f *offlineFake) ResolveStrike(_ time.Time, strike int64, opt string) (orderexec.StrikeInfo, error) {
+func (f *offlineFake) ResolveStrike(_ time.Time, strike int64, opt string) (instruments.StrikeInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.broker++
@@ -183,7 +183,7 @@ func TestResolveExtraEntry_StaleChainRefuses(t *testing.T) {
 	svc, ex := sensexService(t)
 	res := &fakeExtraRes{}
 	ex.res = res
-	ex.greeks = &fakeGreeks{chain: []orderexec.OptionContract{
+	ex.greeks = &fakeGreeks{chain: []instruments.OptionContract{
 		srContract(81200, "CE", 0.52, 0.001, -20, 400, testExpiry),
 	}}
 	now := time.Date(2026, 9, 30, 10, 0, 0, 0, istSR)

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"trading-systemv1/internal/model"
-	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/instruments"
 	"trading-systemv1/internal/strategy"
 )
 
@@ -37,7 +37,7 @@ func TestStrikeSelLivePickWithGreeksAndRejects(t *testing.T) {
 	now := time.Date(2026, 9, 29, 6, 0, 0, 0, time.UTC) // 11:30 IST, DTE 7
 	ce := contract(22700, "CE", 0.52)
 	ce.Gamma, ce.Theta, ce.Vega, ce.IV, ce.LiquidityScore = 0.0011, -6.5, 11.2, 0.142, 250000
-	g := &fakeGreeks{chain: []orderexec.OptionContract{ce, contract(22800, "CE", 0.30), contract(22700, "PE", -0.20)}}
+	g := &fakeGreeks{chain: []instruments.OptionContract{ce, contract(22800, "CE", 0.30), contract(22700, "PE", -0.20)}}
 	var sent []string
 	svc := strikeSelSvc(g, &sent)
 
@@ -71,7 +71,7 @@ func TestStrikeSelReportsMissingChain(t *testing.T) {
 
 func TestPickSRStrikeRecordsLastPick(t *testing.T) {
 	now := time.Date(2026, 9, 29, 6, 0, 0, 0, time.UTC)
-	g := &fakeGreeks{chain: []orderexec.OptionContract{contract(22650, "PE", -0.50)}}
+	g := &fakeGreeks{chain: []instruments.OptionContract{contract(22650, "PE", -0.50)}}
 	var sent []string
 	svc := strikeSelSvc(g, &sent)
 	svc.orderExecutor.UpdateLTP(model.Tick{Token: "PE22650", Exchange: "NFO", Price: 9000})
@@ -89,9 +89,9 @@ func TestPickSRStrikeRecordsLastPick(t *testing.T) {
 // expiryAwareResolver resolves by expiry like the real strike picker.
 type expiryAwareResolver struct{ symbolResolver }
 
-func (expiryAwareResolver) ResolveStrikeOn(exp time.Time, strike int64, opt string) (orderexec.StrikeInfo, error) {
+func (expiryAwareResolver) ResolveStrikeOn(exp time.Time, strike int64, opt string) (instruments.StrikeInfo, error) {
 	d := strings.ToUpper(exp.Format("02Jan06"))
-	return orderexec.StrikeInfo{Token: d + opt + itoa(strike), Symbol: "NIFTY" + d + itoa(strike) + opt, Strike: strike}, nil
+	return instruments.StrikeInfo{Token: d + opt + itoa(strike), Symbol: "NIFTY" + d + itoa(strike) + opt, Strike: strike}, nil
 }
 
 func TestSREntryOnMondayBuysNextWeekContract(t *testing.T) {
@@ -100,7 +100,7 @@ func TestSREntryOnMondayBuysNextWeekContract(t *testing.T) {
 	near := contract(22700, "PE", -0.52)
 	far := contract(22700, "PE", -0.52)
 	far.Expiry = next
-	g := &fakeGreeks{chain: []orderexec.OptionContract{near, far}}
+	g := &fakeGreeks{chain: []instruments.OptionContract{near, far}}
 	var sent []string
 	svc := strikeSelSvc(g, &sent)
 	svc.cfg.SRMinDTE = 2
@@ -121,7 +121,7 @@ func TestSREntryOnMondayBuysNextWeekContract(t *testing.T) {
 
 func TestStrikeSelIncludesPickerStatusAndDecisions(t *testing.T) {
 	var sent []string
-	svc := strikeSelSvc(&fakeGreeks{chain: []orderexec.OptionContract{contract(22700, "CE", 0.52)}}, &sent)
+	svc := strikeSelSvc(&fakeGreeks{chain: []instruments.OptionContract{contract(22700, "CE", 0.52)}}, &sent)
 	svc.cfg.PickerMode, svc.cfg.PickMaxSpreadPct, svc.cfg.PickMaxQuoteAge, svc.cfg.PickMaxChainAge = "shadow", 2, 3*time.Second, 2*time.Minute
 	svc.picker = testPicker(t, svc)
 	svc.recordPickerDecision(pickerDecision{Strategy: "NIFTY50_SR", Mode: "shadow", Result: "picked", Symbol: "NIFTY06OCT2622700CE", TS: "x"})
@@ -135,7 +135,7 @@ func TestStrikeSelIncludesPickerStatusAndDecisions(t *testing.T) {
 
 func TestStrikeSelSkipsSRWorkWhenSRDisabled(t *testing.T) {
 	var sent []string
-	g := &fakeGreeks{chain: []orderexec.OptionContract{contract(22700, "CE", 0.52)}}
+	g := &fakeGreeks{chain: []instruments.OptionContract{contract(22700, "CE", 0.52)}}
 	svc := strikeSelSvc(g, &sent)
 	svc.cfg.SREnabled = false
 	svc.cfg.PickerMode = "shadow"
@@ -160,7 +160,7 @@ func TestSRExpiryLadderSubscribesNextWeekOnMonday(t *testing.T) {
 	far := contract(22700, "CE", 0.52)
 	far.Expiry = testExpiry.AddDate(0, 0, 7)
 	var sent []string
-	svc := strikeSelSvc(&fakeGreeks{chain: []orderexec.OptionContract{contract(22700, "CE", 0.52), far}}, &sent)
+	svc := strikeSelSvc(&fakeGreeks{chain: []instruments.OptionContract{contract(22700, "CE", 0.52), far}}, &sent)
 	svc.cfg.SRMinDTE = 2
 	svc.legResolver = expiryAwareResolver{}
 	var subscribed []string
@@ -177,7 +177,7 @@ func TestSRExpiryLadderSubscribesNextWeekOnMonday(t *testing.T) {
 
 	svc.cfg.SRMinDTE = 1 // nearest expiry is the SR expiry: main ladder covers it
 	subscribed = nil
-	svc2 := strikeSelSvc(&fakeGreeks{chain: []orderexec.OptionContract{contract(22700, "CE", 0.52)}}, &sent)
+	svc2 := strikeSelSvc(&fakeGreeks{chain: []instruments.OptionContract{contract(22700, "CE", 0.52)}}, &sent)
 	svc2.cfg.SRMinDTE = 2
 	svc2.subscribeHook = func(tokens []string) { subscribed = append(subscribed, tokens...) }
 	svc2.refreshStrikeSel(context.Background(), time.Date(2026, 9, 30, 5, 0, 0, 0, time.UTC)) // Wed: 6 days out

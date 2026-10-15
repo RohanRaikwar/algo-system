@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/instruments"
 )
 
 // TestStrikeSelection24000 tests strike selection with spot price at 24000
@@ -28,16 +28,16 @@ func TestStrikeSelection24000() {
 	fmt.Println("TEST 1: ATM Strike Selection")
 	fmt.Println("─────────────────────────────────────────────────────────────")
 	
-	inputATM := orderexec.AutomationInput{
-		SignalType:       orderexec.SignalBuyCall,
+	inputATM := instruments.AutomationInput{
+		SignalType:       instruments.SignalBuyCall,
 		IsExpiryDay:      false,
 		EntryTime:        time.Now(),
-		MarketState:      orderexec.MarketStateTrending,
-		TrendStrength:    orderexec.StrengthHigh,
-		MomentumStrength: orderexec.StrengthHigh,
-		HoldType:         orderexec.HoldTypeIntraday,
+		MarketState:      instruments.MarketStateTrending,
+		TrendStrength:    instruments.StrengthHigh,
+		MomentumStrength: instruments.StrengthHigh,
+		HoldType:         instruments.HoldTypeIntraday,
 		OptionChain:      chain,
-		ExpectedIVMove:   orderexec.IVMoveNeutral,
+		ExpectedIVMove:   instruments.IVMoveNeutral,
 		SpotPrice:        spotPrice,
 		StrikeMode:       "ATM",
 	}
@@ -67,16 +67,16 @@ func TestStrikeSelection24000() {
 	fmt.Println("TEST 4: OTM1 PUT with ₹200-250 Premium Filter (Short Strategy)")
 	fmt.Println("─────────────────────────────────────────────────────────────")
 	
-	inputShortPut := orderexec.AutomationInput{
-		SignalType:       orderexec.SignalBuyPut,
+	inputShortPut := instruments.AutomationInput{
+		SignalType:       instruments.SignalBuyPut,
 		IsExpiryDay:      false,
 		EntryTime:        time.Now(),
-		MarketState:      orderexec.MarketStateTrending,
-		TrendStrength:    orderexec.StrengthMedium,
-		MomentumStrength: orderexec.StrengthMedium,
-		HoldType:         orderexec.HoldTypeIntraday,
+		MarketState:      instruments.MarketStateTrending,
+		TrendStrength:    instruments.StrengthMedium,
+		MomentumStrength: instruments.StrengthMedium,
+		HoldType:         instruments.HoldTypeIntraday,
 		OptionChain:      chain,
-		ExpectedIVMove:   orderexec.IVMoveNeutral,
+		ExpectedIVMove:   instruments.IVMoveNeutral,
 		SpotPrice:        spotPrice,
 		StrikeMode:       "OTM1",
 		MinPremium:       20000, // ₹200
@@ -100,14 +100,14 @@ func TestStrikeSelection24000() {
 	displayStrikeChain(chain, spotPrice)
 }
 
-func testSelection(label string, input orderexec.AutomationInput, expectedStrike int64) {
-	picker := &orderexec.StrikePicker{}
+func testSelection(label string, input instruments.AutomationInput, expectedStrike int64) {
+	picker := &instruments.StrikePicker{}
 	
 	// Debug: show what candidates are available before selection
 	fmt.Printf("\nAvailable candidates for %s:\n", label)
-	optType := orderexec.OptionTypeCall
-	if input.SignalType == orderexec.SignalBuyPut {
-		optType = orderexec.OptionTypePut
+	optType := instruments.OptionTypeCall
+	if input.SignalType == instruments.SignalBuyPut {
+		optType = instruments.OptionTypePut
 	}
 	
 	count := 0
@@ -164,7 +164,7 @@ func testSelection(label string, input orderexec.AutomationInput, expectedStrike
 	}
 }
 
-func createMockOptionChain24000() []orderexec.OptionContract {
+func createMockOptionChain24000() []instruments.OptionContract {
 	expiry := time.Now().AddDate(0, 0, 3) // 3 days from now
 	
 	strikes := []int64{
@@ -173,7 +173,7 @@ func createMockOptionChain24000() []orderexec.OptionContract {
 		24050, 24100, 24150, 24200, 24250, 24300,
 	}
 
-	var chain []orderexec.OptionContract
+	var chain []instruments.OptionContract
 
 	for _, strike := range strikes {
 		diff := strike - 24000
@@ -201,12 +201,12 @@ func createMockOptionChain24000() []orderexec.OptionContract {
 			callPremium = 50
 		}
 
-		chain = append(chain, orderexec.OptionContract{
+		chain = append(chain, instruments.OptionContract{
 			Token:          fmt.Sprintf("CE%d", strike),
 			Symbol:         fmt.Sprintf("NIFTY%s%dCE", expiry.Format("02Jan06"), strike),
 			Strike:         strike,
 			Expiry:         expiry,
-			OptionType:     orderexec.OptionTypeCall,
+			OptionType:     instruments.OptionTypeCall,
 			Delta:          callDelta,
 			Theta:          -0.05,
 			Vega:           0.15,
@@ -238,12 +238,12 @@ func createMockOptionChain24000() []orderexec.OptionContract {
 			putPremium = 50
 		}
 
-		chain = append(chain, orderexec.OptionContract{
+		chain = append(chain, instruments.OptionContract{
 			Token:          fmt.Sprintf("PE%d", strike),
 			Symbol:         fmt.Sprintf("NIFTY%s%dPE", expiry.Format("02Jan06"), strike),
 			Strike:         strike,
 			Expiry:         expiry,
-			OptionType:     orderexec.OptionTypePut,
+			OptionType:     instruments.OptionTypePut,
 			Delta:          putDelta,
 			Theta:          -0.05,
 			Vega:           0.15,
@@ -256,7 +256,7 @@ func createMockOptionChain24000() []orderexec.OptionContract {
 	return chain
 }
 
-func displayStrikeChain(chain []orderexec.OptionContract, spotPrice int64) {
+func displayStrikeChain(chain []instruments.OptionContract, spotPrice int64) {
 	atmStrike := int64(24000)
 	
 	fmt.Println("\nCALL Options (CE):")
@@ -264,7 +264,7 @@ func displayStrikeChain(chain []orderexec.OptionContract, spotPrice int64) {
 	fmt.Println("───────┼───────┼─────────┼────────┼─────────────")
 	
 	for _, c := range chain {
-		if c.OptionType != orderexec.OptionTypeCall {
+		if c.OptionType != instruments.OptionTypeCall {
 			continue
 		}
 		
@@ -290,7 +290,7 @@ func displayStrikeChain(chain []orderexec.OptionContract, spotPrice int64) {
 	fmt.Println("───────┼───────┼─────────┼────────┼─────────────")
 	
 	for _, c := range chain {
-		if c.OptionType != orderexec.OptionTypePut {
+		if c.OptionType != instruments.OptionTypePut {
 			continue
 		}
 		

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/instruments"
 )
 
 func main() {
@@ -42,7 +42,7 @@ func main() {
 
 func testStartupBehavior(testName string) {
 	// Create a new instance to test startup behavior
-	im := orderexec.GetInstrumentMaster()
+	im := instruments.GetInstrumentMaster()
 	
 	// Wait a moment for any background operations
 	time.Sleep(2 * time.Second)

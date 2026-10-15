@@ -19,7 +19,7 @@ import (
 	"os"
 	"time"
 
-	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/instruments"
 	"trading-systemv1/internal/underlying"
 	"trading-systemv1/pkg/smartconnect"
 
@@ -33,7 +33,7 @@ func main() {
 	p := underlying.Get(*key)
 	fmt.Println("profile:", p)
 
-	im := orderexec.GetInstrumentMaster()
+	im := instruments.GetInstrumentMaster()
 	if err := im.EnsureLoaded(2 * time.Minute); err != nil {
 		log.Fatalf("instrument master: %v", err)
 	}
@@ -59,7 +59,7 @@ func main() {
 		fmt.Println("⚠️  nearest future:", err)
 	}
 
-	sp := orderexec.NewStrikePickerFor(nil, p)
+	sp := instruments.NewStrikePickerFor(nil, p)
 	atm := int64(*spot)
 	if atm == 0 {
 		atm = guessATM(im, p, exps[0])
@@ -81,7 +81,7 @@ func main() {
 		fmt.Println("no Angel credentials: OptionGreek not checked")
 		return
 	}
-	chain, err := orderexec.NewStrikePickerFor(sc, p).LoadOptionChain(now)
+	chain, err := instruments.NewStrikePickerFor(sc, p).LoadOptionChain(now)
 	if err != nil || len(chain) == 0 {
 		fmt.Printf("❌ OptionGreek %s: %d contracts, err=%v — SR entries will take the ATM strike without greek checks\n", p.OptionName, len(chain), err)
 		return
@@ -91,7 +91,7 @@ func main() {
 }
 
 // guessATM picks a listed strike near the middle of the nearest expiry.
-func guessATM(im *orderexec.InstrumentMaster, p underlying.Profile, exp time.Time) int64 {
+func guessATM(im *instruments.InstrumentMaster, p underlying.Profile, exp time.Time) int64 {
 	var strikes []int64
 	for k := int64(1000); k < 200000; k += 100 {
 		if im.FindOption(p.OptionName, p.FNOExchange, exp, k, "CE") != nil {

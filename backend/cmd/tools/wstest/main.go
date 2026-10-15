@@ -20,7 +20,7 @@ import (
 	"syscall"
 	"time"
 
-	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/instruments"
 	"trading-systemv1/pkg/smartconnect"
 
 	"github.com/pquerna/otp/totp"
@@ -62,7 +62,7 @@ func main() {
 	log.Printf("   Feed token: %s...", feedToken[:20])
 
 	// ── 2. Resolve ATM strikes dynamically ──
-	picker := orderexec.NewStrikePicker(sc)
+	picker := instruments.NewStrikePicker(sc)
 	// Use a sample spot price — if market is open, we'll get the real one from ticks
 	// For now use 23350 (approximate NIFTY level)
 	niftySpotPaise := int64(2335000) // ₹23,350.00 in paise

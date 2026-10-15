@@ -8,19 +8,20 @@ import (
 	"time"
 
 	"trading-systemv1/internal/model"
+	"trading-systemv1/internal/instruments"
 	"trading-systemv1/internal/orderexec"
 	"trading-systemv1/internal/strategy"
 )
 
 type fakeGreeks struct {
-	chain []orderexec.OptionContract
+	chain []instruments.OptionContract
 	err   error
 
 	mu    sync.Mutex // entryChain may refresh from a goroutine
 	calls int
 }
 
-func (f *fakeGreeks) LoadOptionChain(time.Time) ([]orderexec.OptionContract, error) {
+func (f *fakeGreeks) LoadOptionChain(time.Time) ([]instruments.OptionContract, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
@@ -47,12 +48,12 @@ var testExpiry = time.Date(2026, 10, 6, 0, 0, 0, 0, time.FixedZone("IST", 5*3600
 // symbolResolver returns the real symbol shape so the expiry can be read.
 type symbolResolver struct{}
 
-func (symbolResolver) ResolveStrike(_ time.Time, strike int64, opt string) (orderexec.StrikeInfo, error) {
-	return orderexec.StrikeInfo{Token: opt + itoa(strike), Symbol: "NIFTY06OCT26" + itoa(strike) + opt, Strike: strike}, nil
+func (symbolResolver) ResolveStrike(_ time.Time, strike int64, opt string) (instruments.StrikeInfo, error) {
+	return instruments.StrikeInfo{Token: opt + itoa(strike), Symbol: "NIFTY06OCT26" + itoa(strike) + opt, Strike: strike}, nil
 }
 
-func contract(strike int64, opt string, delta float64) orderexec.OptionContract {
-	return orderexec.OptionContract{Strike: strike, OptionType: orderexec.OptionType(opt), Delta: delta, Expiry: testExpiry}
+func contract(strike int64, opt string, delta float64) instruments.OptionContract {
+	return instruments.OptionContract{Strike: strike, OptionType: instruments.OptionType(opt), Delta: delta, Expiry: testExpiry}
 }
 
 func deltaSvc(g *fakeGreeks, spot int64, tokens ...string) *Service {
@@ -78,7 +79,7 @@ func TestDeltaGuardRefusesWithoutGreeks(t *testing.T) {
 	if err := svc.resolveEntryStrike(context.Background(), &sig, time.Now()); err == nil {
 		t.Fatal("no greeks must refuse, not guess")
 	}
-	g2 := &fakeGreeks{chain: []orderexec.OptionContract{contract(24100, "CE", 0.4)}}
+	g2 := &fakeGreeks{chain: []instruments.OptionContract{contract(24100, "CE", 0.4)}}
 	svc2 := deltaSvc(g2, 2400000, "CE24000")
 	now := time.Now()
 	warmChain(t, svc2, now)
@@ -99,7 +100,7 @@ func TestDeltaGuardOffSkipsGreeks(t *testing.T) {
 }
 
 func TestDeltaGuardCachesChain(t *testing.T) {
-	g := &fakeGreeks{chain: []orderexec.OptionContract{contract(24000, "CE", 0.5)}}
+	g := &fakeGreeks{chain: []instruments.OptionContract{contract(24000, "CE", 0.5)}}
 	svc := deltaSvc(g, 2400000, "CE24000")
 	now := time.Now()
 	warmChain(t, svc, now)
@@ -126,7 +127,7 @@ func TestSymbolExpiry(t *testing.T) {
 
 func TestDeltaGuardIgnoresOtherExpiry(t *testing.T) {
 	next := testExpiry.AddDate(0, 0, 7)
-	g := &fakeGreeks{chain: []orderexec.OptionContract{
+	g := &fakeGreeks{chain: []instruments.OptionContract{
 		{Strike: 24000, OptionType: "CE", Delta: 0.10, Expiry: next}, // next week: wrong contract
 		contract(24000, "CE", 0.50),
 	}}
@@ -139,15 +140,15 @@ func TestDeltaGuardIgnoresOtherExpiry(t *testing.T) {
 	}
 }
 
-func richContract(strike int64, opt string, delta, iv, liq float64) orderexec.OptionContract {
+func richContract(strike int64, opt string, delta, iv, liq float64) instruments.OptionContract {
 	c := contract(strike, opt, delta)
 	c.IV, c.LiquidityScore = iv, liq
 	return c
 }
 
-func guardSvc(t *testing.T, c orderexec.OptionContract, ltp int64) *Service {
+func guardSvc(t *testing.T, c instruments.OptionContract, ltp int64) *Service {
 	t.Helper()
-	g := &fakeGreeks{chain: []orderexec.OptionContract{c}}
+	g := &fakeGreeks{chain: []instruments.OptionContract{c}}
 	oe := orderexec.NewOrderExecutor(orderexec.Config{Qty: 1, FNOExchange: "NFO", LogPrefix: "[test]", PaperSlippageBps: 50, PaperSlippageMinPaise: 50})
 	oe.UpdateLTP(model.Tick{Token: "99926000", Exchange: "NSE", Price: 2400000})
 	oe.UpdateLTP(model.Tick{Token: string(c.OptionType) + itoa(c.Strike), Exchange: "NFO", Price: ltp})

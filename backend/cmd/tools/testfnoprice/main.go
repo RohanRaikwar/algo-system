@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/instruments"
 	"trading-systemv1/pkg/smartconnect"
 
 	"github.com/pquerna/otp/totp"
@@ -45,7 +45,7 @@ func main() {
 	log.Println("✅ Logged in successfully")
 
 	// Create StrikePicker
-	picker := orderexec.NewStrikePicker(sc)
+	picker := instruments.NewStrikePicker(sc)
 
 	// Get current NIFTY spot price from Angel One
 	log.Println("\n📊 Fetching current NIFTY spot price from Angel One...")
@@ -97,16 +97,16 @@ func main() {
 	fmt.Println("TEST 1: ATM Strike Selection (Default)")
 	fmt.Println(strings.Repeat("─", 70))
 	
-	inputATM := orderexec.AutomationInput{
-		SignalType:       orderexec.SignalBuyCall,
+	inputATM := instruments.AutomationInput{
+		SignalType:       instruments.SignalBuyCall,
 		IsExpiryDay:      false,
 		EntryTime:        time.Now(),
-		MarketState:      orderexec.MarketStateTrending,
-		TrendStrength:    orderexec.StrengthHigh,
-		MomentumStrength: orderexec.StrengthHigh,
-		HoldType:         orderexec.HoldTypeIntraday,
+		MarketState:      instruments.MarketStateTrending,
+		TrendStrength:    instruments.StrengthHigh,
+		MomentumStrength: instruments.StrengthHigh,
+		HoldType:         instruments.HoldTypeIntraday,
 		OptionChain:      chain,
-		ExpectedIVMove:   orderexec.IVMoveNeutral,
+		ExpectedIVMove:   instruments.IVMoveNeutral,
 		SpotPrice:        spotPrice,
 		StrikeMode:       "ATM",
 	}
@@ -123,16 +123,16 @@ func main() {
 	fmt.Println("TEST 2: OTM1 CALL with ₹200-250 Premium Filter (Short Strategy)")
 	fmt.Println(strings.Repeat("─", 70))
 	
-	inputOTM1Call := orderexec.AutomationInput{
-		SignalType:       orderexec.SignalBuyCall,
+	inputOTM1Call := instruments.AutomationInput{
+		SignalType:       instruments.SignalBuyCall,
 		IsExpiryDay:      false,
 		EntryTime:        time.Now(),
-		MarketState:      orderexec.MarketStateTrending,
-		TrendStrength:    orderexec.StrengthMedium,
-		MomentumStrength: orderexec.StrengthMedium,
-		HoldType:         orderexec.HoldTypeIntraday,
+		MarketState:      instruments.MarketStateTrending,
+		TrendStrength:    instruments.StrengthMedium,
+		MomentumStrength: instruments.StrengthMedium,
+		HoldType:         instruments.HoldTypeIntraday,
 		OptionChain:      chain,
-		ExpectedIVMove:   orderexec.IVMoveNeutral,
+		ExpectedIVMove:   instruments.IVMoveNeutral,
 		SpotPrice:        spotPrice,
 		StrikeMode:       "OTM1",
 		MinPremium:       20000, // ₹200
@@ -151,16 +151,16 @@ func main() {
 	fmt.Println("TEST 3: OTM1 PUT with ₹200-250 Premium Filter (Short Strategy)")
 	fmt.Println(strings.Repeat("─", 70))
 	
-	inputOTM1Put := orderexec.AutomationInput{
-		SignalType:       orderexec.SignalBuyPut,
+	inputOTM1Put := instruments.AutomationInput{
+		SignalType:       instruments.SignalBuyPut,
 		IsExpiryDay:      false,
 		EntryTime:        time.Now(),
-		MarketState:      orderexec.MarketStateTrending,
-		TrendStrength:    orderexec.StrengthMedium,
-		MomentumStrength: orderexec.StrengthMedium,
-		HoldType:         orderexec.HoldTypeIntraday,
+		MarketState:      instruments.MarketStateTrending,
+		TrendStrength:    instruments.StrengthMedium,
+		MomentumStrength: instruments.StrengthMedium,
+		HoldType:         instruments.HoldTypeIntraday,
 		OptionChain:      chain,
-		ExpectedIVMove:   orderexec.IVMoveNeutral,
+		ExpectedIVMove:   instruments.IVMoveNeutral,
 		SpotPrice:        spotPrice,
 		StrikeMode:       "OTM1",
 		MinPremium:       20000, // ₹200
@@ -179,16 +179,16 @@ func main() {
 	fmt.Println("TEST 4: OTM2 Strike Selection (2 Strikes OTM)")
 	fmt.Println(strings.Repeat("─", 70))
 	
-	inputOTM2 := orderexec.AutomationInput{
-		SignalType:       orderexec.SignalBuyCall,
+	inputOTM2 := instruments.AutomationInput{
+		SignalType:       instruments.SignalBuyCall,
 		IsExpiryDay:      false,
 		EntryTime:        time.Now(),
-		MarketState:      orderexec.MarketStateTrending,
-		TrendStrength:    orderexec.StrengthMedium,
-		MomentumStrength: orderexec.StrengthMedium,
-		HoldType:         orderexec.HoldTypeIntraday,
+		MarketState:      instruments.MarketStateTrending,
+		TrendStrength:    instruments.StrengthMedium,
+		MomentumStrength: instruments.StrengthMedium,
+		HoldType:         instruments.HoldTypeIntraday,
 		OptionChain:      chain,
-		ExpectedIVMove:   orderexec.IVMoveNeutral,
+		ExpectedIVMove:   instruments.IVMoveNeutral,
 		SpotPrice:        spotPrice,
 		StrikeMode:       "OTM2",
 	}
@@ -212,7 +212,7 @@ func main() {
 	fmt.Println(strings.Repeat("═", 70))
 }
 
-func displayPick(label string, pick orderexec.AutomationPick, spotPrice int64) {
+func displayPick(label string, pick instruments.AutomationPick, spotPrice int64) {
 	atmStrike := (spotPrice / 100 / 50) * 50
 	diff := pick.Contract.Strike - atmStrike
 	
@@ -244,7 +244,7 @@ func displayPick(label string, pick orderexec.AutomationPick, spotPrice int64) {
 	}
 }
 
-func displayStrikeChain(chain []orderexec.OptionContract, spotPrice int64) {
+func displayStrikeChain(chain []instruments.OptionContract, spotPrice int64) {
 	atmStrike := (spotPrice / 100 / 50) * 50
 	
 	// Find current week expiry
@@ -268,9 +268,9 @@ func displayStrikeChain(chain []orderexec.OptionContract, spotPrice int64) {
 	fmt.Println("Strike | Type  | Premium | Delta  | Theta  | IV     | In ₹200-250?")
 	fmt.Println(strings.Repeat("─", 75))
 	
-	callContracts := []orderexec.OptionContract{}
+	callContracts := []instruments.OptionContract{}
 	for _, c := range chain {
-		if c.OptionType == orderexec.OptionTypeCall && 
+		if c.OptionType == instruments.OptionTypeCall && 
 		   c.Expiry.Format("2006-01-02") == currentExpiry.Format("2006-01-02") {
 			callContracts = append(callContracts, c)
 		}
@@ -308,9 +308,9 @@ func displayStrikeChain(chain []orderexec.OptionContract, spotPrice int64) {
 	fmt.Println("Strike | Type  | Premium | Delta  | Theta  | IV     | In ₹200-250?")
 	fmt.Println(strings.Repeat("─", 75))
 	
-	putContracts := []orderexec.OptionContract{}
+	putContracts := []instruments.OptionContract{}
 	for _, c := range chain {
-		if c.OptionType == orderexec.OptionTypePut && 
+		if c.OptionType == instruments.OptionTypePut && 
 		   c.Expiry.Format("2006-01-02") == currentExpiry.Format("2006-01-02") {
 			putContracts = append(putContracts, c)
 		}

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/instruments"
 	"trading-systemv1/pkg/smartconnect"
 
 	"github.com/pquerna/otp/totp"
@@ -45,7 +45,7 @@ func main() {
 	log.Println("✅ Logged in successfully")
 
 	// Create StrikePicker
-	picker := orderexec.NewStrikePicker(sc)
+	picker := instruments.NewStrikePicker(sc)
 
 	// Test with index price 24350
 	indexPrice := int64(24350 * 100) // Convert to paise: 2435000

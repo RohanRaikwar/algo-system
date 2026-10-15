@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"trading-systemv1/internal/model"
+	"trading-systemv1/internal/instruments"
 	"trading-systemv1/internal/orderexec"
 	"trading-systemv1/internal/realmoney"
 	"trading-systemv1/internal/strategy"
@@ -162,13 +163,13 @@ func main() {
 
 	// Step 2: Resolve ATM strike using StrikePicker
 	log.Println("\n🎯 Resolving ATM strike...")
-	picker := orderexec.NewStrikePicker(sc)
+	picker := instruments.NewStrikePicker(sc)
 	if !picker.ResolveATM(niftyPrice) {
 		log.Fatal("Failed to resolve ATM strike")
 	}
 
 	// Get the appropriate strike based on side
-	var strikeInfo orderexec.StrikeInfo
+	var strikeInfo instruments.StrikeInfo
 	var strategySide strategy.PositionSide
 
 	if side == "CALL" {
@@ -189,6 +190,9 @@ func main() {
 	putInfo := picker.GetPutToken()
 	
 	executor := orderexec.NewOrderExecutor(orderexec.Config{
+		LotSizeOf: func(symbol string) (int64, error) {
+			return instruments.GetInstrumentMaster().GetLotSize(symbol)
+		},
 		LiveOrders:     true, // REAL ORDERS
 		Qty:            testQty, // 1 quantity only
 		CallFNOToken:   callInfo.Token,

@@ -7,7 +7,7 @@
 // - Persistent disk cache to avoid re-downloading on restart
 // - Background async loading to not block trading operations
 // - Fallback to environment variable if not loaded yet
-package orderexec
+package instruments
 
 import (
 	"encoding/json"

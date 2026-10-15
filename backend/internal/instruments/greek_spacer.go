@@ -1,4 +1,4 @@
-package orderexec
+package instruments
 
 import (
 	"sync"

@@ -38,6 +38,10 @@ type Config struct {
 	LiveOrders bool  // true = place real orders, false = dry-run (log only)
 	Qty        int64 // quantity per paper trade
 
+	// LotSizeOf returns a contract's exchange lot size (the instrument
+	// master). Nil refuses every real entry: its size is unknown.
+	LotSizeOf func(symbol string) (int64, error)
+
 	// LiveStrategies names the strategies allowed to send real orders.
 	// A real order still needs LiveOrders and a live session as well.
 	LiveStrategies []string
@@ -154,7 +158,7 @@ type OrderExecutor struct {
 	prom *metrics.Metrics
 
 	// Optional dynamic strike picker; set via SetStrikePicker.
-	picker atomic.Pointer[StrikePicker] // swapped by stratengine's ATM goroutine
+	picker atomic.Pointer[contractRef] // swapped by stratengine's ATM goroutine
 
 	// Optional PnL tracker for profit cap checking; set via SetPnLTracker.
 	pnlTracker PnLTracker
@@ -288,19 +292,21 @@ func NewOrderExecutor(cfg Config) *OrderExecutor {
 	cfg.RLWindow = rlWindow
 
 	oe := &OrderExecutor{
-		cfg:          cfg,
-		ltp:          make(map[string]int64),
-		inflight:     make(map[string]inflightBuy),
-		positionInst: make(map[string]fnoInstrument),
-		entryOrders:  make(map[string]OrderRecord),
-		exitRetries:  make(map[string]int),
-		live:         cfg.LiveOrders,
-		cb:           circuitbreaker.NewCircuitBreaker(cbMaxFailures, cbTimeout),
-		rl:           NewRateLimiter(rlMaxOrders, rlWindow),
-		lotSizeOf: func(symbol string) (int64, error) {
-			return GetInstrumentMaster().GetLotSize(symbol)
-		},
+		cfg:            cfg,
+		ltp:            make(map[string]int64),
+		inflight:       make(map[string]inflightBuy),
+		positionInst:   make(map[string]fnoInstrument),
+		entryOrders:    make(map[string]OrderRecord),
+		exitRetries:    make(map[string]int),
+		live:           cfg.LiveOrders,
+		cb:             circuitbreaker.NewCircuitBreaker(cbMaxFailures, cbTimeout),
+		rl:             NewRateLimiter(rlMaxOrders, rlWindow),
+		lotSizeOf:      cfg.LotSizeOf,
 		liveStrategies: liveStrategies,
+	}
+
+	if oe.lotSizeOf == nil {
+		oe.lotSizeOf = noLotSize
 	}
 
 	prefix := cfg.LogPrefix
@@ -438,8 +444,8 @@ func (oe *OrderExecutor) logPrefix() string {
 // When set, ExecuteSignal uses the picker's resolved tokens instead of
 // the static config tokens. If the picker is nil or not yet resolved,
 // static config tokens are used as fallback.
-func (oe *OrderExecutor) SetStrikePicker(picker *StrikePicker) {
-	oe.picker.Store(picker)
+func (oe *OrderExecutor) SetStrikePicker(picker ContractSource) {
+	oe.picker.Store(&contractRef{picker})
 	log.Printf("%s 🎯 dynamic strike picker attached", oe.logPrefix())
 }
 
@@ -591,13 +597,13 @@ func (oe *OrderExecutor) resolveInstrument(sig model.Signal, direction string) (
 		return sig.FNOToken, sig.FNOSymbol, nil
 	}
 
-	if picker := oe.picker.Load(); picker != nil && picker.Resolved() {
+	if ref := oe.picker.Load(); ref != nil && ref.src != nil && ref.src.Resolved() {
 		if isCall {
-			ce := picker.GetCallToken()
-			return ce.Token, ce.Symbol, nil
+			token, symbol := ref.src.CallContract()
+			return token, symbol, nil
 		}
-		pe := picker.GetPutToken()
-		return pe.Token, pe.Symbol, nil
+		token, symbol := ref.src.PutContract()
+		return token, symbol, nil
 	}
 
 	// No resolved strike: use the static tokens, if any are configured.

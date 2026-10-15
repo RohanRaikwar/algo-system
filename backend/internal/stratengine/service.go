@@ -18,6 +18,7 @@ import (
 	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/notification"
 	"trading-systemv1/internal/optionpicker"
+	"trading-systemv1/internal/instruments"
 	"trading-systemv1/internal/orderexec"
 	"trading-systemv1/internal/portfolio"
 	redisstore "trading-systemv1/internal/store/redis"
@@ -51,7 +52,7 @@ type Service struct {
 	journal       *strategy.SignalJournal
 	notifier      notification.Notifier
 	orderExecutor *orderexec.OrderExecutor
-	strikePicker  atomic.Pointer[orderexec.StrikePicker] // swapped by the ATM goroutine
+	strikePicker  atomic.Pointer[instruments.StrikePicker] // swapped by the ATM goroutine
 
 	// Global option picker (picker_wiring.go); nil when STRAT_PICKER_MODE=off.
 	picker    *optionpicker.Picker
@@ -60,7 +61,7 @@ type Service struct {
 	// Contract resolution (option_select.go). legResolver is a test hook;
 	// legPicker is built lazily when no ATM picker exists.
 	legResolver   legResolver
-	legPicker     *orderexec.StrikePicker
+	legPicker     *instruments.StrikePicker
 	legPickerOnce sync.Once
 
 	ladderState                // strike ladder + per-entry option selection (option_select.go)
@@ -158,7 +159,7 @@ func New(cfg Config) (*Service, error) {
 
 	// ── Pre-load Instrument Master for dynamic lot sizes ──
 	log.Println("[stratengine] 📥 Pre-loading instrument master for lot sizes...")
-	im := orderexec.GetInstrumentMaster()
+	im := instruments.GetInstrumentMaster()
 	if err := im.EnsureLoaded(30 * time.Second); err != nil {
 		log.Printf("[stratengine] ⚠️  Instrument master load failed (will use fallback NIFTY_LOT_SIZE): %v", err)
 	} else {
@@ -228,7 +229,7 @@ func New(cfg Config) (*Service, error) {
 	srCfg.SupportStopMode, srCfg.SupportStopTouches = cfg.SRSupportStopMode, cfg.SRSupportStopTouches
 	srCfg.SupportStopZonePts = cfg.SRSupportStopZonePts
 	svc.srStrategy = strategy.NewNifty50SR(cfg.Qty, srCfg)
-	svc.srStrategy.SetExpiry(orderexec.NewStrikePicker(nil).NextExpiry(time.Now()))
+	svc.srStrategy.SetExpiry(instruments.NewStrikePicker(nil).NextExpiry(time.Now()))
 
 	svc.syncStrategyFNOTokens(cfg.CallFNOToken, cfg.PutFNOToken)
 	svc.initExitPolicy()
@@ -269,6 +270,9 @@ func New(cfg Config) (*Service, error) {
 
 	// ── Order Executor ──
 	svc.orderExecutor = orderexec.NewOrderExecutor(orderexec.Config{
+		LotSizeOf: func(symbol string) (int64, error) {
+			return instruments.GetInstrumentMaster().GetLotSize(symbol)
+		},
 		LiveOrders:       cfg.LiveOrders,
 		Qty:              cfg.Qty,
 		CallFNOToken:     cfg.CallFNOToken,
@@ -539,7 +543,7 @@ func (svc *Service) tickRouterLoop(ctx context.Context, tfTickCh chan<- model.Ti
 						sc = standaloneSC
 						log.Println("[stratengine] ✅ standalone SmartConnect session established for strike resolution")
 					}
-					picker := orderexec.NewStrikePicker(sc)
+					picker := instruments.NewStrikePicker(sc)
 					if !picker.ResolveATM(spotPrice) {
 						atomic.StoreInt64(&svc.strikeRetryAfterNS, time.Now().Add(60*time.Second).UnixNano())
 						log.Println("[stratengine] ⚠️  strike resolution failed (will retry in 60s)")
@@ -1018,10 +1022,10 @@ func (svc *Service) applyOptionAutomation(ctx context.Context, sig *strategy.Sig
 	svc.publishStrikeInfo(ctx, spotPrice)
 }
 
-func (svc *Service) buildAutomationInput(sig strategy.Signal, now time.Time, spotPrice int64) orderexec.AutomationInput {
-	marketState := orderexec.MarketStateSideways
-	trendStrength := orderexec.StrengthLow
-	momentumStrength := orderexec.StrengthLow
+func (svc *Service) buildAutomationInput(sig strategy.Signal, now time.Time, spotPrice int64) instruments.AutomationInput {
+	marketState := instruments.MarketStateSideways
+	trendStrength := instruments.StrengthLow
+	momentumStrength := instruments.StrengthLow
 
 	if ctx, ok := svc.strategyAutomationContext(sig); ok {
 		marketState = automationMarketStateFromStrategy(ctx.MarketState)
@@ -1030,14 +1034,14 @@ func (svc *Service) buildAutomationInput(sig strategy.Signal, now time.Time, spo
 	} else {
 		pct := parseSignalDistancePct(sig.Reason)
 		if strings.Contains(strings.ToLower(sig.Reason), "momentum") && pct >= 0.12 {
-			marketState = orderexec.MarketStateTrending
+			marketState = instruments.MarketStateTrending
 		}
 		strength := automationStrengthFromPct(pct)
 		trendStrength = strength
 		momentumStrength = strength
 	}
 
-	return orderexec.AutomationInput{
+	return instruments.AutomationInput{
 		SignalType:       automationSignalType(sig.Side),
 		IsExpiryDay:      isNIFTYExpiryDay(now),
 		EntryTime:        now,
@@ -1107,7 +1111,7 @@ func (svc *Service) fnoSymbolFor(token string) string {
 	if exch == "" {
 		exch = "NFO"
 	}
-	im := orderexec.GetInstrumentMaster()
+	im := instruments.GetInstrumentMaster()
 	if name := im.SymbolForToken(exch, svc.unqualifyToken(token)); name != "" {
 		return name
 	}
@@ -1487,12 +1491,12 @@ func (svc *Service) publishStrikeInfo(ctx context.Context, spotPrice int64) {
 	svc.redisWriter.Client().Publish(ctx, model.StrikeChannel, string(strikePayload))
 }
 
-func automationSignalType(side strategy.PositionSide) orderexec.AutomationSignalType {
+func automationSignalType(side strategy.PositionSide) instruments.AutomationSignalType {
 	switch side {
 	case strategy.SideCall:
-		return orderexec.SignalBuyCall
+		return instruments.SignalBuyCall
 	case strategy.SidePut:
-		return orderexec.SignalBuyPut
+		return instruments.SignalBuyPut
 	default:
 		return ""
 	}
@@ -1504,45 +1508,45 @@ func (svc *Service) strategyAutomationContext(sig strategy.Signal) (strategy.Ent
 	return strategy.EntryAutomationContext{}, false
 }
 
-func automationMarketStateFromStrategy(state strategy.EntryMarketState) orderexec.AutomationMarketState {
+func automationMarketStateFromStrategy(state strategy.EntryMarketState) instruments.AutomationMarketState {
 	switch state {
 	case strategy.EntryMarketStateTrending:
-		return orderexec.MarketStateTrending
+		return instruments.MarketStateTrending
 	case strategy.EntryMarketStateChoppy:
-		return orderexec.MarketStateChoppy
+		return instruments.MarketStateChoppy
 	default:
-		return orderexec.MarketStateSideways
+		return instruments.MarketStateSideways
 	}
 }
 
-func automationStrengthFromStrategy(strength strategy.EntryStrength) orderexec.AutomationStrength {
+func automationStrengthFromStrategy(strength strategy.EntryStrength) instruments.AutomationStrength {
 	switch strength {
 	case strategy.EntryStrengthHigh:
-		return orderexec.StrengthHigh
+		return instruments.StrengthHigh
 	case strategy.EntryStrengthMedium:
-		return orderexec.StrengthMedium
+		return instruments.StrengthMedium
 	default:
-		return orderexec.StrengthLow
+		return instruments.StrengthLow
 	}
 }
 
-func automationStrengthFromPct(pct float64) orderexec.AutomationStrength {
+func automationStrengthFromPct(pct float64) instruments.AutomationStrength {
 	switch {
 	case pct >= 0.20:
-		return orderexec.StrengthHigh
+		return instruments.StrengthHigh
 	case pct >= 0.12:
-		return orderexec.StrengthMedium
+		return instruments.StrengthMedium
 	default:
-		return orderexec.StrengthLow
+		return instruments.StrengthLow
 	}
 }
 
-func automationHoldType(v string) orderexec.AutomationHoldType {
+func automationHoldType(v string) instruments.AutomationHoldType {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "carry":
-		return orderexec.HoldTypeCarry
+		return instruments.HoldTypeCarry
 	default:
-		return orderexec.HoldTypeIntraday
+		return instruments.HoldTypeIntraday
 	}
 }
 
@@ -1577,14 +1581,14 @@ func inferMarketStateFromReason(reason string) string {
 	}
 }
 
-func automationIVMove(v string) orderexec.AutomationIVMove {
+func automationIVMove(v string) instruments.AutomationIVMove {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "rise":
-		return orderexec.IVMoveRise
+		return instruments.IVMoveRise
 	case "fall":
-		return orderexec.IVMoveFall
+		return instruments.IVMoveFall
 	default:
-		return orderexec.IVMoveNeutral
+		return instruments.IVMoveNeutral
 	}
 }
 

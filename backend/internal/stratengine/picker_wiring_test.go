@@ -9,7 +9,7 @@ import (
 
 	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/optionpicker"
-	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/instruments"
 	"trading-systemv1/internal/strategy"
 )
 
@@ -43,7 +43,7 @@ func TestIntentForSR(t *testing.T) {
 // cache: back-to-back calls (picker load, then the old path within the
 // cache window) make exactly one broker call.
 func TestChainAdapterSharesCacheWithOldOptionChainPath(t *testing.T) {
-	g := &fakeGreeks{chain: []orderexec.OptionContract{contract(24000, "CE", 0.5)}}
+	g := &fakeGreeks{chain: []instruments.OptionContract{contract(24000, "CE", 0.5)}}
 	svc := deltaSvc(g, 2400000, "CE24000")
 	now := time.Now()
 
