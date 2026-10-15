@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"trading-systemv1/internal/model"
 	redisstore "trading-systemv1/internal/store/redis"
 )
 
@@ -24,12 +25,12 @@ func (p *Publisher) PublishState(ctx context.Context, event MarketStateEvent) {
 	payload := event.JSON()
 
 	// PubSub for real-time subscribers
-	if err := p.writer.Client().Publish(ctx, "pub:analyst:state", string(payload)).Err(); err != nil {
+	if err := p.writer.Client().Publish(ctx, model.AnalystStateChannel, string(payload)).Err(); err != nil {
 		log.Printf("[analyst] state publish error: %v", err)
 	}
 
 	// Store latest for polling / API access
-	if err := p.writer.Client().Set(ctx, "analyst:state:latest", payload, 24*time.Hour).Err(); err != nil {
+	if err := p.writer.Client().Set(ctx, model.AnalystStateKey, payload, 24*time.Hour).Err(); err != nil {
 		log.Printf("[analyst] state store error: %v", err)
 	}
 }
@@ -38,11 +39,11 @@ func (p *Publisher) PublishState(ctx context.Context, event MarketStateEvent) {
 func (p *Publisher) PublishLevels(ctx context.Context, event LevelUpdateEvent) {
 	payload := event.JSON()
 
-	if err := p.writer.Client().Publish(ctx, "pub:analyst:levels", string(payload)).Err(); err != nil {
+	if err := p.writer.Client().Publish(ctx, model.AnalystLevelsChannel, string(payload)).Err(); err != nil {
 		log.Printf("[analyst] levels publish error: %v", err)
 	}
 
-	if err := p.writer.Client().Set(ctx, "analyst:levels:latest", payload, 24*time.Hour).Err(); err != nil {
+	if err := p.writer.Client().Set(ctx, model.AnalystLevelsKey, payload, 24*time.Hour).Err(); err != nil {
 		log.Printf("[analyst] levels store error: %v", err)
 	}
 }
@@ -51,11 +52,11 @@ func (p *Publisher) PublishLevels(ctx context.Context, event LevelUpdateEvent) {
 func (p *Publisher) PublishBreakout(ctx context.Context, event BreakoutEvent) {
 	payload := event.JSON()
 
-	if err := p.writer.Client().Publish(ctx, "pub:analyst:breakout", string(payload)).Err(); err != nil {
+	if err := p.writer.Client().Publish(ctx, model.AnalystBreakoutChannel, string(payload)).Err(); err != nil {
 		log.Printf("[analyst] breakout publish error: %v", err)
 	}
 
-	if err := p.writer.Client().Set(ctx, "analyst:breakout:latest", payload, 24*time.Hour).Err(); err != nil {
+	if err := p.writer.Client().Set(ctx, model.AnalystBreakoutKey, payload, 24*time.Hour).Err(); err != nil {
 		log.Printf("[analyst] breakout store error: %v", err)
 	}
 }
@@ -77,7 +78,7 @@ func (p *Publisher) PublishSummary(ctx context.Context, state MarketStateEvent, 
 		return
 	}
 
-	if err := p.writer.Client().Set(ctx, "analyst:summary:latest", payload, 24*time.Hour).Err(); err != nil {
+	if err := p.writer.Client().Set(ctx, model.AnalystSummaryKey, payload, 24*time.Hour).Err(); err != nil {
 		log.Printf("[analyst] summary store error: %v", err)
 	}
 }

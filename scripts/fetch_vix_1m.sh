@@ -14,7 +14,7 @@ cd "$(dirname "$0")/../backend"
 set -a; source ../.env.prod; set +a
 
 BIN=$(mktemp -d)/histdata
-go build -o "$BIN" ./cmd/histdata || exit 1
+go build -o "$BIN" ./cmd/tools/histdata || exit 1
 
 have=$(sqlite3 data/historical.db "select distinct date(datetime(ts,'unixepoch','+330 minutes')) from historical_candles where token='$TOKEN'")
 d=$FROM; ok=0; nod=0; fail=0

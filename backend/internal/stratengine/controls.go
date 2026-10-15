@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	tradingConfigKey     = "trading:config"
-	tradingConfigChannel = "cmd:config_update"
+	tradingConfigKey     = model.TradingConfigKey
+	tradingConfigChannel = model.TradingConfigChannel
 
 	positionReconcileInterval = 60 * time.Second
 )

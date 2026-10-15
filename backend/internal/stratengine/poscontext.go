@@ -14,8 +14,8 @@ import (
 // token of every open position. Internal only — pub:poscontext is not in the
 // gateway's forward list. Published on change; an empty set means flat.
 const (
-	posContextKey     = "poscontext:latest"
-	posContextChannel = "pub:poscontext"
+	posContextKey     = model.PosContextKey
+	posContextChannel = model.PosContextChannel
 	posContextEvery   = time.Second
 )
 

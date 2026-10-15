@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/oms"
-	"trading-systemv1/internal/strategy"
 )
 
 // Protection modes for a filled real entry.
@@ -47,7 +47,7 @@ func (oe *OrderExecutor) placeStop(posKey string, rec OrderRecord) string {
 		return ""
 	}
 	trigger, limit := gttStopLossPaise(rec.Price, oe.cfg.FNOStopLossPaise, oe.tickPaise())
-	tag := generateIdempotencyKey(strategy.Signal{StrategyName: rec.StrategyName, Side: strategy.PositionSide(rec.PositionSide), Action: "STOP"})
+	tag := generateIdempotencyKey(model.Signal{StrategyName: rec.StrategyName, Side: model.PositionSide(rec.PositionSide), Action: "STOP"})
 	params := map[string]any{
 		"variety":         stopVariety,
 		"tradingsymbol":   rec.Symbol,
@@ -125,7 +125,7 @@ const (
 // cancelStopForExit cancels a position's stop before an exit sells, and
 // reads the order book to learn what the stop really did. A partial stop
 // fill is booked and the entry reduced. Caller holds the position lock.
-func (oe *OrderExecutor) cancelStopForExit(sig strategy.Signal, posKey string) stopOutcome {
+func (oe *OrderExecutor) cancelStopForExit(sig model.Signal, posKey string) stopOutcome {
 	rec, ok := oe.entry(posKey)
 	if !ok || rec.SLOrderID == "" {
 		return stopGone

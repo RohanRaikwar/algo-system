@@ -6,21 +6,23 @@ import (
 	"time"
 
 	goredis "github.com/go-redis/redis/v8"
+
+	"trading-systemv1/internal/model"
 )
 
 var dynamicPubSubPatterns = []string{
-	"pub:ind:*",
-	"pub:tick:*",
-	"pub:analyst:*",
-	"pub:strike",
-	"pub:orders",
-	"pub:signal",
-	"pub:pnl",
-	"pub:sr",
-	"pub:srx",
-	"pub:refused",
-	"pub:strikesel",
-	"pub:strikeselx",
+	model.IndChannelPrefix + "*",
+	model.TickChannelPattern,
+	model.AnalystChannelPref + "*",
+	model.StrikeChannel,
+	model.OrdersChannel,
+	model.SignalChannel,
+	model.PnLChannel,
+	model.SRStateChannel,
+	model.SRXStateChannel,
+	model.RefusedChannel,
+	model.StrikeSelChannel,
+	model.StrikeSelXChannel,
 }
 
 // PubSubRouter manages Redis PubSub subscriptions and routes messages

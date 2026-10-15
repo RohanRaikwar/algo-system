@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"trading-systemv1/internal/model"
-	"trading-systemv1/internal/strategy"
 )
 
 func fastExitRetries(t *testing.T) {
@@ -33,7 +32,7 @@ func TestRealBuy_IntentPersistedBeforePlacement(t *testing.T) {
 		return nil
 	})
 
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 
 	if snap == nil || placedAtPersist != 0 {
 		t.Fatalf("intent not persisted before placement (persisted=%v placed=%d)", snap != nil, placedAtPersist)
@@ -53,12 +52,12 @@ func TestRealBuy_NotSentWhenIntentCannotBePersisted(t *testing.T) {
 	oe := liveExecutor(t, f)
 	oe.SetIntentPersister(func() error { return errors.New("redis down") })
 
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 
 	if n := f.placedCount(); n != 0 {
 		t.Fatalf("placed %d orders, want 0 when intent cannot be persisted", n)
 	}
-	if _, ok := entryFor(oe, realSig(strategy.ActionBuy)); ok {
+	if _, ok := entryFor(oe, realSig(model.ActionBuy)); ok {
 		t.Fatal("entry left behind after refused BUY")
 	}
 }
@@ -66,15 +65,15 @@ func TestRealBuy_NotSentWhenIntentCannotBePersisted(t *testing.T) {
 func TestRealExit_SentEvenWhenIntentCannotBePersisted(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := liveExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	oe.SetIntentPersister(func() error { return errors.New("redis down") })
 
-	oe.ExecuteSignal(realSig(strategy.ActionExit))
+	oe.ExecuteSignal(realSig(model.ActionExit))
 
 	if n := f.placedCount(); n != 2 {
 		t.Fatalf("placed %d, want BUY+SELL — exits must never be blocked", n)
 	}
-	if _, ok := entryFor(oe, realSig(strategy.ActionBuy)); ok {
+	if _, ok := entryFor(oe, realSig(model.ActionBuy)); ok {
 		t.Fatal("position still tracked after completed exit")
 	}
 }
@@ -92,7 +91,7 @@ func TestRealBuy_CrashAfterPlacementRecoveredFromIntent(t *testing.T) {
 		}
 		return nil
 	})
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	if f.placedCount() != 1 {
 		t.Fatal("setup: BUY not placed")
 	}
@@ -103,11 +102,11 @@ func TestRealBuy_CrashAfterPlacementRecoveredFromIntent(t *testing.T) {
 	}
 	restarted.ResumeSettlement()
 	waitFor(t, "restored intent adopted", func() bool {
-		r, ok := entryFor(restarted, realSig(strategy.ActionBuy))
+		r, ok := entryFor(restarted, realSig(model.ActionBuy))
 		return ok && !r.Pending && r.GttSLRuleID != ""
 	})
 
-	restarted.ExecuteSignal(realSig(strategy.ActionExit))
+	restarted.ExecuteSignal(realSig(model.ActionExit))
 	if n := f.placedCount(); n != 2 {
 		t.Fatalf("placed %d, want the restored position closed with a real SELL", n)
 	}
@@ -124,11 +123,11 @@ func TestRealExit_FailedExitIsRetried(t *testing.T) {
 		positions: []map[string]any{{"symboltoken": "111", "tradingsymbol": "NIFTY_CE", "netqty": "75"}},
 	}
 	oe := liveExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
-	oe.ExecuteSignal(realSig(strategy.ActionExit))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionExit))
 
 	waitFor(t, "retried exit closes position", func() bool {
-		_, open := entryFor(oe, realSig(strategy.ActionBuy))
+		_, open := entryFor(oe, realSig(model.ActionBuy))
 		return !open
 	})
 	if n := f.placedCount(); n != 3 {
@@ -147,11 +146,11 @@ func TestRealExit_RetryFinalisesWhenBrokerAlreadyFlat(t *testing.T) {
 		// no positions: a GTT closed it meanwhile
 	}
 	oe := liveExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
-	oe.ExecuteSignal(realSig(strategy.ActionExit))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionExit))
 
 	waitFor(t, "flat position finalised", func() bool {
-		_, open := entryFor(oe, realSig(strategy.ActionBuy))
+		_, open := entryFor(oe, realSig(model.ActionBuy))
 		return !open
 	})
 	if n := f.placedCount(); n != 2 {
@@ -177,9 +176,9 @@ func TestFills_PaperReportedAndExitWithoutEntryIsNot(t *testing.T) {
 	var l fillLog
 	oe.SetFillListener(l.add)
 
-	oe.ExecuteSignal(sig(strategy.ActionExit)) // nothing open
-	oe.ExecuteSignal(sig(strategy.ActionBuy))
-	oe.ExecuteSignal(sig(strategy.ActionExit))
+	oe.ExecuteSignal(sig(model.ActionExit)) // nothing open
+	oe.ExecuteSignal(sig(model.ActionBuy))
+	oe.ExecuteSignal(sig(model.ActionExit))
 
 	got := l.get()
 	if len(got) != 2 || got[0].Direction != "BUY" || got[1].Direction != "SELL" || got[0].Real || got[0].FillPricePaise != 5000 {
@@ -193,12 +192,12 @@ func TestFills_RealRejectedBuyNotReported(t *testing.T) {
 	var l fillLog
 	oe.SetFillListener(l.add)
 
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 
 	if got := l.get(); len(got) != 0 {
 		t.Fatalf("rejected BUY reported as fill: %+v", got)
 	}
-	if _, ok := entryFor(oe, realSig(strategy.ActionBuy)); ok {
+	if _, ok := entryFor(oe, realSig(model.ActionBuy)); ok {
 		t.Fatal("rejected BUY left an entry")
 	}
 }

@@ -9,8 +9,9 @@ import (
 	"time"
 
 	"trading-systemv1/internal/markethours"
+	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/optionpicker"
-	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/instruments"
 	"trading-systemv1/internal/strategy"
 )
 
@@ -20,8 +21,8 @@ import (
 // CE/PE the greeks would pick right now, and the last contract actually
 // picked for an entry signal.
 const (
-	strikeSelKey     = "strikesel:state"
-	strikeSelChannel = "pub:strikesel"
+	strikeSelKey     = model.StrikeSelKey
+	strikeSelChannel = model.StrikeSelChannel
 	strikeSelEvery   = 30 * time.Second
 )
 
@@ -178,7 +179,7 @@ func (svc *Service) srParamsView() srParamsView {
 	}
 }
 
-func (svc *Service) contractView(c orderexec.OptionContract, premium float64, now time.Time) srContractView {
+func (svc *Service) contractView(c instruments.OptionContract, premium float64, now time.Time) srContractView {
 	v := srContractView{
 		Strike: c.Strike, Option: string(c.OptionType), Symbol: c.Symbol, Token: c.Token,
 		Expiry: dayStart(c.Expiry).Format("2006-01-02"), DTE: int(dayStart(c.Expiry).Sub(dayStart(now)).Hours() / 24),
@@ -194,7 +195,7 @@ func (svc *Service) contractView(c orderexec.OptionContract, premium float64, no
 }
 
 // liveSRSide evaluates what the greeks would pick for opt right now.
-func (svc *Service) liveSRSide(chain []orderexec.OptionContract, opt string, now time.Time) *srSideView {
+func (svc *Service) liveSRSide(chain []instruments.OptionContract, opt string, now time.Time) *srSideView {
 	premium := svc.srPremium(now, opt)
 	ev, err := evalSRContracts(chain, opt, now, svc.srGreekLimits(), premium)
 	if err != nil {
@@ -230,7 +231,7 @@ func (svc *Service) strikeSelLoop(ctx context.Context) {
 // SR buys when it is not the nearest one (SRMinDTE skips a next-day expiry):
 // the main ladder only covers the nearest expiry, and without ticks those
 // contracts have no premium and are rejected.
-func (svc *Service) subscribeSRExpiryLadder(ctx context.Context, chain []orderexec.OptionContract, now time.Time) {
+func (svc *Service) subscribeSRExpiryLadder(ctx context.Context, chain []instruments.OptionContract, now time.Time) {
 	lim := svc.srGreekLimits()
 	if lim.MinDTE <= 1 || svc.orderExecutor == nil {
 		return
@@ -319,7 +320,7 @@ func (svc *Service) refreshStrikeSel(ctx context.Context, now time.Time) {
 }
 
 // recordSRPick stores the contract bought for an SR entry and publishes it.
-func (svc *Service) recordSRPick(sig strategy.Signal, c orderexec.OptionContract, premium float64, now time.Time) {
+func (svc *Service) recordSRPick(sig strategy.Signal, c instruments.OptionContract, premium float64, now time.Time) {
 	last := &srLastPickView{
 		srContractView: svc.contractView(c, premium, now),
 		Side:           string(sig.Side),

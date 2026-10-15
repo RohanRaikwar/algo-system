@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/strategy"
 )
 
@@ -60,7 +61,7 @@ func (svc *Service) publishAdvice(ctx context.Context, sig strategy.Signal, now 
 	}
 	pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if err := svc.redisWriter.Client().Publish(pctx, "pub:signal", string(payload)).Err(); err != nil {
+	if err := svc.redisWriter.Client().Publish(pctx, model.SignalChannel, string(payload)).Err(); err != nil {
 		log.Printf("[stratengine] advice publish error: %v", err)
 	}
 	log.Printf("[stratengine] ADVICE (no order): %s %s %s fno=%s ltp=%d — %s",
@@ -75,15 +76,15 @@ func (svc *Service) adviceContract(sig *strategy.Signal, now time.Time) error {
 	var expiry time.Time
 	strike := sig.Strike
 	if svc.isSRSignal(sig) {
-		if chain, err := svc.optionChain(now); err == nil {
+		if chain, err := svc.entryChain(now); err == nil {
 			lim := svc.srGreekLimits()
 			lim.TargetMove = sig.TargetMove
-			if c, err := selectSRContract(chain, opt, now, lim, svc.srPremium(now, opt)); err == nil {
+			if c, err := selectSRContract(chain, opt, now, lim, svc.srPremiumOffline(now, opt)); err == nil {
 				strike, expiry = c.Strike, c.Expiry
 			}
 		}
 	}
-	info, err := svc.resolveOn(now, expiry, strike, opt)
+	info, err := svc.resolveEntryContract(now, expiry, strike, opt)
 	if err != nil {
 		return err
 	}

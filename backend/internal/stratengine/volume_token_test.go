@@ -6,21 +6,21 @@ import (
 	"testing"
 	"time"
 
-	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/instruments"
 	"trading-systemv1/internal/strategy"
 )
 
 type fakeFutures struct {
-	inst *orderexec.Instrument
+	inst *instruments.Instrument
 	err  error
 }
 
-func (f fakeFutures) NearestFuture(string, time.Time) (*orderexec.Instrument, error) { return f.inst, f.err }
+func (f fakeFutures) NearestFuture(string, time.Time) (*instruments.Instrument, error) { return f.inst, f.err }
 
 func TestRefreshVolumeToken(t *testing.T) {
 	var sent []string
 	svc := &Service{cfg: Config{SREnabled: true, FNOExchange: "NFO"}, srStrategy: strategy.NewNifty50SR(1, strategy.DefaultNifty50SRConfig())}
-	svc.futures = fakeFutures{inst: &orderexec.Instrument{Token: "35001", Symbol: "NIFTY28OCT26FUT"}}
+	svc.futures = fakeFutures{inst: &instruments.Instrument{Token: "35001", Symbol: "NIFTY28OCT26FUT"}}
 	svc.subscribeHook = func(t []string) { sent = append(sent, t...) }
 	svc.refreshVolumeToken(context.Background(), time.Now())
 	if got := svc.srStrategy.Config().VolumeToken; got != "NFO:35001" {

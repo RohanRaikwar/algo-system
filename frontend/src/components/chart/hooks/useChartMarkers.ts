@@ -4,10 +4,12 @@ import { useSignalStore } from '../../../store/useSignalStore';
 import { useRefusedStore } from '../../../store/useRefusedStore';
 import { buildLiveOrderKey, useLiveOrderStore } from '../../../store/useLiveOrderStore';
 import { IST_OFFSET } from '../../../utils/helpers';
-import { reasonWarnings, warnLabel } from '../../sr/srFormat';
+import { reasonWarnings, sourceLabel, warnLabel } from '../../sr/srFormat';
+import { useSRViewFor } from '../../../store/useSRStore';
 import { useMediaQuery, PHONE_QUERY } from '../../../hooks/useMediaQuery';
 import type { LiveOrderStatePayload, SignalRecord } from '../../../types/signal';
 import type { RefusedEntry } from '../../../types/refused';
+import type { SRSweep } from '../../../types/sr';
 import { inferSide, legInfo } from '../../signals/signalAnalytics';
 import { TradeMarkersPrimitive, type TradeMarker } from '../tradeMarkersPrimitive';
 import { isWatchAction, watchExitPricedAtPremium } from '../../signals/watch';
@@ -197,6 +199,7 @@ export function buildChartMarkers(
     tfSec: number,
     compact: boolean,
     liveOrders: Record<string, LiveOrderStatePayload> = {},
+    sweeps: readonly SRSweep[] = [],
 ): TradeMarker[] {
     const out: TradeMarker[] = [];
 
@@ -286,8 +289,24 @@ export function buildChartMarkers(
         out.push({ time, kind: 'refused', label: label('REFUSED', r.side, compact), side: sideShort(r.side), lines });
     }
 
+    // SR liquidity sweeps of the selected index (the view is already per index):
+    // card above a high sweep, below a low one.
+    for (const sw of sweeps) {
+        const time = bucketTime(sw.ts, tfSec);
+        if (time === null) continue;
+        const high = sw.side === 'HIGH';
+        const lines = compact ? [] : [
+            metaLine('SR', sw.ts, sourceLabel(sw.source)),
+            `Level ${rupees(sw.level)} · wick ${sw.wick / 100} pts`,
+            high ? 'Closed back below: CALLs flagged' : 'Closed back above: PUTs flagged',
+        ];
+        out.push({ time, kind: 'sweep', label: compact ? '' : `${high ? 'HIGH' : 'LOW'} SWEEP`, side: '', lines, below: !high });
+    }
+
     return out.sort((a, b) => a.time - b.time);
 }
+
+const NO_SWEEPS: readonly SRSweep[] = [];
 
 export function useChartMarkers(
     candleSeries: MutableRefObject<ISeriesApi<'Candlestick'> | null>,
@@ -297,6 +316,7 @@ export function useChartMarkers(
     const signals = useSignalStore(s => s.signals);
     const refused = useRefusedStore(s => s.entries);
     const liveOrders = useLiveOrderStore(s => s.ordersByKey);
+    const sweeps = useSRViewFor(selectedToken)?.sweeps ?? NO_SWEEPS;
     // Re-evaluated on resize/rotate, so badges switch to compact live.
     const compact = useMediaQuery(PHONE_QUERY);
     const lastFingerprint = useRef<string>('');
@@ -313,12 +333,13 @@ export function useChartMarkers(
         const fp = `${selectedToken}::${selectedTF}::${compact}::`
             + signals.map(s => `${s.id}:${s.action}:${s.price ?? ''}:${s.qty ?? ''}:${s.reason?.length ?? 0}:${s.pick ?? ''}`).join('|')
             + '::' + refused.map(r => r.ts).join('|')
-            + '::' + Object.entries(liveOrders).map(([k, o]) => `${k}:${o.current_fno_price ?? 0}`).join('|');
+            + '::' + Object.entries(liveOrders).map(([k, o]) => `${k}:${o.current_fno_price ?? 0}`).join('|')
+            + '::' + sweeps.map(sw => `${sw.ts}:${sw.level}`).join('|');
         if (fp === lastFingerprint.current) return;
         lastFingerprint.current = fp;
 
-        primitive.current.setMarkers(buildChartMarkers(signals, refused, selectedToken, selectedTF || 60, compact, liveOrders));
-    }, [signals, refused, liveOrders, selectedToken, selectedTF, candleSeries, compact]);
+        primitive.current.setMarkers(buildChartMarkers(signals, refused, selectedToken, selectedTF || 60, compact, liveOrders, sweeps));
+    }, [signals, refused, liveOrders, sweeps, selectedToken, selectedTF, candleSeries, compact]);
 
     useEffect(() => () => {
         if (primitive.current) candleSeries.current?.detachPrimitive(primitive.current);

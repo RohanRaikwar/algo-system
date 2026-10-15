@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"trading-systemv1/internal/model"
 )
 
 // Notification is the JSON payload the service worker (frontend/src/sw.ts)
@@ -116,20 +118,6 @@ func joinReason(body, reason string) string {
 	return body + "\n" + reason
 }
 
-// refusedEntry and refusedView mirror stratengine/refused.go.
-type refusedEntry struct {
-	Strategy string `json:"strategy"`
-	Side     string `json:"side"`
-	Strike   int64  `json:"strike,omitempty"`
-	Reason   string `json:"reason"`
-	TS       string `json:"ts"`
-}
-
-type refusedView struct {
-	Date    string         `json:"date"`
-	Entries []refusedEntry `json:"entries"`
-}
-
 // RefusedTracker diffs the full-day pub:refused list so only entries added
 // since the previous message notify. The list is capped and trimmed from the
 // front, so entries are matched by identity, not by position. It is not safe
@@ -137,19 +125,19 @@ type refusedView struct {
 type RefusedTracker struct {
 	primed bool
 	date   string
-	seen   map[refusedEntry]bool
+	seen   map[model.RefusedEntry]bool
 }
 
 // Next returns notifications for entries new since the last call. The first
 // call only records the current list: after a gateway restart the whole day
 // would otherwise notify again.
 func (t *RefusedTracker) Next(payload []byte) []Notification {
-	var v refusedView
+	var v model.RefusedView
 	if err := json.Unmarshal(payload, &v); err != nil {
 		return nil
 	}
 	if v.Date != t.date || t.seen == nil {
-		t.date, t.seen = v.Date, make(map[refusedEntry]bool, len(v.Entries))
+		t.date, t.seen = v.Date, make(map[model.RefusedEntry]bool, len(v.Entries))
 	}
 	notify := t.primed
 	t.primed = true

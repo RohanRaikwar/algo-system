@@ -412,15 +412,15 @@ func BuildSnapshotFromRedis(ctx context.Context, rdb *goredis.Client, sub *Clien
 	}
 
 	// 3. Fetch latest Analyst state from Redis KV store
-	if stateData, err := rdb.Get(ctx, "analyst:state:latest").Bytes(); err == nil {
+	if stateData, err := rdb.Get(ctx, model.AnalystStateKey).Bytes(); err == nil {
 		raw := json.RawMessage(stateData)
 		snap.AnalystState = &raw
 	}
-	if levelsData, err := rdb.Get(ctx, "analyst:levels:latest").Bytes(); err == nil {
+	if levelsData, err := rdb.Get(ctx, model.AnalystLevelsKey).Bytes(); err == nil {
 		raw := json.RawMessage(levelsData)
 		snap.AnalystLevels = &raw
 	}
-	if breakoutData, err := rdb.Get(ctx, "analyst:breakout:latest").Bytes(); err == nil {
+	if breakoutData, err := rdb.Get(ctx, model.AnalystBreakoutKey).Bytes(); err == nil {
 		raw := json.RawMessage(breakoutData)
 		snap.AnalystBreakout = &raw
 	}
@@ -503,7 +503,7 @@ func publishNewIndicators(ctx context.Context, rdb *goredis.Client, hub *Hub, ne
 
 	tctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if err := rdb.Publish(tctx, "config:indicators", payload).Err(); err != nil {
+	if err := rdb.Publish(tctx, model.IndicatorConfigChannel, payload).Err(); err != nil {
 		log.Printf("[subscribe] WARNING: failed to publish config:indicators: %v", err)
 	}
 	return true

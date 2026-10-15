@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"trading-systemv1/internal/model"
+	"trading-systemv1/internal/instruments"
 	"trading-systemv1/internal/orderexec"
 	"trading-systemv1/internal/strategy"
 )
@@ -17,12 +18,12 @@ type ladderResolver struct {
 	calls int
 }
 
-func (r *ladderResolver) ResolveStrike(_ time.Time, strike int64, opt string) (orderexec.StrikeInfo, error) {
+func (r *ladderResolver) ResolveStrike(_ time.Time, strike int64, opt string) (instruments.StrikeInfo, error) {
 	r.mu.Lock()
 	r.calls++
 	r.mu.Unlock()
 	tok := opt + itoa(strike)
-	return orderexec.StrikeInfo{Token: tok, Symbol: "NIFTY" + tok, Strike: strike}, nil
+	return instruments.StrikeInfo{Token: tok, Symbol: "NIFTY" + tok, Strike: strike}, nil
 }
 
 func itoa(n int64) string {
@@ -108,9 +109,9 @@ func TestResolveEntryStrikeUsesSignalStrike(t *testing.T) {
 
 type failingResolver struct{ calls int }
 
-func (f *failingResolver) ResolveStrike(time.Time, int64, string) (orderexec.StrikeInfo, error) {
+func (f *failingResolver) ResolveStrike(time.Time, int64, string) (instruments.StrikeInfo, error) {
 	f.calls++
-	return orderexec.StrikeInfo{}, errTest
+	return instruments.StrikeInfo{}, errTest
 }
 
 var errTest = &testErr{}

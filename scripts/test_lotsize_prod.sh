@@ -35,7 +35,7 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "📥 Test 1: Instrument Master Download"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-cd backend/cmd/testlotsize
+cd backend/cmd/tools/testlotsize
 echo "Running: go run main.go"
 echo ""
 go run main.go

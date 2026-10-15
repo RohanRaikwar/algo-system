@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"trading-systemv1/internal/markethours"
+	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/strategy"
 )
 
@@ -18,28 +19,16 @@ import (
 // restart) and published on a full-state channel, so the dashboard can mark
 // them on the chart with the reason.
 const (
-	refusedStateKey     = "refused:state"
-	refusedStateChannel = "pub:refused"
+	refusedStateKey     = model.RefusedKey
+	refusedStateChannel = model.RefusedChannel
 	refusedMax          = 100 // per IST day; oldest dropped first
 )
 
-// RefusedEntry is one blocked entry signal. Strike is in index points.
-type RefusedEntry struct {
-	Strategy       string `json:"strategy"`
-	Side           string `json:"side"`
-	Token          string `json:"token"`
-	Exchange       string `json:"exchange"`
-	Strike         int64  `json:"strike,omitempty"`
-	Reason         string `json:"reason"`          // why it was refused
-	StrategyReason string `json:"strategy_reason"` // why the strategy wanted to enter
-	TS             string `json:"ts"`              // RFC3339 UTC
-}
+// RefusedEntry is one blocked entry signal (shared wire type, see model).
+type RefusedEntry = model.RefusedEntry
 
-// refusedView is the pub:refused payload: today's refused entries, oldest first.
-type refusedView struct {
-	Date    string         `json:"date"` // IST YYYY-MM-DD
-	Entries []RefusedEntry `json:"entries"`
-}
+// refusedView is the pub:refused payload.
+type refusedView = model.RefusedView
 
 type refusedLog struct {
 	mu   sync.Mutex

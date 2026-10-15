@@ -20,17 +20,17 @@ import (
 )
 
 const (
-	reversalChannel   = "pub:analyst:reversal"
-	reversalKey       = "analyst:reversal:latest"
-	posContextChannel = "pub:poscontext"
-	posContextKey     = "poscontext:latest"
-	analystLevelsChan = "pub:analyst:levels"
-	analystLevelsKey  = "analyst:levels:latest"
-	ourSRChannel      = "pub:sr"
-	ourSRKey          = "sr:state"
-	ourSRXChannel     = "pub:srx" // extra underlyings' SR views (SENSEX_SR, …)
-	ourSRXKey         = "srx:state"
-	signalChannel     = "pub:signal"
+	reversalChannel   = model.ReversalChannel
+	reversalKey       = model.ReversalKey
+	posContextChannel = model.PosContextChannel
+	posContextKey     = model.PosContextKey
+	analystLevelsChan = model.AnalystLevelsChannel
+	analystLevelsKey  = model.AnalystLevelsKey
+	ourSRChannel      = model.SRStateChannel
+	ourSRKey          = model.SRStateKey
+	ourSRXChannel     = model.SRXStateChannel // extra underlyings' SR views (SENSEX_SR, …)
+	ourSRXKey         = model.SRXStateKey
+	signalChannel     = model.SignalChannel
 
 	evalEvery   = 250 * time.Millisecond // stall keeps growing between ticks
 	candleEvery = 5 * time.Second        // poll for newly closed 1m index candles
@@ -42,7 +42,8 @@ const (
 // All engine calls happen on the Run goroutine.
 type Service struct {
 	cfg     Config
-	rdb     *goredis.Client
+	rdb     *goredis.Client // heartbeat and Close only; everything else goes through bus
+	bus     bus
 	rec     *Recorder
 	journal *strategy.SignalJournal
 	engine  *Engine
@@ -79,7 +80,7 @@ func New(cfg Config) (*Service, error) {
 		return nil, err
 	}
 	svc := &Service{
-		cfg: cfg, rdb: rdb, rec: rec,
+		cfg: cfg, rdb: rdb, bus: redisBus{rdb}, rec: rec,
 		tickCh:   make(chan model.Tick, 4096),
 		posCh:    make(chan []model.PositionContext, 8),
 		candleCh: make(chan model.TFCandle, 512),
@@ -201,9 +202,8 @@ func splitKey(k string) (exch, token string) {
 
 // subscribeTicks decodes only ticks whose channel token the engine wants.
 func (svc *Service) subscribeTicks(ctx context.Context) {
-	ps := svc.rdb.PSubscribe(ctx, "pub:tick:*")
-	defer ps.Close()
-	ch := ps.Channel()
+	ch, closeSub := svc.bus.PSubscribe(ctx, model.TickChannelPattern)
+	defer closeSub()
 	for {
 		select {
 		case <-ctx.Done():
@@ -229,9 +229,8 @@ func (svc *Service) subscribeTicks(ctx context.Context) {
 }
 
 func (svc *Service) subscribePositions(ctx context.Context) {
-	ps := svc.rdb.Subscribe(ctx, posContextChannel)
-	defer ps.Close()
-	ch := ps.Channel()
+	ch, closeSub := svc.bus.Subscribe(ctx, posContextChannel)
+	defer closeSub()
 	for {
 		select {
 		case <-ctx.Done():
@@ -246,11 +245,11 @@ func (svc *Service) subscribePositions(ctx context.Context) {
 }
 
 func (svc *Service) loadInitialPositions(ctx context.Context) {
-	b, err := svc.rdb.Get(ctx, posContextKey).Bytes()
+	b, ok, err := svc.bus.Get(ctx, posContextKey)
 	if err != nil {
-		if err != goredis.Nil {
-			log.Printf("[exitwatch] read %s: %v", posContextKey, err)
-		}
+		log.Printf("[exitwatch] read %s: %v", posContextKey, err)
+	}
+	if !ok {
 		return
 	}
 	svc.handlePositions(ctx, b)
@@ -295,18 +294,14 @@ func (svc *Service) candleLoop(ctx context.Context) {
 func (svc *Service) readCandles(ctx context.Context, key, from string) string {
 	// from is the session open on the first read (inclusive), then
 	// "(<last id>" (exclusive range start, Redis >= 6.2).
-	msgs, err := svc.rdb.XRange(ctx, "candle:60s:"+key, from, "+").Result()
+	msgs, err := svc.bus.XRange(ctx, "candle:60s:"+key, from)
 	if err != nil {
 		log.Printf("[exitwatch] candle read %s: %v", key, err)
 		return from
 	}
 	for _, msg := range msgs {
-		data, ok := msg.Values["data"].(string)
-		if !ok {
-			continue
-		}
 		var c model.TFCandle
-		if json.Unmarshal([]byte(data), &c) != nil || c.Forming {
+		if json.Unmarshal([]byte(msg.Data), &c) != nil || c.Forming {
 			continue
 		}
 		select {
@@ -375,10 +370,10 @@ func (svc *Service) publishLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case b := <-svc.pubCh:
-			if err := svc.rdb.Set(ctx, reversalKey, b, 24*time.Hour).Err(); err != nil {
+			if err := svc.bus.Set(ctx, reversalKey, b, 24*time.Hour); err != nil {
 				log.Printf("[exitwatch] store error: %v", err)
 			}
-			if err := svc.rdb.Publish(ctx, reversalChannel, string(b)).Err(); err != nil {
+			if err := svc.bus.Publish(ctx, reversalChannel, string(b)); err != nil {
 				log.Printf("[exitwatch] publish error: %v", err)
 			}
 		}
@@ -437,9 +432,8 @@ func (svc *Service) startHTTP(ctx context.Context) {
 // ── S/R level feeds ──
 
 func (svc *Service) subscribeLevels(ctx context.Context) {
-	ps := svc.rdb.Subscribe(ctx, analystLevelsChan, ourSRChannel, ourSRXChannel)
-	defer ps.Close()
-	ch := ps.Channel()
+	ch, closeSub := svc.bus.Subscribe(ctx, analystLevelsChan, ourSRChannel, ourSRXChannel)
+	defer closeSub()
 	for {
 		select {
 		case <-ctx.Done():
@@ -462,19 +456,20 @@ func (svc *Service) loadInitialLevels(ctx context.Context) {
 		key   string
 		ourSR bool
 	}{{analystLevelsKey, false}, {ourSRKey, true}} {
-		b, err := svc.rdb.Get(ctx, src.key).Bytes()
+		b, ok, err := svc.bus.Get(ctx, src.key)
 		if err != nil {
-			if err != goredis.Nil {
-				log.Printf("[exitwatch] read %s: %v", src.key, err)
-			}
-			continue
+			log.Printf("[exitwatch] read %s: %v", src.key, err)
 		}
-		svc.handleLevels(ctx, src.ourSR, b)
+		if ok {
+			svc.handleLevels(ctx, src.ourSR, b)
+		}
 	}
-	if b, err := svc.rdb.Get(ctx, ourSRXKey).Bytes(); err == nil {
-		svc.handleSRXLevels(ctx, b)
-	} else if err != goredis.Nil {
+	b, ok, err := svc.bus.Get(ctx, ourSRXKey)
+	if err != nil {
 		log.Printf("[exitwatch] read %s: %v", ourSRXKey, err)
+	}
+	if ok {
+		svc.handleSRXLevels(ctx, b)
 	}
 }
 
@@ -519,7 +514,7 @@ func (svc *Service) ExitRequest(r model.ExitRequest) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if err := svc.rdb.Publish(ctx, model.ExitRequestChannel, string(b)).Err(); err != nil {
+	if err := svc.bus.Publish(ctx, model.ExitRequestChannel, string(b)); err != nil {
 		log.Printf("[exitwatch] exit request publish error: %v", err)
 		return
 	}
@@ -550,7 +545,7 @@ func (svc *Service) signalLoop(ctx context.Context) {
 				continue
 			}
 			if b, err := json.Marshal(ev); err == nil {
-				if err := svc.rdb.Publish(ctx, signalChannel, string(b)).Err(); err != nil {
+				if err := svc.bus.Publish(ctx, signalChannel, string(b)); err != nil {
 					log.Printf("[exitwatch] signal publish error: %v", err)
 				}
 			}

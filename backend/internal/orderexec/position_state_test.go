@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"trading-systemv1/internal/strategy"
+	"trading-systemv1/internal/model"
 	"trading-systemv1/pkg/smartconnect"
 )
 
@@ -14,8 +14,8 @@ import (
 func TestRealBuy_SameSideWhileOpen_Refused(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := liveExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	if n := f.placedCount(); n != 1 {
 		t.Fatalf("placed %d orders, want 1 — same-side BUY doubled the position", n)
 	}
@@ -25,7 +25,7 @@ func TestRealBuy_SameSideWhileOpen_Refused(t *testing.T) {
 func TestRealSell_WithoutRealEntry_NotSent(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := liveExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionExit))
+	oe.ExecuteSignal(realSig(model.ActionExit))
 	if n := f.placedCount(); n != 0 {
 		t.Fatalf("sent %d real SELLs with no real entry — naked short risk", n)
 	}
@@ -36,18 +36,18 @@ func TestRealSell_WithoutRealEntry_NotSent(t *testing.T) {
 func TestRealExit_NotComplete_KeepsProtectionUntilFilled(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := liveExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	waitFor(t, "entry GTTs", func() bool {
-		e, _ := entryFor(oe, realSig(strategy.ActionBuy))
+		e, _ := entryFor(oe, realSig(model.ActionBuy))
 		return e.GttRuleID != "" && e.GttSLRuleID != ""
 	})
 
 	f.mu.Lock()
 	f.autoStatus = "open"
 	f.mu.Unlock()
-	oe.ExecuteSignal(realSig(strategy.ActionExit))
+	oe.ExecuteSignal(realSig(model.ActionExit))
 
-	if _, ok := entryFor(oe, realSig(strategy.ActionExit)); !ok {
+	if _, ok := entryFor(oe, realSig(model.ActionExit)); !ok {
 		t.Fatal("entry removed while exit still open")
 	}
 	if c := f.cancelled(); len(c) != 0 {
@@ -59,7 +59,7 @@ func TestRealExit_NotComplete_KeepsProtectionUntilFilled(t *testing.T) {
 
 	f.setRow(map[string]any{"orderid": "OID-2", "orderstatus": "complete", "averageprice": 110.0})
 	waitFor(t, "exit finalised", func() bool {
-		_, ok := entryFor(oe, realSig(strategy.ActionExit))
+		_, ok := entryFor(oe, realSig(model.ActionExit))
 		return !ok && !inCall(oe) && len(f.cancelled()) == 2
 	})
 }
@@ -68,12 +68,12 @@ func TestRealExit_NotComplete_KeepsProtectionUntilFilled(t *testing.T) {
 func TestRealExit_PendingExit_NoSecondSell(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := liveExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	f.mu.Lock()
 	f.autoStatus = "open"
 	f.mu.Unlock()
-	oe.ExecuteSignal(realSig(strategy.ActionExit))
-	oe.ExecuteSignal(realSig(strategy.ActionExit))
+	oe.ExecuteSignal(realSig(model.ActionExit))
+	oe.ExecuteSignal(realSig(model.ActionExit))
 	if n := f.placedCount(); n != 2 {
 		t.Fatalf("placed %d orders, want 2 (BUY + one SELL)", n)
 	}
@@ -86,11 +86,11 @@ func TestRealSell_DuringInFlightBuy_Serialised(t *testing.T) {
 	oe := liveExecutor(t, f)
 
 	buyDone := make(chan struct{})
-	go func() { oe.ExecuteSignal(realSig(strategy.ActionBuy)); close(buyDone) }()
+	go func() { oe.ExecuteSignal(realSig(model.ActionBuy)); close(buyDone) }()
 	time.Sleep(10 * time.Millisecond) // BUY now blocked inside PlaceOrder
 
 	sellDone := make(chan struct{})
-	go func() { oe.ExecuteSignal(realSig(strategy.ActionExit)); close(sellDone) }()
+	go func() { oe.ExecuteSignal(realSig(model.ActionExit)); close(sellDone) }()
 	time.Sleep(10 * time.Millisecond)
 
 	close(f.placeGate)
@@ -110,13 +110,13 @@ func TestRealBuy_UnknownState_AdoptedFromBook(t *testing.T) {
 	unknown := fmt.Errorf("%w: timeout", smartconnect.ErrOutcomeUnknown)
 	f := &fakeAPI{placeErr: []error{unknown, unknown}, bookErr: errors.New("down")}
 	oe := liveExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 
-	e, ok := entryFor(oe, realSig(strategy.ActionBuy))
+	e, ok := entryFor(oe, realSig(model.ActionBuy))
 	if !ok || !e.Real {
 		t.Fatalf("unknown BUY must leave a provisional real entry, got %+v ok=%v", e, ok)
 	}
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	if f.placedCount() != 1 {
 		t.Fatal("second BUY sent while first is in unknown state")
 	}
@@ -128,7 +128,7 @@ func TestRealBuy_UnknownState_AdoptedFromBook(t *testing.T) {
 	f.mu.Unlock()
 
 	waitFor(t, "adoption", func() bool {
-		e, _ := entryFor(oe, realSig(strategy.ActionBuy))
+		e, _ := entryFor(oe, realSig(model.ActionBuy))
 		return e.OrderID == "BRK-7" && e.Price == 10150 && e.GttRuleID != "" && e.GttSLRuleID != ""
 	})
 }
@@ -138,12 +138,12 @@ func TestRealBuy_UnknownState_AbsentCleared(t *testing.T) {
 	unknown := fmt.Errorf("%w: timeout", smartconnect.ErrOutcomeUnknown)
 	f := &fakeAPI{placeErr: []error{unknown}, bookErr: errors.New("down")}
 	oe := liveExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	f.mu.Lock()
 	f.bookErr = nil // book readable, order absent
 	f.mu.Unlock()
 	waitFor(t, "provisional entry cleared", func() bool {
-		_, ok := entryFor(oe, realSig(strategy.ActionBuy))
+		_, ok := entryFor(oe, realSig(model.ActionBuy))
 		return !ok && !inCall(oe)
 	})
 }
@@ -152,13 +152,13 @@ func TestRealBuy_UnknownState_AbsentCleared(t *testing.T) {
 func TestRealEntry_NotLive_ExitKeepsState(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := liveExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	oe.mu.Lock()
 	oe.sessionOK = false
 	oe.mu.Unlock()
 
-	oe.ExecuteSignal(realSig(strategy.ActionExit))
-	if _, ok := entryFor(oe, realSig(strategy.ActionExit)); !ok {
+	oe.ExecuteSignal(realSig(model.ActionExit))
+	if _, ok := entryFor(oe, realSig(model.ActionExit)); !ok {
 		t.Fatal("real entry erased by a paper exit — broker still holds the position")
 	}
 	if !inCall(oe) {
@@ -171,11 +171,11 @@ func TestRealEntry_NotLive_ExitKeepsState(t *testing.T) {
 func TestResumeSettlement_PendingExitAfterRestart(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := liveExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	f.mu.Lock()
 	f.autoStatus = "open"
 	f.mu.Unlock()
-	oe.ExecuteSignal(realSig(strategy.ActionExit))
+	oe.ExecuteSignal(realSig(model.ActionExit))
 	data, err := oe.Snapshot()
 	if err != nil {
 		t.Fatal(err)
@@ -188,7 +188,7 @@ func TestResumeSettlement_PendingExitAfterRestart(t *testing.T) {
 	f.setRow(map[string]any{"orderid": "OID-2", "orderstatus": "complete", "averageprice": 105.0})
 	restarted.ResumeSettlement()
 	waitFor(t, "resumed exit settles", func() bool {
-		_, ok := entryFor(restarted, realSig(strategy.ActionExit))
+		_, ok := entryFor(restarted, realSig(model.ActionExit))
 		return !ok && !inCall(restarted)
 	})
 }

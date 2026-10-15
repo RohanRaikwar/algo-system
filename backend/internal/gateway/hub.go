@@ -254,12 +254,12 @@ func (h *Hub) buildChannels() []string {
 	// to support dynamic indicator additions without explicit resubscribe.
 	for _, tf := range h.TFs {
 		for _, tok := range h.Tokens {
-			ch := fmt.Sprintf("pub:candle:%ds:%s", tf, tok)
+			ch := fmt.Sprintf("%s%ds:%s", model.CandleChannelPrefix, tf, tok)
 			channels = append(channels, ch)
 		}
 	}
 	for _, tok := range h.Tokens {
-		ch := fmt.Sprintf("pub:candle:1s:%s", tok)
+		ch := model.Candle1sChannelPref + tok
 		channels = append(channels, ch)
 	}
 	return channels
@@ -443,13 +443,13 @@ func buildMissedResponse(h *Hub, channel string, fromSeq, toSeq int64, clientEpo
 // key stratengine writes alongside each publish (fallback after a gateway
 // restart, before the first publish reaches this process).
 var liveStateChannels = []struct{ channel, key string }{
-	{"pub:orders", "orders:live"},
-	{"pub:pnl", "pnl:summary"},
-	{"pub:sr", "sr:state"},
-	{"pub:srx", "srx:state"},
-	{"pub:refused", "refused:state"},
-	{"pub:strikesel", "strikesel:state"},
-	{"pub:strikeselx", "strikeselx:state"},
+	{model.OrdersChannel, model.OrdersKey},
+	{model.PnLChannel, model.PnLKey},
+	{model.SRStateChannel, model.SRStateKey},
+	{model.SRXStateChannel, model.SRXStateKey},
+	{model.RefusedChannel, model.RefusedKey},
+	{model.StrikeSelChannel, model.StrikeSelKey},
+	{model.StrikeSelXChannel, model.StrikeSelXKey},
 }
 
 // snapshotSignalCount is how many recent pub:signal envelopes a SNAPSHOT
@@ -473,7 +473,7 @@ func (h *Hub) attachLiveState(snap *SnapshotResponse, fallback func(key string) 
 		}
 	}
 	// Signal envelopes are pushed under h.mu, so these match snap.Epoch.
-	if rb := h.replayBufs["pub:signal"]; rb != nil {
+	if rb := h.replayBufs[model.SignalChannel]; rb != nil {
 		for _, e := range rb.Last(snapshotSignalCount) {
 			snap.Signals = append(snap.Signals, json.RawMessage(e.Data))
 		}
@@ -493,19 +493,19 @@ func (h *Hub) attachLiveState(snap *SnapshotResponse, fallback func(key string) 
 		}
 		raw := json.RawMessage(vals[i])
 		switch lc.channel {
-		case "pub:orders":
+		case model.OrdersChannel:
 			snap.Orders = &raw
-		case "pub:pnl":
+		case model.PnLChannel:
 			snap.PnL = &raw
-		case "pub:sr":
+		case model.SRStateChannel:
 			snap.SR = &raw
-		case "pub:srx":
+		case model.SRXStateChannel:
 			snap.SRX = &raw
-		case "pub:refused":
+		case model.RefusedChannel:
 			snap.Refused = &raw
-		case "pub:strikesel":
+		case model.StrikeSelChannel:
 			snap.StrikeSel = &raw
-		case "pub:strikeselx":
+		case model.StrikeSelXChannel:
 			snap.StrikeSelX = &raw
 		}
 	}
@@ -522,10 +522,10 @@ const (
 // channels whose latest value must survive long quiet periods.
 func isStickyChannel(ch string) bool {
 	switch ch {
-	case "pub:orders", "pub:pnl", "pub:signal", "pub:strike", "pub:sr", "pub:srx", "pub:refused", "pub:strikesel", "pub:strikeselx":
+	case model.OrdersChannel, model.PnLChannel, model.SignalChannel, model.StrikeChannel, model.SRStateChannel, model.SRXStateChannel, model.RefusedChannel, model.StrikeSelChannel, model.StrikeSelXChannel:
 		return true
 	}
-	return strings.HasPrefix(ch, "pub:analyst:")
+	return strings.HasPrefix(ch, model.AnalystChannelPref)
 }
 
 // sweepIdleChannels evicts non-sticky channels with no message since now-idle

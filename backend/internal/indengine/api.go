@@ -57,7 +57,7 @@ func (svc *Service) handleReload(w http.ResponseWriter, r *http.Request) {
 // startConfigSubscriber listens on Redis PubSub for dynamic indicator config updates.
 func (svc *Service) startConfigSubscriber(ctx context.Context) {
 	go func() {
-		pubsub := svc.redisReader.SubscribeChannel(ctx, "config:indicators")
+		pubsub := svc.redisReader.SubscribeChannel(ctx, model.IndicatorConfigChannel)
 		if pubsub == nil {
 			log.Println("[indengine] WARNING: could not subscribe to config:indicators")
 			return

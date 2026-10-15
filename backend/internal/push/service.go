@@ -6,11 +6,13 @@ import (
 	"time"
 
 	goredis "github.com/go-redis/redis/v8"
+
+	"trading-systemv1/internal/model"
 )
 
 const (
-	signalChannel  = "pub:signal"
-	refusedChannel = "pub:refused"
+	signalChannel  = model.SignalChannel
+	refusedChannel = model.RefusedChannel
 
 	backoffMin = 500 * time.Millisecond
 	backoffMax = 30 * time.Second

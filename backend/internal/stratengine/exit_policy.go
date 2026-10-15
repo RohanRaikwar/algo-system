@@ -15,7 +15,7 @@ import (
 
 // exitPolicyReloadChannel re-reads STRAT_EXITPOLICY_FILE. The new config
 // applies to positions opened afterwards; open positions keep their plan.
-const exitPolicyReloadChannel = "cmd:exitpolicy:reload"
+const exitPolicyReloadChannel = model.ExitPolicyReloadChannel
 
 // exitPolicyOwner is the strategy a policy decision closes: it books and
 // resets its own state and returns the exit signal.

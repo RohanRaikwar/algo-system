@@ -28,7 +28,7 @@ Where the logs live:
 
 ### 0.2 Check the broker (source of truth)
 
-- **Order book:** Angel One web or app → Orders. Or run `cd backend && go run ./cmd/listorders` (it reads `.env.prod`). Or call `GET /api/account/orders` on the gateway.
+- **Order book:** Angel One web or app → Orders. Or run `cd backend && go run ./cmd/tools/listorders` (it reads `.env.prod`). Or call `GET /api/account/orders` on the gateway.
   - Every real order carries `ordertag` = the 16-hex idempotency key logged as `🔑 idempotency_key=<K>`.
   - The single allowed resend carries `<K>R` (`orderexec/reconcile.go`, `retryTag`).
 - **Positions:** Angel One → Positions. Check `netqty` for the option symbol. Quantity is `STRAT_QTY` (65 in `.env.prod`).

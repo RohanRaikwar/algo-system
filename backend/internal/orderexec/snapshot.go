@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"trading-systemv1/internal/strategy"
+	"trading-systemv1/internal/model"
 )
 
 // executorSnapshot is the executor state that must survive a restart: which
@@ -21,7 +21,7 @@ type executorSnapshot struct {
 
 // Snapshot serialises executor position state for persistence.
 func (oe *OrderExecutor) Snapshot() ([]byte, error) {
-	inCall, inPut := oe.sideOpen(strategy.SideCall), oe.sideOpen(strategy.SidePut)
+	inCall, inPut := oe.sideOpen(model.SideCall), oe.sideOpen(model.SidePut)
 	oe.mu.RLock()
 	defer oe.mu.RUnlock()
 	return json.Marshal(executorSnapshot{

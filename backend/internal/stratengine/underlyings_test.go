@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"trading-systemv1/internal/model"
+	"trading-systemv1/internal/instruments"
 	"trading-systemv1/internal/orderexec"
 	"trading-systemv1/internal/strategy"
 )
@@ -16,14 +17,14 @@ import (
 // "<strike><opt>".
 type fakeExtraRes struct{ calls []string }
 
-func (f *fakeExtraRes) ResolveStrike(_ time.Time, strike int64, opt string) (orderexec.StrikeInfo, error) {
+func (f *fakeExtraRes) ResolveStrike(_ time.Time, strike int64, opt string) (instruments.StrikeInfo, error) {
 	return f.ResolveStrikeOn(time.Time{}, strike, opt)
 }
 
-func (f *fakeExtraRes) ResolveStrikeOn(exp time.Time, strike int64, opt string) (orderexec.StrikeInfo, error) {
+func (f *fakeExtraRes) ResolveStrikeOn(exp time.Time, strike int64, opt string) (instruments.StrikeInfo, error) {
 	f.calls = append(f.calls, fmt.Sprintf("%d%s", strike, opt))
 	tok := fmt.Sprintf("%d%s", strike, opt)
-	return orderexec.StrikeInfo{Token: tok, Symbol: "SENSEX" + tok, Strike: strike, LotSize: 20}, nil
+	return instruments.StrikeInfo{Token: tok, Symbol: "SENSEX" + tok, Strike: strike, LotSize: 20}, nil
 }
 
 func (f *fakeExtraRes) NextExpiry(time.Time) time.Time { return testExpiry }
@@ -88,7 +89,7 @@ func TestResolveExtraEntry_GreeksPickOwnContract(t *testing.T) {
 	svc, ex := sensexService(t)
 	res := &fakeExtraRes{}
 	ex.res = res
-	ex.greeks = &fakeGreeks{chain: []orderexec.OptionContract{
+	ex.greeks = &fakeGreeks{chain: []instruments.OptionContract{
 		srContract(81000, "CE", 0.70, 0.001, -20, 500, testExpiry),
 		srContract(81200, "CE", 0.52, 0.001, -20, 400, testExpiry),
 		srContract(81500, "CE", 0.35, 0.001, -20, 300, testExpiry),
@@ -98,6 +99,9 @@ func TestResolveExtraEntry_GreeksPickOwnContract(t *testing.T) {
 	now := time.Date(2026, 9, 30, 10, 0, 0, 0, istSR)
 
 	sig := strategy.Signal{StrategyName: "SENSEX_SR", Action: strategy.ActionBuy, Side: strategy.SideCall, Strike: 81100}
+	if _, err := svc.extraChain(ex, now); err != nil { // off-path warm-up
+		t.Fatal(err)
+	}
 	err := svc.resolveExtraEntry(context.Background(), ex, &sig, now)
 	if err == nil || !strings.Contains(err.Error(), "no premium") || len(subscribed) != 1 || subscribed[0] != "81200CE" {
 		t.Fatalf("want refusal + subscribe 81200CE, got err=%v subscribed=%v", err, subscribed)
@@ -193,7 +197,7 @@ func TestExtraStrikeSel_Published(t *testing.T) {
 	svc, ex := sensexService(t)
 	svc.cfg.SREnabled = true
 	ex.res = &fakeExtraRes{}
-	ex.greeks = &fakeGreeks{chain: []orderexec.OptionContract{
+	ex.greeks = &fakeGreeks{chain: []instruments.OptionContract{
 		srContract(81200, "CE", 0.52, 0.001, -20, 400, testExpiry),
 		srContract(81200, "PE", -0.50, 0.001, -20, 380, testExpiry),
 	}}

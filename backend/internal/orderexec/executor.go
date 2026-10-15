@@ -20,13 +20,13 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"trading-systemv1/internal/circuitbreaker"
 	"trading-systemv1/internal/metrics"
 	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/oms"
-	"trading-systemv1/internal/strategy"
 	"trading-systemv1/pkg/smartconnect"
 
 	"github.com/pquerna/otp/totp"
@@ -37,6 +37,10 @@ import (
 type Config struct {
 	LiveOrders bool  // true = place real orders, false = dry-run (log only)
 	Qty        int64 // quantity per paper trade
+
+	// LotSizeOf returns a contract's exchange lot size (the instrument
+	// master). Nil refuses every real entry: its size is unknown.
+	LotSizeOf func(symbol string) (int64, error)
 
 	// LiveStrategies names the strategies allowed to send real orders.
 	// A real order still needs LiveOrders and a live session as well.
@@ -154,7 +158,7 @@ type OrderExecutor struct {
 	prom *metrics.Metrics
 
 	// Optional dynamic strike picker; set via SetStrikePicker.
-	picker *StrikePicker
+	picker atomic.Pointer[contractRef] // swapped by stratengine's ATM goroutine
 
 	// Optional PnL tracker for profit cap checking; set via SetPnLTracker.
 	pnlTracker PnLTracker
@@ -193,7 +197,7 @@ type OrderExecutor struct {
 // simulated at LTP for a paper one. P&L is recorded from these, not from
 // signals, so an order that never filled never shows as a trade.
 type FillReport struct {
-	Signal         strategy.Signal
+	Signal         model.Signal
 	Direction      string // BUY or SELL
 	FillPricePaise int64
 	Qty            int64 // filled quantity
@@ -288,19 +292,21 @@ func NewOrderExecutor(cfg Config) *OrderExecutor {
 	cfg.RLWindow = rlWindow
 
 	oe := &OrderExecutor{
-		cfg:          cfg,
-		ltp:          make(map[string]int64),
-		inflight:     make(map[string]inflightBuy),
-		positionInst: make(map[string]fnoInstrument),
-		entryOrders:  make(map[string]OrderRecord),
-		exitRetries:  make(map[string]int),
-		live:         cfg.LiveOrders,
-		cb:           circuitbreaker.NewCircuitBreaker(cbMaxFailures, cbTimeout),
-		rl:           NewRateLimiter(rlMaxOrders, rlWindow),
-		lotSizeOf: func(symbol string) (int64, error) {
-			return GetInstrumentMaster().GetLotSize(symbol)
-		},
+		cfg:            cfg,
+		ltp:            make(map[string]int64),
+		inflight:       make(map[string]inflightBuy),
+		positionInst:   make(map[string]fnoInstrument),
+		entryOrders:    make(map[string]OrderRecord),
+		exitRetries:    make(map[string]int),
+		live:           cfg.LiveOrders,
+		cb:             circuitbreaker.NewCircuitBreaker(cbMaxFailures, cbTimeout),
+		rl:             NewRateLimiter(rlMaxOrders, rlWindow),
+		lotSizeOf:      cfg.LotSizeOf,
 		liveStrategies: liveStrategies,
+	}
+
+	if oe.lotSizeOf == nil {
+		oe.lotSizeOf = noLotSize
 	}
 
 	prefix := cfg.LogPrefix
@@ -438,8 +444,8 @@ func (oe *OrderExecutor) logPrefix() string {
 // When set, ExecuteSignal uses the picker's resolved tokens instead of
 // the static config tokens. If the picker is nil or not yet resolved,
 // static config tokens are used as fallback.
-func (oe *OrderExecutor) SetStrikePicker(picker *StrikePicker) {
-	oe.picker = picker
+func (oe *OrderExecutor) SetStrikePicker(picker ContractSource) {
+	oe.picker.Store(&contractRef{picker})
 	log.Printf("%s 🎯 dynamic strike picker attached", oe.logPrefix())
 }
 
@@ -537,14 +543,14 @@ func (oe *OrderExecutor) reportMetrics() {
 	oe.prom.OrderRLCount.Set(float64(oe.rl.Count()))
 }
 
-func (oe *OrderExecutor) positionKey(sig strategy.Signal) string {
+func (oe *OrderExecutor) positionKey(sig model.Signal) string {
 	if sig.Leg != "" {
 		return sig.StrategyName + "|" + string(sig.Side) + "|" + sig.Leg
 	}
 	return sig.StrategyName + "|" + string(sig.Side)
 }
 
-func (oe *OrderExecutor) getPositionInstrument(sig strategy.Signal) (fnoInstrument, bool) {
+func (oe *OrderExecutor) getPositionInstrument(sig model.Signal) (fnoInstrument, bool) {
 	key := oe.positionKey(sig)
 	oe.mu.RLock()
 	inst, ok := oe.positionInst[key]
@@ -552,24 +558,24 @@ func (oe *OrderExecutor) getPositionInstrument(sig strategy.Signal) (fnoInstrume
 	return inst, ok
 }
 
-func (oe *OrderExecutor) setPositionInstrument(sig strategy.Signal, token, symbol string) {
+func (oe *OrderExecutor) setPositionInstrument(sig model.Signal, token, symbol string) {
 	key := oe.positionKey(sig)
 	oe.mu.Lock()
 	oe.positionInst[key] = fnoInstrument{Token: token, Symbol: symbol}
 	oe.mu.Unlock()
 }
 
-func (oe *OrderExecutor) clearPositionInstrument(sig strategy.Signal) {
+func (oe *OrderExecutor) clearPositionInstrument(sig model.Signal) {
 	key := oe.positionKey(sig)
 	oe.mu.Lock()
 	delete(oe.positionInst, key)
 	oe.mu.Unlock()
 }
 
-func (oe *OrderExecutor) resolveInstrument(sig strategy.Signal, direction string) (string, string, error) {
+func (oe *OrderExecutor) resolveInstrument(sig model.Signal, direction string) (string, string, error) {
 	prefix := oe.logPrefix()
-	isCall := sig.Side == strategy.SideCall
-	isPut := sig.Side == strategy.SidePut
+	isCall := sig.Side == model.SideCall
+	isPut := sig.Side == model.SidePut
 
 	if !isCall && !isPut {
 		return "", "", fmt.Errorf("%s signal side %q — cannot determine CALL/PUT side", prefix, sig.Side)
@@ -591,13 +597,13 @@ func (oe *OrderExecutor) resolveInstrument(sig strategy.Signal, direction string
 		return sig.FNOToken, sig.FNOSymbol, nil
 	}
 
-	if oe.picker != nil && oe.picker.Resolved() {
+	if ref := oe.picker.Load(); ref != nil && ref.src != nil && ref.src.Resolved() {
 		if isCall {
-			ce := oe.picker.GetCallToken()
-			return ce.Token, ce.Symbol, nil
+			token, symbol := ref.src.CallContract()
+			return token, symbol, nil
 		}
-		pe := oe.picker.GetPutToken()
-		return pe.Token, pe.Symbol, nil
+		token, symbol := ref.src.PutContract()
+		return token, symbol, nil
 	}
 
 	// No resolved strike: use the static tokens, if any are configured.
@@ -631,7 +637,7 @@ func (oe *OrderExecutor) resolveInstrument(sig strategy.Signal, direction string
 // Real entries also pass the daily max-loss gate, lot sizing, the rate
 // limiter and the circuit breaker. Exits pass none of these. The daily
 // profit cap lives in stratengine, before dispatch.
-func (oe *OrderExecutor) ExecuteSignal(sig strategy.Signal) {
+func (oe *OrderExecutor) ExecuteSignal(sig model.Signal) {
 	prefix := oe.logPrefix()
 	defer oe.reportMetrics()
 
@@ -644,15 +650,15 @@ func (oe *OrderExecutor) ExecuteSignal(sig strategy.Signal) {
 
 	var direction string
 	switch sig.Action {
-	case strategy.ActionBuy:
+	case model.ActionBuy:
 		direction = "BUY"
-	case strategy.ActionExit, strategy.ActionSell:
+	case model.ActionExit, model.ActionSell:
 		direction = "SELL"
 	default:
 		log.Printf("%s unknown action %q", prefix, sig.Action)
 		return
 	}
-	if sig.Side != strategy.SideCall && sig.Side != strategy.SidePut {
+	if sig.Side != model.SideCall && sig.Side != model.SidePut {
 		log.Printf("%s signal side %q — cannot determine CALL/PUT side", prefix, sig.Side)
 		return
 	}
@@ -785,7 +791,7 @@ func (oe *OrderExecutor) ExecuteSignal(sig strategy.Signal) {
 // executePaper simulates an order: position tracking moves as if filled.
 // It never touches a real entry (routing sends those to executeReal or
 // refuses them).
-func (oe *OrderExecutor) executePaper(sig strategy.Signal, posKey, direction, fnoToken, fnoSymbol string, ltp int64, key string, isRealOrderStrategy bool) {
+func (oe *OrderExecutor) executePaper(sig model.Signal, posKey, direction, fnoToken, fnoSymbol string, ltp int64, key string, isRealOrderStrategy bool) {
 	prefix := oe.logPrefix()
 	dryRunOrderID := fmt.Sprintf("PAPER_%s_%s_%d", sig.StrategyName, direction, time.Now().UnixMilli())
 	paperReason := "DRY-RUN"
@@ -900,7 +906,7 @@ func (oe *OrderExecutor) paperFillLocked(direction, token string, ltp int64) int
 // only changes state on broker evidence: an entry is recorded once accepted
 // (provisionally if the outcome is unknown), and an exit closes the
 // position only once the broker reports it complete or already flat.
-func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fnoToken, fnoSymbol string, ltp, qty int64, key string) {
+func (oe *OrderExecutor) executeReal(sig model.Signal, posKey, direction, fnoToken, fnoSymbol string, ltp, qty int64, key string) {
 	prefix := oe.logPrefix()
 	isExit := direction == "SELL"
 
@@ -1158,7 +1164,7 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 // settleUnknown handles an order whose outcome could not be settled
 // inline. The position is marked so nothing else is sent for it, and the
 // order book is followed in the background by the attempt's tags.
-func (oe *OrderExecutor) settleUnknown(sig strategy.Signal, posKey, direction, fnoToken, fnoSymbol string, ltp, qty int64, key string) {
+func (oe *OrderExecutor) settleUnknown(sig model.Signal, posKey, direction, fnoToken, fnoSymbol string, ltp, qty int64, key string) {
 	prefix := oe.logPrefix()
 	oe.alertf("ORDER STATE UNKNOWN — %s %s ordertag=%s/%s; following order book in background",
 		direction, fnoSymbol, key, retryTag(key))
@@ -1454,9 +1460,9 @@ func isPositionFlatError(err error) bool {
 // claimed intent and is refused. Everything else — exits, retries,
 // signals without SignalTS — gets a unique key from the current time:
 // exits are never refused, so they must never collide with an earlier one.
-func generateIdempotencyKey(sig strategy.Signal) string {
+func generateIdempotencyKey(sig model.Signal) string {
 	data := fmt.Sprintf("%s:%s:%s:%d", sig.StrategyName, sig.Side, sig.Action, time.Now().UnixNano())
-	if sig.Action == strategy.ActionBuy && !sig.SignalTS.IsZero() {
+	if sig.Action == model.ActionBuy && !sig.SignalTS.IsZero() {
 		data = fmt.Sprintf("%s:%s:%s:%s:%d", sig.StrategyName, sig.Side, sig.Action, sig.Token, sig.SignalTS.UnixNano())
 	}
 	hash := sha256.Sum256([]byte(data))
@@ -1478,7 +1484,7 @@ func (oe *OrderExecutor) GetEntryOrders() map[string]OrderRecord {
 
 // GetEntryOrder retrieves the entry order for a specific position.
 // Returns the record and true if found, zero value and false otherwise.
-func (oe *OrderExecutor) GetEntryOrder(strategyName string, side strategy.PositionSide) (OrderRecord, bool) {
+func (oe *OrderExecutor) GetEntryOrder(strategyName string, side model.PositionSide) (OrderRecord, bool) {
 	key := strategyName + "|" + string(side)
 	oe.mu.RLock()
 	defer oe.mu.RUnlock()

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"trading-systemv1/internal/strategy"
+	"trading-systemv1/internal/model"
 )
 
 // fakeAPI is a scripted broker. Orders are recorded; the order book is
@@ -288,11 +288,11 @@ func liveExecutor(t *testing.T, fake *fakeAPI) *OrderExecutor {
 	return oe
 }
 
-func realSig(action strategy.Action) strategy.Signal {
-	return strategy.Signal{StrategyName: "NIFTY50_FNO", Action: action, Side: strategy.SideCall, Token: "99926000", Exchange: "NSE", Qty: 75}
+func realSig(action model.Action) model.Signal {
+	return model.Signal{StrategyName: "NIFTY50_FNO", Action: action, Side: model.SideCall, Token: "99926000", Exchange: "NSE", Qty: 75}
 }
 
-func entryFor(oe *OrderExecutor, s strategy.Signal) (OrderRecord, bool) {
+func entryFor(oe *OrderExecutor, s model.Signal) (OrderRecord, bool) {
 	oe.mu.RLock()
 	defer oe.mu.RUnlock()
 	r, ok := oe.entryOrders[oe.positionKey(s)]

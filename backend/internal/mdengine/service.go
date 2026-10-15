@@ -263,7 +263,7 @@ func (s *Service) listenForDynamicSubscriptions(ctx context.Context) {
 		return
 	}
 
-	pubsub := s.redisClient.Subscribe(ctx, "cmd:subscribe_token")
+	pubsub := s.redisClient.Subscribe(ctx, model.SubscribeTokenChannel)
 	defer pubsub.Close()
 
 	ch := pubsub.Channel()

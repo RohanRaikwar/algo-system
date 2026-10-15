@@ -6,14 +6,13 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"trading-systemv1/internal/heartbeat"
+	"trading-systemv1/internal/instruments"
 	"trading-systemv1/internal/markethours"
 	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/notification"
@@ -51,7 +50,7 @@ type Service struct {
 	journal       *strategy.SignalJournal
 	notifier      notification.Notifier
 	orderExecutor *orderexec.OrderExecutor
-	strikePicker  *orderexec.StrikePicker
+	strikePicker  atomic.Pointer[instruments.StrikePicker] // swapped by the ATM goroutine
 
 	// Global option picker (picker_wiring.go); nil when STRAT_PICKER_MODE=off.
 	picker    *optionpicker.Picker
@@ -60,7 +59,7 @@ type Service struct {
 	// Contract resolution (option_select.go). legResolver is a test hook;
 	// legPicker is built lazily when no ATM picker exists.
 	legResolver   legResolver
-	legPicker     *orderexec.StrikePicker
+	legPicker     *instruments.StrikePicker
 	legPickerOnce sync.Once
 
 	ladderState                // strike ladder + per-entry option selection (option_select.go)
@@ -112,41 +111,7 @@ type Service struct {
 	orderQueues   map[string]chan strategy.Signal
 	orderRunner   func(context.Context, strategy.Signal) // nil = executeAndPersist
 
-	liveOrdersMu       sync.Mutex
-	liveOrders         map[string]*liveOrderRuntime
-	lastLiveOrdersJSON string
-}
-
-type trackedInstrument struct {
-	token    string
-	exchange string
-}
-
-type liveOrderRuntime struct {
-	StrategyName string
-	Side         strategy.PositionSide
-	Token        string
-	EntryPrice   int64
-	BestPrice    int64
-	CurrentPrice int64
-	Leg          string // multi-leg id; "" for single-leg positions
-	Strike       int64
-	Short        bool
-}
-
-type liveOrderPayload struct {
-	StrategyName    string                `json:"strategy_name"`
-	Side            strategy.PositionSide `json:"side"`
-	FNOToken        string                `json:"fno_token,omitempty"`
-	FNOSymbol       string                `json:"fno_symbol,omitempty"`
-	EntryFNOPrice   int64                 `json:"entry_fno_price,omitempty"`
-	CurrentFNOPrice int64                 `json:"current_fno_price,omitempty"`
-	BestFNOPrice    int64                 `json:"best_fno_price,omitempty"`
-	StoplossPrice   int64                 `json:"stoploss_price,omitempty"`
-	StoplossKind    string                `json:"stoploss_kind,omitempty"`
-	Leg             string                `json:"leg,omitempty"`
-	Strike          int64                 `json:"strike,omitempty"`
-	Short           bool                  `json:"short,omitempty"`
+	liveOrdersView // dashboard pub:orders state (liveorders.go)
 }
 
 // New creates a new strategy engine Service.
@@ -158,7 +123,7 @@ func New(cfg Config) (*Service, error) {
 
 	// ── Pre-load Instrument Master for dynamic lot sizes ──
 	log.Println("[stratengine] 📥 Pre-loading instrument master for lot sizes...")
-	im := orderexec.GetInstrumentMaster()
+	im := instruments.GetInstrumentMaster()
 	if err := im.EnsureLoaded(30 * time.Second); err != nil {
 		log.Printf("[stratengine] ⚠️  Instrument master load failed (will use fallback NIFTY_LOT_SIZE): %v", err)
 	} else {
@@ -169,38 +134,11 @@ func New(cfg Config) (*Service, error) {
 		cfg:        cfg,
 		tfCandleCh: make(chan model.TFCandle, 5000),
 		tickCh:     make(chan model.Tick, 10000),
-		liveOrders: make(map[string]*liveOrderRuntime),
+		liveOrdersView: liveOrdersView{liveOrders: make(map[string]*liveOrderRuntime)},
 	}
 
-	// ── Redis reader (stream consumer) ──
-	var err error
-	svc.redisReader, err = redisstore.NewReader(redisstore.ReaderConfig{
-		Addr:          cfg.RedisAddr,
-		Password:      cfg.RedisPassword,
-		ConsumerGroup: cfg.ConsumerGroup,
-		ConsumerName:  cfg.ConsumerName,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("redis reader: %w", err)
-	}
-
-	// ── Redis writer (for snapshot persistence) ──
-	svc.redisWriter, err = redisstore.New(redisstore.WriterConfig{
-		Addr:     cfg.RedisAddr,
-		Password: cfg.RedisPassword,
-	})
-	if err != nil {
-		svc.redisReader.Close()
-		return nil, fmt.Errorf("redis writer: %w", err)
-	}
-
-	// ── Signal journal (SQLite) ──
-	os.MkdirAll("data", 0o755)
-	svc.journal, err = strategy.NewSignalJournal(cfg.JournalPath)
-	if err != nil {
-		svc.redisReader.Close()
-		svc.redisWriter.Close()
-		return nil, fmt.Errorf("signal journal: %w", err)
+	if err := svc.openIO(cfg); err != nil {
+		return nil, err
 	}
 
 	// ── Notifier ──
@@ -214,6 +152,66 @@ func New(cfg Config) (*Service, error) {
 	svc.portfolio = portfolio.New()
 	svc.pnlTracker = portfolio.NewPnLTracker()
 
+	svc.buildStrategies(cfg)
+	svc.buildExecution(cfg)
+
+	// ── Dynamic Strike Picker ──
+	if cfg.DynamicStrikes {
+		log.Println("[stratengine] 🎯 dynamic strike selection ENABLED")
+		// StrikePicker will be created after the OrderExecutor has a SmartConnect session.
+		// The actual resolution happens on the first NIFTY tick (see tickRouterLoop).
+	}
+	if cfg.OptionAutomation {
+		if cfg.DynamicStrikes {
+			log.Println("[stratengine] 🤖 signal-time option automation ENABLED")
+		} else {
+			log.Println("[stratengine] ⚠️  option automation requested but dynamic strikes are disabled")
+		}
+	}
+
+	return svc, nil
+}
+
+// openIO opens the Redis reader and writer and the signal journal,
+// closing what it opened on error.
+func (svc *Service) openIO(cfg Config) error {
+	// ── Redis reader (stream consumer) ──
+	var err error
+	svc.redisReader, err = redisstore.NewReader(redisstore.ReaderConfig{
+		Addr:          cfg.RedisAddr,
+		Password:      cfg.RedisPassword,
+		ConsumerGroup: cfg.ConsumerGroup,
+		ConsumerName:  cfg.ConsumerName,
+	})
+	if err != nil {
+		return fmt.Errorf("redis reader: %w", err)
+	}
+
+	// ── Redis writer (for snapshot persistence) ──
+	svc.redisWriter, err = redisstore.New(redisstore.WriterConfig{
+		Addr:     cfg.RedisAddr,
+		Password: cfg.RedisPassword,
+	})
+	if err != nil {
+		svc.redisReader.Close()
+		return fmt.Errorf("redis writer: %w", err)
+	}
+
+	// ── Signal journal (SQLite) ──
+	os.MkdirAll("data", 0o755)
+	svc.journal, err = strategy.NewSignalJournal(cfg.JournalPath)
+	if err != nil {
+		svc.redisReader.Close()
+		svc.redisWriter.Close()
+		return fmt.Errorf("signal journal: %w", err)
+	}
+
+	return nil
+}
+
+// buildStrategies builds NIFTY50_SR (and one SR per extra underlying) and
+// registers them on the TF engine when SR is enabled.
+func (svc *Service) buildStrategies(cfg Config) {
 	// ── Strategies ──
 	// NIFTY50_SR: regime-aware support/resistance (fade, breakout-retest,
 	// trend pullback); strike picked from the live chain by greeks.
@@ -227,8 +225,10 @@ func New(cfg Config) (*Service, error) {
 	srCfg.AdviceMaxRiskATRPct, srCfg.StrongTrendADX = cfg.SRAdviceMaxRiskATRPct, cfg.SRStrongTrendADX
 	srCfg.SupportStopMode, srCfg.SupportStopTouches = cfg.SRSupportStopMode, cfg.SRSupportStopTouches
 	srCfg.SupportStopZonePts = cfg.SRSupportStopZonePts
+	srCfg.SweepEnabled = cfg.SRSweepMinWickPts > 0
+	srCfg.SweepMinWickPts, srCfg.SweepCooldownMin, srCfg.SweepWarnMin = cfg.SRSweepMinWickPts, cfg.SRSweepCooldownMin, cfg.SRSweepWarnMin
 	svc.srStrategy = strategy.NewNifty50SR(cfg.Qty, srCfg)
-	svc.srStrategy.SetExpiry(orderexec.NewStrikePicker(nil).NextExpiry(time.Now()))
+	svc.srStrategy.SetExpiry(instruments.NewStrikePicker(nil).NextExpiry(time.Now()))
 
 	svc.syncStrategyFNOTokens(cfg.CallFNOToken, cfg.PutFNOToken)
 	svc.initExitPolicy()
@@ -251,6 +251,11 @@ func New(cfg Config) (*Service, error) {
 		log.Println("[stratengine] ⚪ No strategies registered — all detached from engine")
 	}
 
+}
+
+// buildExecution creates the session manager (live orders), the order
+// executor and the option pickers.
+func (svc *Service) buildExecution(cfg Config) {
 	// ── Session Manager for Order Execution ──
 	var sessionManager *smartconnect.SessionManager
 	if cfg.LiveOrders && cfg.AngelAPIKey != "" && cfg.AngelClientID != "" && cfg.AngelPassword != "" && cfg.AngelTOTP != "" {
@@ -269,6 +274,9 @@ func New(cfg Config) (*Service, error) {
 
 	// ── Order Executor ──
 	svc.orderExecutor = orderexec.NewOrderExecutor(orderexec.Config{
+		LotSizeOf: func(symbol string) (int64, error) {
+			return instruments.GetInstrumentMaster().GetLotSize(symbol)
+		},
 		LiveOrders:       cfg.LiveOrders,
 		Qty:              cfg.Qty,
 		CallFNOToken:     cfg.CallFNOToken,
@@ -311,21 +319,6 @@ func New(cfg Config) (*Service, error) {
 	svc.picker = svc.newPicker()
 	svc.buildExtraPickers()
 
-	// ── Dynamic Strike Picker ──
-	if cfg.DynamicStrikes {
-		log.Println("[stratengine] 🎯 dynamic strike selection ENABLED")
-		// StrikePicker will be created after the OrderExecutor has a SmartConnect session.
-		// The actual resolution happens on the first NIFTY tick (see tickRouterLoop).
-	}
-	if cfg.OptionAutomation {
-		if cfg.DynamicStrikes {
-			log.Println("[stratengine] 🤖 signal-time option automation ENABLED")
-		} else {
-			log.Println("[stratengine] ⚠️  option automation requested but dynamic strikes are disabled")
-		}
-	}
-
-	return svc, nil
 }
 
 // Run starts all subsystems and blocks until ctx is cancelled.
@@ -420,6 +413,11 @@ func (svc *Service) Run(ctx context.Context) error {
 	// ── NIFTY50_SR strike selection view (pub:strikesel) ──
 	if svc.cfg.SREnabled || svc.picker != nil {
 		go svc.strikeSelLoop(ctx)
+	}
+
+	// ── Option chain warm-up: entries read the cached chain only ──
+	if svc.needsEntryChain() {
+		go svc.chainWarmLoop(ctx)
 	}
 
 	// ── Start snapshot loop ──
@@ -534,14 +532,14 @@ func (svc *Service) tickRouterLoop(ctx context.Context, tfTickCh chan<- model.Ti
 						sc = standaloneSC
 						log.Println("[stratengine] ✅ standalone SmartConnect session established for strike resolution")
 					}
-					picker := orderexec.NewStrikePicker(sc)
+					picker := instruments.NewStrikePicker(sc)
 					if !picker.ResolveATM(spotPrice) {
 						atomic.StoreInt64(&svc.strikeRetryAfterNS, time.Now().Add(60*time.Second).UnixNano())
 						log.Println("[stratengine] ⚠️  strike resolution failed (will retry in 60s)")
 						return
 					}
 
-					svc.strikePicker = picker
+					svc.strikePicker.Store(picker)
 					svc.orderExecutor.SetStrikePicker(picker)
 					if svc.srStrategy != nil {
 						svc.srStrategy.SetExpiry(picker.NextExpiry(time.Now()))
@@ -583,8 +581,8 @@ func (svc *Service) tickRouterLoop(ctx context.Context, tfTickCh chan<- model.Ti
 						"call_ltp":    svc.orderExecutor.GetLTP(ce.Token),
 						"put_ltp":     svc.orderExecutor.GetLTP(pe.Token),
 					})
-					svc.redisWriter.Client().Set(ctx, "strike:info", strikePayload, 24*time.Hour)
-					svc.redisWriter.Client().Publish(ctx, "pub:strike", string(strikePayload))
+					svc.redisWriter.Client().Set(ctx, model.StrikeKey, strikePayload, 24*time.Hour)
+					svc.redisWriter.Client().Publish(ctx, model.StrikeChannel, string(strikePayload))
 					log.Println("[stratengine] 📡 published strike info to Redis")
 
 					// ✅ Only mark as resolved AFTER everything succeeded
@@ -602,846 +600,14 @@ func (svc *Service) tickRouterLoop(ctx context.Context, tfTickCh chan<- model.Ti
 	}
 }
 
-// signalLoop reads signals from the TFEngine and writes to journal + notifier + PubSub.
-func (svc *Service) signalLoop(ctx context.Context) {
-	// Track FNO entry prices: key = "strategy|side" → FNO LTP at entry (paise)
-	entryFNOPrices := make(map[string]int64)
-	// Track the exact option token used at entry so exit P&L stays pinned to the
-	// same contract even after dynamic strikes roll/reset.
-	entryFNOTokens := make(map[string]string)
-	// Track market state captured at entry so exits keep the same regime label.
-	entryMarketStates := make(map[string]string)
-	// Track the original strategy instrument so exit bookkeeping closes the same
-	// logical position even when the stop-loss was triggered by an option tick.
-	entryInstruments := make(map[string]trackedInstrument)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case sig, ok := <-svc.tfEngine.Signals():
-			if !ok {
-				return
-			}
-
-			expandedSignals := expandReverseSignals(sig)
-
-			for _, expandedSig := range expandedSignals {
-				sig := expandedSig
-				now := time.Now()
-
-				// Entry advice is published only: it never reaches the
-				// order path below.
-				if sig.Action == strategy.ActionWatchBuy {
-					svc.publishAdvice(ctx, sig, now)
-					continue
-				}
-
-				// Kill switch: block new entries but allow exits
-				if svc.killSwitchActive() && sig.Action == strategy.ActionBuy {
-					log.Printf("[stratengine] KILL SWITCH: blocked entry signal %s %s:%s",
-						sig.StrategyName, sig.Exchange, sig.Token)
-					svc.recordRefusedEntry(ctx, sig, "kill switch active", now)
-					continue
-				}
-
-				// Never open fresh positions once the live market session is closed.
-				// This prevents delayed 15:29/15:30 signals from re-entering after the
-				// EOD auto-exit loop has already flattened the book.
-				if sig.Action == strategy.ActionBuy && !markethours.IsMarketOpen(now) {
-					log.Printf("[stratengine] MARKET CLOSED: blocked entry signal %s %s:%s at %s",
-						sig.StrategyName, sig.Exchange, sig.Token, now.In(markethours.IST).Format("15:04:05"))
-					svc.recordRefusedEntry(ctx, sig, "market closed", now)
-					continue
-				}
-
-				// Nor after the EOD auto-exit cutoff: the book is being (or has
-				// been) flattened for the day.
-				if sig.Action == strategy.ActionBuy && svc.pastEODCutoff(now) {
-					log.Printf("[stratengine] EOD CUTOFF: blocked entry signal %s %s:%s at %s",
-						sig.StrategyName, sig.Exchange, sig.Token, now.In(markethours.IST).Format("15:04:05"))
-					svc.recordRefusedEntry(ctx, sig, "past EOD entry cutoff", now)
-					continue
-				}
-
-				// An entry naming its own strike: resolve that exact
-				// contract. No contract or no premium → refuse the entry
-				// (and cancel it in the strategy) rather than buy a
-				// different strike.
-				if sig.Action == strategy.ActionBuy && sig.Strike > 0 && sig.Leg == "" && sig.FNOToken == "" {
-					if err := svc.resolveEntryStrike(ctx, &sig, now); err != nil {
-						svc.cancelStrategyEntry(ctx, sig, err.Error(), now)
-						continue
-					}
-				} else if sig.Action == strategy.ActionBuy {
-					svc.applyOptionAutomation(ctx, &sig, now)
-				}
-
-				// ── Resolve FNO token for this signal ──
-				var fnoToken string
-				switch sig.Side {
-				case strategy.SideCall:
-					if svc.strikePicker != nil && svc.strikePicker.Resolved() {
-						fnoToken = svc.strikePicker.GetCallToken().Token
-					} else {
-						fnoToken = svc.cfg.CallFNOToken
-					}
-				case strategy.SidePut:
-					if svc.strikePicker != nil && svc.strikePicker.Resolved() {
-						fnoToken = svc.strikePicker.GetPutToken().Token
-					} else {
-						fnoToken = svc.cfg.PutFNOToken
-					}
-				}
-
-				if sig.Action == strategy.ActionBuy && sig.FNOToken != "" {
-					fnoToken = sig.FNOToken
-				}
-				// Another underlying's entry buys only its own resolved
-				// contract, never the NIFTY ATM pair above.
-				if sig.Action == strategy.ActionBuy && sig.FNOToken == "" && svc.srExtraFor(sig.StrategyName) != nil {
-					svc.cancelStrategyEntry(ctx, sig, "no contract resolved for "+sig.StrategyName, now)
-					continue
-				}
-
-				// No strike picked yet and no static token: nothing to buy.
-				// Exits still go through so an open position can always close.
-				if sig.Action == strategy.ActionBuy && fnoToken == "" {
-					log.Printf("[stratengine] NO STRIKE: blocked entry signal %s:%s — strike not resolved yet",
-						sig.StrategyName, sig.Side)
-					continue
-				}
-
-				// Index level at the signal, before sig.Price becomes the
-				// option LTP (the exit policy's delta reference).
-				indexAtSignal := svc.orderExecutor.GetLTP(sig.Token)
-				if indexAtSignal <= 0 {
-					indexAtSignal = sig.Price
-				}
-
-				// ── Get current FNO LTP ──
-				var currentFNOPrice int64
-				if fnoToken != "" {
-					currentFNOPrice = svc.orderExecutor.GetLTP(fnoToken)
-					if currentFNOPrice > 0 {
-						sig.Price = currentFNOPrice
-					}
-				}
-
-				// ── Track entry/exit FNO prices ──
-				posKey := sig.StrategyName + "|" + string(sig.Side)
-				marketState := normalizeMarketStateValue(sig.MarketState)
-				if marketState == "" {
-					if actx, ok := svc.strategyAutomationContext(sig); ok {
-						marketState = normalizeMarketStateValue(string(actx.MarketState))
-					}
-				}
-				if marketState == "" && sig.Action == strategy.ActionExit {
-					if ms, ok := entryMarketStates[posKey]; ok {
-						marketState = normalizeMarketStateValue(ms)
-					}
-				}
-				if marketState == "" {
-					marketState = inferMarketStateFromReason(sig.Reason)
-				}
-				sig.MarketState = marketState
-
-				var stoplossPrice int64
-				if sig.Action == strategy.ActionBuy {
-					// Store entry FNO price
-					entryFNOPrices[posKey] = currentFNOPrice
-					entryFNOTokens[posKey] = fnoToken
-					entryMarketStates[posKey] = marketState
-					entryInstruments[posKey] = trackedInstrument{token: sig.Token, exchange: sig.Exchange}
-					if ps := svc.positionTokenSetterFor(sig.StrategyName); ps != nil && sig.FNOToken != "" {
-						ps.SetPositionToken(svc.qualifyFNOTokenFor(sig.StrategyName, sig.FNOToken))
-					}
-					svc.setStrategyFNOEntryPrice(sig.StrategyName, currentFNOPrice)
-					svc.upsertLiveOrder(sig.StrategyName, sig.Side, fnoToken, currentFNOPrice)
-					svc.openExitPolicy(sig, posKey, fnoToken, currentFNOPrice, indexAtSignal, now)
-					if live, ok := svc.liveOrderPayload(sig.StrategyName, sig.Side); ok {
-						stoplossPrice = live.StoplossPrice
-					}
-					// Compute FNO option SL price from strategy-specific FNO config
-					if stoplossPrice == 0 {
-						if hardSL, _, _, ok := svc.stopConfig(sig.StrategyName); ok && hardSL > 0 && currentFNOPrice > 0 {
-							stoplossPrice = int64(float64(currentFNOPrice) * (1 - hardSL/100))
-						}
-					}
-				}
-
-				// ── Determine order mode BEFORE recording trade ──
-				// This ensures EXIT orders that cause profit cap are still LIVE
-				orderMode := "PAPER"
-				profitCapHit := false
-				liveMode := false
-				if svc.orderExecutor.IsRealStrategy(sig.StrategyName) && svc.cfg.LiveOrders {
-					// Check profit cap BEFORE this trade
-					dailyPnL := svc.pnlTracker.GetStrategyDailyPnL(sig.StrategyName)
-					// 10 points profit cap for 65 qty = 65 × 10 × 100 paise = 65,000 paise
-					const profitCapPaise int64 = 65000 // 65 qty × 10 points = ₹650.00
-
-					// Profit cap only applies to new BUY signals to block new entries
-					// EXIT signals must remain REAL to properly reflect they are closing real positions
-					if dailyPnL >= profitCapPaise && sig.Action == strategy.ActionBuy {
-						orderMode = "PAPER_CAP"
-						profitCapHit = true
-					} else {
-						orderMode = "REAL"
-						liveMode = true
-					}
-				}
-
-				// Option actually traded: the entry's token for an exit.
-				tradedToken := fnoToken
-				if sig.Action == strategy.ActionExit {
-					// After a restart the maps above are empty: take the
-					// held contract and fill from the executor's record.
-					if _, ok := entryFNOTokens[posKey]; !ok {
-						if token, price, ok := svc.restoredEntryFNO(posKey); ok {
-							entryFNOTokens[posKey] = token
-							if _, ok := entryFNOPrices[posKey]; !ok && price > 0 {
-								entryFNOPrices[posKey] = price
-							}
-						}
-					}
-					svc.normalizeExitInstrument(&sig, entryInstruments, posKey)
-					svc.closeExitPolicy(posKey)
-					svc.removeLiveOrder(sig.StrategyName, sig.Side)
-					if entryToken, ok := entryFNOTokens[posKey]; ok && entryToken != "" {
-						tradedToken = entryToken
-						if exitLTP := svc.orderExecutor.GetLTP(entryToken); exitLTP > 0 {
-							currentFNOPrice = exitLTP
-							sig.Price = exitLTP
-						}
-						delete(entryFNOTokens, posKey)
-					}
-					delete(entryInstruments, posKey)
-					delete(entryMarketStates, posKey)
-					// Attach entry FNO price to exit signal
-					if entryP, ok := entryFNOPrices[posKey]; ok {
-						sig.EntryFNOPrice = entryP
-						delete(entryFNOPrices, posKey)
-					}
-				}
-
-				// ── Execute FNO order ──
-				// Dispatched before the journal, publish and notify below, so
-				// none of that side work can delay an exit. Orders go to a
-				// per-strategy FIFO worker: a reverse EXIT->BUY pair stays in
-				// order without blocking this loop. P&L and portfolio are
-				// booked from the executor's fills (see onFill), not here.
-				// Skip executor entirely when profit cap is hit — the executor
-				// independently decides REAL based on strategy name, so we must
-				// gate it here to prevent real orders after the daily cap.
-				if profitCapHit && sig.Action == strategy.ActionBuy {
-					// Only block NEW entries — EXIT/SELL must always go through
-					// so open REAL positions can be closed properly.
-					log.Printf("[stratengine] 🛑 PROFIT CAP: skipping new BUY — dailyPnL >= ₹650 (mode=%s) %s",
-						orderMode, sig.StrategyName)
-				} else {
-					svc.dispatchOrder(ctx, sig)
-				}
-
-				// Journal and publish a copy naming the traded option. The
-				// order was already dispatched with sig unchanged above.
-				rec := sig
-				rec.FNOToken = svc.unqualifyToken(tradedToken)
-				if rec.FNOSymbol == "" || sig.Action == strategy.ActionExit {
-					if name := svc.fnoSymbolFor(rec.FNOToken); name != "" {
-						rec.FNOSymbol = name
-					}
-				}
-
-				// Journal the signal with live mode and profit cap flags
-				if err := svc.journal.Record(rec, now, nil, liveMode, profitCapHit); err != nil {
-					log.Printf("[stratengine] journal write error: %v", err)
-				}
-
-				// Publish to Redis PubSub for frontend WS delivery
-				sigPayload, err := json.Marshal(map[string]interface{}{
-					"strategy_name":     sig.StrategyName,
-					"action":            sig.Action,
-					"side":              sig.Side,
-					"reverse_to":        sig.ReverseTo,
-					"market_state":      sig.MarketState,
-					"token":             sig.Token,
-					"exchange":          sig.Exchange,
-					"qty":               sig.Qty,
-					"price":             sig.Price,
-					"entry_fno_price":   sig.EntryFNOPrice,
-					"current_fno_price": currentFNOPrice,
-					"stoploss_price":    stoplossPrice,
-					"reason":            sig.Reason,
-					"warnings":          sig.Warnings,
-					"fno_token":         rec.FNOToken,
-					"fno_symbol":        rec.FNOSymbol,
-					"pick":              sig.Pick,
-					"pick_alt":          sig.PickAlt,
-					"order_mode":        orderMode,
-					"profit_cap_hit":    profitCapHit,
-					"ts":                now.UTC().Format(time.RFC3339Nano),
-				})
-				pctx, pcancel := context.WithTimeout(ctx, 2*time.Second)
-				if err == nil {
-					if pubErr := svc.redisWriter.Client().Publish(pctx, "pub:signal", string(sigPayload)).Err(); pubErr != nil {
-						log.Printf("[stratengine] signal publish error: %v", pubErr)
-					}
-				}
-
-				// ── Publish P&L summary to Redis ──
-				svc.publishPnLSummary(pctx)
-				svc.publishLiveOrders(pctx)
-				pcancel()
-
-				// Notify
-				alert := notification.Alert{
-					Level:   notification.AlertInfo,
-					Title:   fmt.Sprintf("[%s] %s %s:%s", sig.StrategyName, sig.Action, sig.Exchange, sig.Token),
-					Message: sig.Reason,
-				}
-				if sig.Action == strategy.ActionBuy {
-					alert.Level = notification.AlertWarning
-					alert.Message = fmt.Sprintf("%s | FNO entry price: ₹%.2f", sig.Reason, float64(currentFNOPrice)/100)
-				} else if sig.Action == strategy.ActionExit {
-					pnl := float64(currentFNOPrice-sig.EntryFNOPrice) / 100
-					alert.Message = fmt.Sprintf("%s | Entry: ₹%.2f → Exit: ₹%.2f | P&L: ₹%.2f",
-						sig.Reason, float64(sig.EntryFNOPrice)/100, float64(currentFNOPrice)/100, pnl)
-				}
-				svc.notifyAsync(alert)
-
-				log.Printf("[stratengine] SIGNAL: %s %s %s:%s fno_ltp=%d entry_fno=%d — %s",
-					sig.Action, sig.StrategyName, sig.Exchange, sig.Token, currentFNOPrice, sig.EntryFNOPrice, sig.Reason)
-			}
-		}
-	}
-}
-
-func expandReverseSignals(sig strategy.Signal) []strategy.Signal {
-	if sig.Action != strategy.ActionExit {
-		return []strategy.Signal{sig}
-	}
-	if sig.ReverseTo != strategy.SideCall && sig.ReverseTo != strategy.SidePut {
-		return []strategy.Signal{sig}
-	}
-
-	closePrice := parseSignalClose(sig.Reason)
-	if closePrice <= 0 && sig.Price > 0 {
-		closePrice = sig.Price
-	}
-	buyReason := fmt.Sprintf("ENTRY %s reason=REVERSE_FROM_%s close=%d", sig.ReverseTo, sig.Side, closePrice)
-
-	buySig := sig
-	buySig.Action = strategy.ActionBuy
-	buySig.Side = sig.ReverseTo
-	buySig.ReverseTo = strategy.SideNone
-	buySig.EntryFNOPrice = 0
-	buySig.Price = 0
-	buySig.Reason = buyReason
-
-	return []strategy.Signal{sig, buySig}
-}
-
-func (svc *Service) applyOptionAutomation(ctx context.Context, sig *strategy.Signal, now time.Time) {
-	if !svc.cfg.OptionAutomation || !svc.cfg.DynamicStrikes || sig == nil || sig.Action != strategy.ActionBuy {
-		return
-	}
-	if svc.srExtraFor(sig.StrategyName) != nil {
-		return // the NIFTY strike picker; other underlyings resolve in resolveEntryStrike
-	}
-	if sig.Side != strategy.SideCall && sig.Side != strategy.SidePut {
-		return
-	}
-	if svc.strikePicker == nil {
-		log.Printf("[stratengine] option automation skipped: strike picker not ready for %s", sig.Side)
-		return
-	}
-
-	spotPrice := svc.orderExecutor.GetLTP(sig.Token)
-	if spotPrice <= 0 {
-		spotPrice = parseSignalClose(sig.Reason)
-	}
-	if spotPrice <= 0 {
-		log.Printf("[stratengine] option automation skipped: no spot price for %s", sig.StrategyName)
-		return
-	}
-
-	input := svc.buildAutomationInput(*sig, now, spotPrice)
-	pick, err := svc.strikePicker.ResolveForEntry(input)
-	if err != nil {
-		log.Printf("[stratengine] option automation fallback: %v", err)
-		return
-	}
-
-	var previousToken string
-	switch sig.Side {
-	case strategy.SideCall:
-		previousToken = svc.strikePicker.GetCallToken().Token
-	case strategy.SidePut:
-		previousToken = svc.strikePicker.GetPutToken().Token
-	}
-
-	svc.strikePicker.ApplyPick(pick)
-	svc.orderExecutor.SetStrikePicker(svc.strikePicker)
-	svc.syncStrategyFNOTokens(svc.strikePicker.GetCallToken().Token, svc.strikePicker.GetPutToken().Token)
-
-	log.Printf("[stratengine] 🤖 option automation selected %s expiry=%s strike=%d symbol=%s token=%s fallback=%v reason=%s",
-		sig.Side,
-		pick.SelectedExpiry.In(time.FixedZone("IST", 5*3600+30*60)).Format("02Jan2006"),
-		pick.Strike,
-		pick.Symbol,
-		pick.Token,
-		pick.UsedFallback,
-		pick.Reason,
-	)
-
-	if pick.Token != "" && pick.Token != previousToken {
-		svc.publishFNOSubscription(ctx, pick.Token)
-	}
-	svc.publishStrikeInfo(ctx, spotPrice)
-}
-
-func (svc *Service) buildAutomationInput(sig strategy.Signal, now time.Time, spotPrice int64) orderexec.AutomationInput {
-	marketState := orderexec.MarketStateSideways
-	trendStrength := orderexec.StrengthLow
-	momentumStrength := orderexec.StrengthLow
-
-	if ctx, ok := svc.strategyAutomationContext(sig); ok {
-		marketState = automationMarketStateFromStrategy(ctx.MarketState)
-		trendStrength = automationStrengthFromStrategy(ctx.TrendStrength)
-		momentumStrength = automationStrengthFromStrategy(ctx.MomentumStrength)
-	} else {
-		pct := parseSignalDistancePct(sig.Reason)
-		if strings.Contains(strings.ToLower(sig.Reason), "momentum") && pct >= 0.12 {
-			marketState = orderexec.MarketStateTrending
-		}
-		strength := automationStrengthFromPct(pct)
-		trendStrength = strength
-		momentumStrength = strength
-	}
-
-	return orderexec.AutomationInput{
-		SignalType:       automationSignalType(sig.Side),
-		IsExpiryDay:      isNIFTYExpiryDay(now),
-		EntryTime:        now,
-		MarketState:      marketState,
-		TrendStrength:    trendStrength,
-		MomentumStrength: momentumStrength,
-		HoldType:         automationHoldType(svc.cfg.OptionHoldType),
-		ExpectedIVMove:   automationIVMove(svc.cfg.ExpectedIVMove),
-		SpotPrice:        spotPrice,
-	}
-}
-
-func (svc *Service) qualifyFNOToken(token string) string {
-	token = strings.TrimSpace(token)
-	if token == "" {
-		return ""
-	}
-	if strings.Contains(token, ":") {
-		return token
-	}
-	exchange := strings.TrimSpace(svc.cfg.FNOExchange)
-	if exchange == "" {
-		exchange = "NFO"
-	}
-	return exchange + ":" + token
-}
-
-func (svc *Service) syncStrategyFNOTokens(callToken, putToken string) {
-	callToken = svc.qualifyFNOToken(callToken)
-	putToken = svc.qualifyFNOToken(putToken)
-
-	if svc.srStrategy != nil {
-		svc.srStrategy.SetFNOTokens(callToken, putToken)
-	}
-}
-
-func (svc *Service) setStrategyFNOEntryPrice(strategyName string, price int64) {
-	if price <= 0 {
-		return
-	}
-	if sr := svc.srByName(strategyName); sr != nil {
-		sr.SetFNOEntryPrice(price)
-	}
-}
-
-func (svc *Service) normalizeExitInstrument(sig *strategy.Signal, entries map[string]trackedInstrument, posKey string) {
-	if sig == nil {
-		return
-	}
-	entry, ok := entries[posKey]
-	if !ok || entry.token == "" || entry.exchange == "" {
-		return
-	}
-	sig.Token = entry.token
-	sig.Exchange = entry.exchange
-}
-
-func liveOrderKey(strategyName string, side strategy.PositionSide) string {
-	return strategyName + "|" + string(side)
-}
-
-// fnoSymbolFor names an option token for display ("NIFTY06OCT2622500PE"),
-// from the instrument master; "" when unknown. Display only — the order path
-// resolves its own instrument.
-func (svc *Service) fnoSymbolFor(token string) string {
-	exch := svc.cfg.FNOExchange
-	if exch == "" {
-		exch = "NFO"
-	}
-	im := orderexec.GetInstrumentMaster()
-	if name := im.SymbolForToken(exch, svc.unqualifyToken(token)); name != "" {
-		return name
-	}
-	for _, ex := range svc.srExtras {
-		if name := im.SymbolForToken(ex.prof.FNOExchange, svc.unqualifyToken(token)); name != "" {
-			return name
-		}
-	}
-	return ""
-}
-
-func (svc *Service) unqualifyToken(token string) string {
-	token = strings.TrimSpace(token)
-	if token == "" {
-		return ""
-	}
-	if idx := strings.IndexByte(token, ':'); idx >= 0 && idx < len(token)-1 {
-		return token[idx+1:]
-	}
-	return token
-}
-
-// restoredEntryFNO returns the contract and fill price of an open position
-// from the executor's entry record. signalLoop's own entry maps start empty
-// after a restart; this keeps an exit pinned to the contract actually held
-// instead of the current ATM.
-func (svc *Service) restoredEntryFNO(posKey string) (token string, price int64, ok bool) {
-	if svc.orderExecutor == nil {
-		return "", 0, false
-	}
-	rec, ok := svc.orderExecutor.GetEntryOrders()[posKey]
-	if !ok || rec.Token == "" {
-		return "", 0, false
-	}
-	return rec.Token, rec.Price, true
-}
-
-// subscribeHeldContracts streams every restored open position's option
-// again. After a restart only the ATM pair and ladder get subscribed, so a
-// position bought at another strike would get no ticks: no premium stops
-// and a stale exit price.
-func (svc *Service) subscribeHeldContracts(ctx context.Context) {
-	if svc.orderExecutor == nil {
-		return
-	}
-	var tokens []string
-	for _, rec := range svc.orderExecutor.GetEntryOrders() {
-		if rec.Token != "" {
-			tokens = append(tokens, rec.Token)
-		}
-	}
-	if len(tokens) == 0 {
-		return
-	}
-	log.Printf("[stratengine] 📡 resubscribing %d held option contract(s) after restore: %v", len(tokens), tokens)
-	svc.subscribeTokens(ctx, tokens...)
-}
-
-func (svc *Service) seedLiveOrdersFromStrategies() {
-	for _, sr := range svc.srAll() {
-		if pos := sr.CurrentFNOPosition(); pos != nil {
-			svc.setLiveOrderFromPosition(sr.Name(), pos)
-		}
-	}
-}
-
-func (svc *Service) setLiveOrderFromPosition(strategyName string, pos *strategy.LiveFNOPosition) {
-	if pos == nil || pos.Side == strategy.SideNone || pos.EntryPrice <= 0 {
-		return
-	}
-	token := svc.unqualifyToken(pos.Token)
-	svc.liveOrdersMu.Lock()
-	svc.liveOrders[liveOrderKey(strategyName, pos.Side)] = &liveOrderRuntime{
-		StrategyName: strategyName,
-		Side:         pos.Side,
-		Token:        token,
-		EntryPrice:   pos.EntryPrice,
-		BestPrice:    pos.BestPrice,
-		CurrentPrice: svc.orderExecutor.GetLTP(token),
-	}
-	svc.liveOrdersMu.Unlock()
-}
-
-func (svc *Service) upsertLiveOrder(strategyName string, side strategy.PositionSide, token string, entryPrice int64) {
-	if strategyName == "" || side == strategy.SideNone {
-		return
-	}
-	token = svc.unqualifyToken(token)
-	svc.liveOrdersMu.Lock()
-	rt, ok := svc.liveOrders[liveOrderKey(strategyName, side)]
-	if !ok {
-		rt = &liveOrderRuntime{
-			StrategyName: strategyName,
-			Side:         side,
-		}
-		svc.liveOrders[liveOrderKey(strategyName, side)] = rt
-	}
-	rt.Token = token
-	if entryPrice > 0 {
-		rt.EntryPrice = entryPrice
-		rt.BestPrice = entryPrice
-		rt.CurrentPrice = entryPrice
-	} else if token != "" {
-		rt.CurrentPrice = svc.orderExecutor.GetLTP(token)
-	}
-	svc.liveOrdersMu.Unlock()
-}
-
-func (svc *Service) removeLiveOrder(strategyName string, side strategy.PositionSide) {
-	if strategyName == "" || side == strategy.SideNone {
-		return
-	}
-	svc.liveOrdersMu.Lock()
-	delete(svc.liveOrders, liveOrderKey(strategyName, side))
-	svc.liveOrdersMu.Unlock()
-}
-
-func (svc *Service) updateLiveOrdersFromTick(ctx context.Context, tick model.Tick) {
-	if tick.Token == "" || tick.Price <= 0 {
-		return
-	}
-
-	changed := false
-
-	svc.liveOrdersMu.Lock()
-	for _, rt := range svc.liveOrders {
-		if rt == nil || rt.Token != tick.Token {
-			continue
-		}
-		if rt.CurrentPrice != tick.Price {
-			rt.CurrentPrice = tick.Price
-			changed = true
-		}
-		switch {
-		case rt.Short:
-			// A sold leg profits as premium falls — track lowest as best.
-			if rt.BestPrice == 0 || tick.Price < rt.BestPrice {
-				rt.BestPrice = tick.Price
-				changed = true
-			}
-		case rt.Side == strategy.SideCall, rt.Side == strategy.SidePut:
-			// Both CALL and PUT are BUY orders — track highest as best
-			if tick.Price > rt.BestPrice {
-				rt.BestPrice = tick.Price
-				changed = true
-			}
-		}
-	}
-	svc.liveOrdersMu.Unlock()
-
-	if changed {
-		svc.publishLiveOrders(ctx)
-	}
-}
-
-func (svc *Service) stopConfig(strategyName string) (hardSL, trailSL, trailStart float64, ok bool) {
-	switch {
-	case svc.srByName(strategyName) != nil:
-		cfg := svc.srByName(strategyName).Config()
-		return float64(cfg.FNOHardSLPct), float64(cfg.FNOTrailSLPct), float64(cfg.FNOTrailStartPct), true
-	default:
-		return 0, 0, 0, false
-	}
-}
-
-// computeLiveStoploss computes the SL price for a live FNO order.
-// Both CALL and PUT are BUY orders: premium UP = profit, premium DOWN = loss.
-func computeLiveStoploss(side strategy.PositionSide, entryPrice, bestPrice int64, hardSL, trailSL, trailStart float64) (int64, string) {
-	if entryPrice <= 0 {
-		return 0, ""
-	}
-
-	// Hard SL: exit if premium drops hardSL% below entry (same for CALL and PUT)
-	var hardStop int64
-	if hardSL > 0 {
-		hardStop = int64(float64(entryPrice) * (1 - hardSL/100))
-	}
-
-	// Trail SL: exit if premium drops trailSL% below best (same for CALL and PUT)
-	var trailStop int64
-	trailActive := false
-	if trailSL > 0 && bestPrice > 0 {
-		entryF := float64(entryPrice)
-		bestF := float64(bestPrice)
-		profit := (bestF - entryF) / entryF * 100
-		if profit >= trailStart {
-			trailStop = int64(bestF * (1 - trailSL/100))
-			trailActive = trailStop > 0
-		}
-	}
-
-	// Return the tighter (higher) SL price
-	if trailActive && (hardStop == 0 || trailStop > hardStop) {
-		return trailStop, "TRAIL"
-	}
-	if hardStop > 0 {
-		return hardStop, "HARD"
-	}
-	if trailActive {
-		return trailStop, "TRAIL"
-	}
-	return 0, ""
-}
-
-func (svc *Service) snapshotLiveOrdersLocked() []liveOrderPayload {
-	orders := make([]liveOrderPayload, 0, len(svc.liveOrders))
-	for _, rt := range svc.liveOrders {
-		if rt == nil || rt.Side == strategy.SideNone || rt.EntryPrice <= 0 {
-			continue
-		}
-		payload := liveOrderPayload{
-			StrategyName:    rt.StrategyName,
-			Side:            rt.Side,
-			FNOToken:        rt.Token,
-			FNOSymbol:       svc.fnoSymbolFor(rt.Token),
-			EntryFNOPrice:   rt.EntryPrice,
-			CurrentFNOPrice: rt.CurrentPrice,
-			BestFNOPrice:    rt.BestPrice,
-			Leg:             rt.Leg,
-			Strike:          rt.Strike,
-			Short:           rt.Short,
-		}
-		if hardSL, trailSL, trailStart, ok := svc.stopConfig(rt.StrategyName); ok && rt.Leg == "" {
-			payload.StoplossPrice, payload.StoplossKind = computeLiveStoploss(rt.Side, rt.EntryPrice, rt.BestPrice, hardSL, trailSL, trailStart)
-		}
-		orders = append(orders, payload)
-	}
-	sort.Slice(orders, func(i, j int) bool {
-		if orders[i].StrategyName != orders[j].StrategyName {
-			return orders[i].StrategyName < orders[j].StrategyName
-		}
-		if orders[i].Side != orders[j].Side {
-			return orders[i].Side < orders[j].Side
-		}
-		return orders[i].Leg < orders[j].Leg
-	})
-	return orders
-}
-
-func (svc *Service) liveOrderPayload(strategyName string, side strategy.PositionSide) (liveOrderPayload, bool) {
-	svc.liveOrdersMu.Lock()
-	defer svc.liveOrdersMu.Unlock()
-
-	rt, ok := svc.liveOrders[liveOrderKey(strategyName, side)]
-	if !ok || rt == nil || rt.EntryPrice <= 0 {
-		return liveOrderPayload{}, false
-	}
-
-	payload := liveOrderPayload{
-		StrategyName:    rt.StrategyName,
-		Side:            rt.Side,
-		FNOToken:        rt.Token,
-		EntryFNOPrice:   rt.EntryPrice,
-		CurrentFNOPrice: rt.CurrentPrice,
-		BestFNOPrice:    rt.BestPrice,
-	}
-	if hardSL, trailSL, trailStart, ok := svc.stopConfig(rt.StrategyName); ok {
-		payload.StoplossPrice, payload.StoplossKind = computeLiveStoploss(rt.Side, rt.EntryPrice, rt.BestPrice, hardSL, trailSL, trailStart)
-	}
-	return payload, true
-}
-
-func (svc *Service) publishLiveOrders(ctx context.Context) {
-	if svc.redisWriter == nil {
-		return
-	}
-
-	svc.liveOrdersMu.Lock()
-	orders := svc.snapshotLiveOrdersLocked()
-	payload, err := json.Marshal(map[string]interface{}{
-		"orders": orders,
-	})
-	if err != nil {
-		svc.liveOrdersMu.Unlock()
-		log.Printf("[stratengine] live orders marshal error: %v", err)
-		return
-	}
-	payloadStr := string(payload)
-	if payloadStr == svc.lastLiveOrdersJSON {
-		svc.liveOrdersMu.Unlock()
-		return
-	}
-	svc.lastLiveOrdersJSON = payloadStr
-	svc.liveOrdersMu.Unlock()
-
-	svc.redisWriter.Client().Set(ctx, "orders:live", payload, 24*time.Hour)
-	svc.redisWriter.Client().Publish(ctx, "pub:orders", payloadStr)
-}
-
-// publishFNOSubscription subscribes option tokens; SnapQuote when the picker
-// runs (every option needs bid/ask), else Quote as before.
-func (svc *Service) publishFNOSubscription(ctx context.Context, tokens ...string) {
-	svc.publishFNOSubscriptionMode(ctx, svc.fnoSubscribeMode(), tokens...)
-}
-
-// fnoSubscribeMode is the feed mode publishFNOSubscription uses: SnapQuote
-// while the global option picker is running (every option needs a two-sided
-// quote), else Quote as before. A small, Redis-free seam so the mode
-// selection itself is unit-tested without a broker or Redis.
-func (svc *Service) fnoSubscribeMode() int {
-	if svc.picker != nil {
-		return smartSnapQuote
-	}
-	return smartconnect.ModeQuote
-}
-
-// publishFNOSubscriptionMode asks mdengine to stream NFO tokens in a feed
-// mode (smartconnect.ModeQuote / ModeSnapQuote).
-func (svc *Service) publishFNOSubscriptionMode(ctx context.Context, mode int, tokens ...string) {
-	svc.publishSubscriptionMode(ctx, 2, mode, tokens...)
-}
-
-// publishSubscriptionMode asks mdengine to stream tokens of one Angel
-// exchange_type (2 NFO, 4 BFO) in a feed mode.
-func (svc *Service) publishSubscriptionMode(ctx context.Context, exchType, mode int, tokens ...string) {
-	uniq := make([]string, 0, len(tokens))
-	seen := make(map[string]struct{})
-	for _, token := range tokens {
-		token = strings.TrimSpace(token)
-		if token == "" {
-			continue
-		}
-		if _, ok := seen[token]; ok {
-			continue
-		}
-		seen[token] = struct{}{}
-		uniq = append(uniq, token)
-	}
-	if len(uniq) == 0 {
-		return
-	}
-
-	subCmd, _ := json.Marshal(map[string]interface{}{
-		"exchange_type": exchType,
-		"tokens":        uniq,
-		"mode":          mode,
-	})
-	if err := svc.redisWriter.Client().Publish(ctx, "cmd:subscribe_token", string(subCmd)).Err(); err != nil {
-		log.Printf("[stratengine] ⚠️  failed to publish FNO subscribe command: %v", err)
-		return
-	}
-	log.Printf("[stratengine] 📡 published FNO subscribe command: mode=%d tokens=%v", mode, uniq)
-}
-
 func (svc *Service) publishStrikeInfo(ctx context.Context, spotPrice int64) {
-	if svc.strikePicker == nil || !svc.strikePicker.Resolved() {
+	sp := svc.strikePicker.Load()
+	if sp == nil || !sp.Resolved() {
 		return
 	}
 
-	ce := svc.strikePicker.GetCallToken()
-	pe := svc.strikePicker.GetPutToken()
+	ce := sp.GetCallToken()
+	pe := sp.GetPutToken()
 	atmStrike := ce.Strike
 	if atmStrike == 0 {
 		atmStrike = pe.Strike
@@ -1465,159 +631,8 @@ func (svc *Service) publishStrikeInfo(ctx context.Context, spotPrice int64) {
 		"call_ltp":    svc.orderExecutor.GetLTP(ce.Token),
 		"put_ltp":     svc.orderExecutor.GetLTP(pe.Token),
 	})
-	svc.redisWriter.Client().Set(ctx, "strike:info", strikePayload, 24*time.Hour)
-	svc.redisWriter.Client().Publish(ctx, "pub:strike", string(strikePayload))
-}
-
-func automationSignalType(side strategy.PositionSide) orderexec.AutomationSignalType {
-	switch side {
-	case strategy.SideCall:
-		return orderexec.SignalBuyCall
-	case strategy.SidePut:
-		return orderexec.SignalBuyPut
-	default:
-		return ""
-	}
-}
-
-func (svc *Service) strategyAutomationContext(sig strategy.Signal) (strategy.EntryAutomationContext, bool) {
-	// No registered strategy exposes its own automation context; callers
-	// fall back to reason parsing.
-	return strategy.EntryAutomationContext{}, false
-}
-
-func automationMarketStateFromStrategy(state strategy.EntryMarketState) orderexec.AutomationMarketState {
-	switch state {
-	case strategy.EntryMarketStateTrending:
-		return orderexec.MarketStateTrending
-	case strategy.EntryMarketStateChoppy:
-		return orderexec.MarketStateChoppy
-	default:
-		return orderexec.MarketStateSideways
-	}
-}
-
-func automationStrengthFromStrategy(strength strategy.EntryStrength) orderexec.AutomationStrength {
-	switch strength {
-	case strategy.EntryStrengthHigh:
-		return orderexec.StrengthHigh
-	case strategy.EntryStrengthMedium:
-		return orderexec.StrengthMedium
-	default:
-		return orderexec.StrengthLow
-	}
-}
-
-func automationStrengthFromPct(pct float64) orderexec.AutomationStrength {
-	switch {
-	case pct >= 0.20:
-		return orderexec.StrengthHigh
-	case pct >= 0.12:
-		return orderexec.StrengthMedium
-	default:
-		return orderexec.StrengthLow
-	}
-}
-
-func automationHoldType(v string) orderexec.AutomationHoldType {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "carry":
-		return orderexec.HoldTypeCarry
-	default:
-		return orderexec.HoldTypeIntraday
-	}
-}
-
-func normalizeMarketStateValue(v string) string {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "trending":
-		return "trending"
-	case "choppy":
-		return "choppy"
-	case "range":
-		return "range"
-	case "sideways":
-		return "sideways"
-	default:
-		return ""
-	}
-}
-
-func inferMarketStateFromReason(reason string) string {
-	hay := strings.ToLower(strings.TrimSpace(reason))
-	switch {
-	case strings.Contains(hay, "range "):
-		return "range"
-	case strings.Contains(hay, "choppy"):
-		return "choppy"
-	case strings.Contains(hay, "sideways"):
-		return "sideways"
-	case strings.Contains(hay, "momentum"):
-		return "trending"
-	default:
-		return ""
-	}
-}
-
-func automationIVMove(v string) orderexec.AutomationIVMove {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "rise":
-		return orderexec.IVMoveRise
-	case "fall":
-		return orderexec.IVMoveFall
-	default:
-		return orderexec.IVMoveNeutral
-	}
-}
-
-func parseSignalDistancePct(reason string) float64 {
-	marker := " is "
-	start := strings.Index(reason, marker)
-	if start < 0 {
-		return 0
-	}
-	rest := reason[start+len(marker):]
-	end := strings.Index(rest, "%")
-	if end <= 0 {
-		return 0
-	}
-	pct, err := strconv.ParseFloat(strings.TrimSpace(rest[:end]), 64)
-	if err != nil {
-		return 0
-	}
-	return pct
-}
-
-func parseSignalClose(reason string) int64 {
-	marker := "close="
-	start := strings.Index(reason, marker)
-	if start < 0 {
-		return 0
-	}
-	rest := reason[start+len(marker):]
-	end := len(rest)
-	for i, r := range rest {
-		if r < '0' || r > '9' {
-			end = i
-			break
-		}
-	}
-	if end <= 0 {
-		return 0
-	}
-	price, err := strconv.ParseInt(rest[:end], 10, 64)
-	if err != nil {
-		return 0
-	}
-	return price
-}
-
-func isNIFTYExpiryDay(now time.Time) bool {
-	now = now.In(time.FixedZone("IST", 5*3600+30*60))
-	if now.Weekday() != time.Tuesday {
-		return false
-	}
-	return now.Hour() < 15 || (now.Hour() == 15 && now.Minute() < 30)
+	svc.redisWriter.Client().Set(ctx, model.StrikeKey, strikePayload, 24*time.Hour)
+	svc.redisWriter.Client().Publish(ctx, model.StrikeChannel, string(strikePayload))
 }
 
 // publishSessionHealth publishes session health to Redis every 30 seconds

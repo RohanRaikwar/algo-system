@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"trading-systemv1/internal/strategy"
+	"trading-systemv1/internal/model"
 )
 
 // A terminal push already cached ends confirmFill without reading the book.
@@ -81,13 +81,13 @@ func TestPush_StopFillClosesPosition(t *testing.T) {
 	var mu sync.Mutex
 	var fills []FillReport
 	oe.SetFillListener(func(r FillReport) { mu.Lock(); fills = append(fills, r); mu.Unlock() })
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
-	e, _ := entryFor(oe, realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
+	e, _ := entryFor(oe, realSig(model.ActionBuy))
 	before := len(f.calls())
 
 	oe.HandleOrderUpdate(map[string]any{"orderid": e.SLOrderID, "orderstatus": "complete", "averageprice": 89.80, "filledshares": "75"})
 
-	waitFor(t, "position closed", func() bool { _, ok := entryFor(oe, realSig(strategy.ActionBuy)); return !ok })
+	waitFor(t, "position closed", func() bool { _, ok := entryFor(oe, realSig(model.ActionBuy)); return !ok })
 	if c := f.calls(); len(c) != before {
 		t.Fatalf("broker calls after push: %v", c[before:])
 	}
@@ -104,16 +104,16 @@ func TestPush_StopPartialCancelRearms(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := stopExecutor(t, f)
 	alertSink(oe)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
-	e, _ := entryFor(oe, realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
+	e, _ := entryFor(oe, realSig(model.ActionBuy))
 
 	oe.HandleOrderUpdate(map[string]any{"orderid": e.SLOrderID, "orderstatus": "cancelled", "averageprice": 89.80, "filledshares": "25"})
 
 	waitFor(t, "stop re-placed", func() bool {
-		r, ok := entryFor(oe, realSig(strategy.ActionBuy))
+		r, ok := entryFor(oe, realSig(model.ActionBuy))
 		return ok && r.SLOrderID != "" && r.SLOrderID != e.SLOrderID
 	})
-	r, _ := entryFor(oe, realSig(strategy.ActionBuy))
+	r, _ := entryFor(oe, realSig(model.ActionBuy))
 	if r.Quantity != 50 {
 		t.Fatalf("quantity %d, want 50", r.Quantity)
 	}
@@ -127,13 +127,13 @@ func TestPush_StopPartialCancelRearms(t *testing.T) {
 func TestPush_OtherOrderLeavesPosition(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := stopExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	before := len(f.calls())
 
 	oe.HandleOrderUpdate(map[string]any{"orderid": "SOMEONE-ELSE", "orderstatus": "complete", "averageprice": 50.0, "filledshares": "75"})
-	oe.sweepStop(oe.positionKey(realSig(strategy.ActionBuy)), "OLD-STOP")
+	oe.sweepStop(oe.positionKey(realSig(model.ActionBuy)), "OLD-STOP")
 
-	if _, ok := entryFor(oe, realSig(strategy.ActionBuy)); !ok {
+	if _, ok := entryFor(oe, realSig(model.ActionBuy)); !ok {
 		t.Fatal("position closed by an unrelated push")
 	}
 	if c := f.calls(); len(c) != before {
@@ -166,8 +166,8 @@ func TestPush_SettlesBackgroundPoll(t *testing.T) {
 func TestPush_NoSocketUsesBook(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := liveExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
-	if _, ok := entryFor(oe, realSig(strategy.ActionBuy)); !ok {
+	oe.ExecuteSignal(realSig(model.ActionBuy))
+	if _, ok := entryFor(oe, realSig(model.ActionBuy)); !ok {
 		t.Fatal("entry not stored")
 	}
 	f.mu.Lock()
@@ -189,8 +189,8 @@ func TestPush_EntryFillFromPush(t *testing.T) {
 		oe.HandleOrderUpdate(map[string]any{"orderid": "OID-1", "orderstatus": "complete", "averageprice": 100.0, "filledshares": "75"})
 		close(f.placeGate)
 	}()
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
-	e, ok := entryFor(oe, realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
+	e, ok := entryFor(oe, realSig(model.ActionBuy))
 	if !ok || e.Pending || e.Price != 10000 {
 		t.Fatalf("entry %+v ok=%v, want filled at 10000", e, ok)
 	}

@@ -6,8 +6,8 @@ import (
 	"log"
 
 	"trading-systemv1/internal/circuitbreaker"
+	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/oms"
-	"trading-systemv1/internal/strategy"
 )
 
 // OrderLedger is the durable order record the executor writes every real
@@ -38,7 +38,7 @@ func (oe *OrderExecutor) orderLedger() OrderLedger {
 // SUBMITTING before anything is sent. It returns false — and the BUY must
 // not be sent — when the intent was already claimed (a replayed signal),
 // or when the journal cannot record it.
-func (oe *OrderExecutor) journalEntryIntent(sig strategy.Signal, posKey, token, symbol string, qty int64, key string) bool {
+func (oe *OrderExecutor) journalEntryIntent(sig model.Signal, posKey, token, symbol string, qty int64, key string) bool {
 	l := oe.orderLedger()
 	if l == nil {
 		if oe.cfg.RequireJournal {
@@ -68,7 +68,7 @@ func (oe *OrderExecutor) journalEntryIntent(sig strategy.Signal, posKey, token, 
 
 // journalExitIntent journals a real SELL as SUBMITTING. A failure is
 // alerted but never stops the exit.
-func (oe *OrderExecutor) journalExitIntent(sig strategy.Signal, posKey, token, symbol string, qty int64, key string) {
+func (oe *OrderExecutor) journalExitIntent(sig model.Signal, posKey, token, symbol string, qty int64, key string) {
 	l := oe.orderLedger()
 	if l == nil {
 		return

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"trading-systemv1/internal/strategy"
+	"trading-systemv1/internal/model"
 )
 
 // broker is the slice of the Angel One client the executor calls. Defined
@@ -80,15 +80,15 @@ func (oe *OrderExecutor) keyLock(posKey string) *sync.Mutex {
 // inflightBuy reserves a position between the gate and a stored entry.
 type inflightBuy struct {
 	strategy string
-	side     strategy.PositionSide
+	side     model.PositionSide
 	real     bool
 }
 
-func opposite(side strategy.PositionSide) strategy.PositionSide {
-	if side == strategy.SideCall {
-		return strategy.SidePut
+func opposite(side model.PositionSide) model.PositionSide {
+	if side == model.SideCall {
+		return model.SidePut
 	}
-	return strategy.SideCall
+	return model.SideCall
 }
 
 // oppositeConflictLocked reports whether a BUY for sig must wait: an
@@ -96,7 +96,7 @@ func opposite(side strategy.PositionSide) strategy.PositionSide {
 // strategy, or — when the BUY is real — any real one on the same
 // underlying (a real NIFTY CALL does not block a SENSEX PUT). Caller holds
 // oe.mu.
-func (oe *OrderExecutor) oppositeConflictLocked(sig strategy.Signal, real bool) bool {
+func (oe *OrderExecutor) oppositeConflictLocked(sig model.Signal, real bool) bool {
 	opp := string(opposite(sig.Side))
 	und := underlyingOfStrategy(sig.StrategyName)
 	for _, r := range oe.entryOrders {
@@ -118,7 +118,7 @@ func (oe *OrderExecutor) oppositeConflictLocked(sig strategy.Signal, real bool) 
 }
 
 // sideOpen reports whether any strategy holds, or is entering, side.
-func (oe *OrderExecutor) sideOpen(side strategy.PositionSide) bool {
+func (oe *OrderExecutor) sideOpen(side model.PositionSide) bool {
 	oe.mu.RLock()
 	defer oe.mu.RUnlock()
 	for _, r := range oe.entryOrders {
@@ -152,7 +152,7 @@ func (oe *OrderExecutor) updateEntry(posKey string, fn func(*OrderRecord)) {
 }
 
 // storeEntry records an entry and locks its instrument, without GTTs.
-func (oe *OrderExecutor) storeEntry(sig strategy.Signal, rec OrderRecord) {
+func (oe *OrderExecutor) storeEntry(sig model.Signal, rec OrderRecord) {
 	if rec.IndexToken == "" {
 		rec.IndexToken, rec.IndexExchange = sig.Token, sig.Exchange
 	}
@@ -166,7 +166,7 @@ func (oe *OrderExecutor) storeEntry(sig strategy.Signal, rec OrderRecord) {
 // synchronously, so the rule IDs are in the record (and the next snapshot)
 // before anything else can act on the position. Caller holds the position
 // lock.
-func (oe *OrderExecutor) commitEntry(sig strategy.Signal, rec OrderRecord) {
+func (oe *OrderExecutor) commitEntry(sig model.Signal, rec OrderRecord) {
 	posKey := oe.positionKey(sig)
 	rec.Pending = false
 	if oe.stopMode() {
@@ -193,7 +193,7 @@ func (oe *OrderExecutor) commitEntry(sig strategy.Signal, rec OrderRecord) {
 // onBuySettled applies a BUY's terminal order-book result to its Pending
 // entry: adopt it with GTT protection (and send any exit deferred while it
 // was pending), or drop it if nothing filled. Caller holds the position lock.
-func (oe *OrderExecutor) onBuySettled(sig strategy.Signal, orderID string, f fillResult) {
+func (oe *OrderExecutor) onBuySettled(sig model.Signal, orderID string, f fillResult) {
 	posKey := oe.positionKey(sig)
 	cur, ok := oe.entry(posKey)
 	if !ok {
@@ -217,7 +217,7 @@ func (oe *OrderExecutor) onBuySettled(sig strategy.Signal, orderID string, f fil
 
 // sendDeferredExit sends the exit that arrived while the BUY was pending.
 // Caller holds the position lock.
-func (oe *OrderExecutor) sendDeferredExit(sig strategy.Signal) {
+func (oe *OrderExecutor) sendDeferredExit(sig model.Signal) {
 	posKey := oe.positionKey(sig)
 	rec, ok := oe.entry(posKey)
 	if !ok {
@@ -229,7 +229,7 @@ func (oe *OrderExecutor) sendDeferredExit(sig strategy.Signal) {
 		return
 	}
 	exit := sig
-	exit.Action = strategy.ActionExit
+	exit.Action = model.ActionExit
 	exit.SignalTS = time.Time{}
 	exit.Reason = "deferred exit (arrived while BUY was settling)"
 	key := generateIdempotencyKey(exit)
@@ -238,7 +238,7 @@ func (oe *OrderExecutor) sendDeferredExit(sig strategy.Signal) {
 }
 
 // dropEntry forgets an entry that never became a live position.
-func (oe *OrderExecutor) dropEntry(sig strategy.Signal) {
+func (oe *OrderExecutor) dropEntry(sig model.Signal) {
 	posKey := oe.positionKey(sig)
 	oe.cancelPairedGTTs(posKey)
 	oe.cancelStopQuiet(posKey)
@@ -250,12 +250,12 @@ func (oe *OrderExecutor) dropEntry(sig strategy.Signal) {
 }
 
 // finalizeExit closes a position the broker has confirmed flat.
-func (oe *OrderExecutor) finalizeExit(sig strategy.Signal) {
+func (oe *OrderExecutor) finalizeExit(sig model.Signal) {
 	oe.dropEntry(sig)
 	log.Printf("%s 🔓 %s position closed", oe.logPrefix(), sig.Side)
 }
 
-func (oe *OrderExecutor) reportFill(sig strategy.Signal, direction string, pricePaise, qty int64, real bool) {
+func (oe *OrderExecutor) reportFill(sig model.Signal, direction string, pricePaise, qty int64, real bool) {
 	if pricePaise <= 0 {
 		return
 	}
@@ -270,10 +270,10 @@ func (oe *OrderExecutor) reportFill(sig strategy.Signal, direction string, price
 // signalFor rebuilds the signal identity of a stored entry, for settling
 // it after a restart or retrying its exit. Token/Exchange are the index
 // instrument that opened it, so fills land on the same P&L key.
-func signalFor(rec OrderRecord) strategy.Signal {
-	return strategy.Signal{
+func signalFor(rec OrderRecord) model.Signal {
+	return model.Signal{
 		StrategyName: rec.StrategyName,
-		Side:         strategy.PositionSide(rec.PositionSide),
+		Side:         model.PositionSide(rec.PositionSide),
 		Token:        rec.IndexToken,
 		Exchange:     rec.IndexExchange,
 	}
@@ -433,7 +433,7 @@ func (oe *OrderExecutor) ResumeSettlement() {
 // applyExitResult settles a real SELL from its terminal order-book result.
 // Complete closes the position; a partial fill reduces it and leaves the
 // rest open; a rejection leaves it open. Caller holds the position lock.
-func (oe *OrderExecutor) applyExitResult(sig strategy.Signal, orderID string, f fillResult) {
+func (oe *OrderExecutor) applyExitResult(sig model.Signal, orderID string, f fillResult) {
 	posKey := oe.positionKey(sig)
 	rec, _ := oe.entry(posKey)
 	switch {
@@ -473,7 +473,7 @@ var exitRetryDelays = []time.Duration{5 * time.Second, 15 * time.Second, 30 * ti
 
 // scheduleExitRetry resends the exit for sig's position after the next
 // delay in exitRetryDelays, and alerts once they are used up.
-func (oe *OrderExecutor) scheduleExitRetry(sig strategy.Signal) {
+func (oe *OrderExecutor) scheduleExitRetry(sig model.Signal) {
 	posKey := oe.positionKey(sig)
 	oe.mu.Lock()
 	n := oe.exitRetries[posKey]
@@ -501,7 +501,7 @@ func (oe *OrderExecutor) scheduleExitRetry(sig strategy.Signal) {
 // nothing else is closing it. The broker's net position decides the size,
 // so a position closed another way (GTT, by hand) is finalised instead of
 // sold short. Caller holds the position lock.
-func (oe *OrderExecutor) retryExitLocked(sig strategy.Signal, attempt int) {
+func (oe *OrderExecutor) retryExitLocked(sig model.Signal, attempt int) {
 	prefix := oe.logPrefix()
 	posKey := oe.positionKey(sig)
 	rec, ok := oe.entry(posKey)
@@ -533,7 +533,7 @@ func (oe *OrderExecutor) retryExitLocked(sig strategy.Signal, attempt int) {
 		qty = held
 	}
 	exit := sig
-	exit.Action = strategy.ActionExit
+	exit.Action = model.ActionExit
 	exit.SignalTS = time.Time{}
 	exit.Reason = fmt.Sprintf("automatic exit retry %d", attempt)
 	key := generateIdempotencyKey(exit)
@@ -584,7 +584,7 @@ func beforeTodayIST(t time.Time) bool {
 
 // settleStalePending settles a BUY left Pending on a previous day, which
 // the day-scoped order book can no longer show, from broker positions.
-func (oe *OrderExecutor) settleStalePending(sig strategy.Signal, rec OrderRecord) {
+func (oe *OrderExecutor) settleStalePending(sig model.Signal, rec OrderRecord) {
 	posKey := oe.positionKey(sig)
 	kl := oe.keyLock(posKey)
 	kl.Lock()

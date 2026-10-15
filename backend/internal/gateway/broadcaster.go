@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"trading-systemv1/internal/model"
 )
 
 // Broadcaster constructs envelope JSON and sends filtered messages to clients.
@@ -26,7 +28,7 @@ func (b *Broadcaster) Broadcast(channel string, data []byte) {
 	// Tick pipeline latency: mdengine receive time (tick_ts) to this send.
 	// Only ticks carry a receive stamp; candle and indicator "ts" fields are
 	// bucket start times, so measuring them reports the candle's age.
-	if b.hub.Latency != nil && strings.HasPrefix(channel, "pub:tick:") {
+	if b.hub.Latency != nil && strings.HasPrefix(channel, model.TickChannelPrefix) {
 		if srcTS := extractTickTS(data); !srcTS.IsZero() {
 			latencyMs := float64(now.Sub(srcTS).Microseconds()) / 1000.0
 			if latencyMs >= 0 {
@@ -115,27 +117,27 @@ func (b *Broadcaster) Broadcast(channel string, data []byte) {
 // pub:orders on every option tick while a position is open, so disconnecting
 // on overflow here would flap slow clients at tick rate.
 var latestWinsChannels = map[string]bool{
-	"pub:orders":     true,
-	"pub:pnl":        true,
-	"pub:strike":     true,
-	"pub:sr":         true,
-	"pub:srx":        true,
-	"pub:refused":    true,
-	"pub:strikesel":  true,
-	"pub:strikeselx": true,
+	model.OrdersChannel:     true,
+	model.PnLChannel:        true,
+	model.StrikeChannel:     true,
+	model.SRStateChannel:    true,
+	model.SRXStateChannel:   true,
+	model.RefusedChannel:    true,
+	model.StrikeSelChannel:  true,
+	model.StrikeSelXChannel: true,
 }
 
 // isLatestWins also covers pub:analyst:* — each frame is the full analyst
 // state for its key, so only the newest matters.
 func isLatestWins(channel string) bool {
-	return latestWinsChannels[channel] || strings.HasPrefix(channel, "pub:analyst:")
+	return latestWinsChannels[channel] || strings.HasPrefix(channel, model.AnalystChannelPref)
 }
 
 // losslessChannels carry events the dashboard must not miss (signals). Ticks
 // and indicators are superseded by the next value and keep drop-on-full
 // behaviour.
 var losslessChannels = map[string]bool{
-	"pub:signal": true,
+	model.SignalChannel: true,
 }
 
 var tickTSKey = []byte(`"tick_ts":"`)
@@ -174,7 +176,7 @@ const replayGrace = 2 * time.Minute
 //     subscribe snapshot, so it needs no older buffer.
 //   - everything else (signals, orders, analyst, full state) always.
 func (h *Hub) keepReplayLocked(channel string, now time.Time) bool {
-	if strings.HasPrefix(channel, "pub:tick:") {
+	if strings.HasPrefix(channel, model.TickChannelPrefix) {
 		return false
 	}
 	parsed := parseChannel(channel)

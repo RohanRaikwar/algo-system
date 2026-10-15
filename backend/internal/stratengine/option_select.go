@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/instruments"
 	"trading-systemv1/internal/strategy"
 )
 
@@ -99,7 +99,7 @@ func (svc *Service) resolveEntryStrike(ctx context.Context, sig *strategy.Signal
 		}
 		expiry = c.Expiry
 	}
-	info, err := svc.resolveOn(now, expiry, sig.Strike, optionTypeFor(sig.Side))
+	info, err := svc.resolveEntryContract(now, expiry, sig.Strike, optionTypeFor(sig.Side))
 	if err != nil {
 		return fmt.Errorf("strike %d%s not resolvable: %w", sig.Strike, optionTypeFor(sig.Side), err)
 	}
@@ -221,21 +221,21 @@ func absInt64(x int64) int64 {
 }
 
 // legResolver resolves an option contract at a strike. Satisfied by
-// *orderexec.StrikePicker.
+// *instruments.StrikePicker.
 type legResolver interface {
-	ResolveStrike(now time.Time, strike int64, optionType string) (orderexec.StrikeInfo, error)
+	ResolveStrike(now time.Time, strike int64, optionType string) (instruments.StrikeInfo, error)
 }
 
 func (svc *Service) resolverForLegs() legResolver {
 	if svc.legResolver != nil {
 		return svc.legResolver
 	}
-	if svc.strikePicker != nil {
-		return svc.strikePicker
+	if sp := svc.strikePicker.Load(); sp != nil {
+		return sp
 	}
 	svc.legPickerOnce.Do(func() {
 		// Offline instrument master first; SearchScrip only with a session.
-		svc.legPicker = orderexec.NewStrikePicker(svc.orderExecutor.GetSmartConnect())
+		svc.legPicker = instruments.NewStrikePicker(svc.orderExecutor.GetSmartConnect())
 	})
 	return svc.legPicker
 }

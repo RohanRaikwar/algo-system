@@ -6,7 +6,7 @@ import (
 	"math"
 	"time"
 
-	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/instruments"
 	"trading-systemv1/internal/strategy"
 )
 
@@ -69,18 +69,18 @@ func (svc *Service) isSRSignal(sig *strategy.Signal) bool {
 
 // pickSRStrike sets sig.Strike to the contract the greeks select and
 // returns it; the caller resolves that exact expiry.
-func (svc *Service) pickSRStrike(sig *strategy.Signal, now time.Time) (orderexec.OptionContract, error) {
-	chain, err := svc.optionChain(now)
+func (svc *Service) pickSRStrike(sig *strategy.Signal, now time.Time) (instruments.OptionContract, error) {
+	chain, err := svc.entryChain(now)
 	if err != nil {
-		return orderexec.OptionContract{}, fmt.Errorf("SR strike: no greeks (%v)", err)
+		return instruments.OptionContract{}, fmt.Errorf("SR strike: no greeks (%v)", err)
 	}
 	opt := optionTypeFor(sig.Side)
-	premium := svc.srPremium(now, opt)
+	premium := svc.srPremiumOffline(now, opt)
 	lim := svc.srGreekLimits()
 	lim.TargetMove = sig.TargetMove
 	c, err := selectSRContract(chain, opt, now, lim, premium)
 	if err != nil {
-		return orderexec.OptionContract{}, err
+		return instruments.OptionContract{}, err
 	}
 	log.Printf("[stratengine] SR strike %d%s (asked %d): delta=%.2f gamma=%.4f theta=%.2f premium=%.2f iv=%.1f",
 		c.Strike, c.OptionType, sig.Strike, c.Delta, c.Gamma, c.Theta, premium(c), normIV(c.IV))
@@ -92,12 +92,12 @@ func (svc *Service) pickSRStrike(sig *strategy.Signal, now time.Time) (orderexec
 
 // expiryResolver resolves a contract on a given expiry (the strike picker).
 type expiryResolver interface {
-	ResolveStrikeOn(expiry time.Time, strike int64, optionType string) (orderexec.StrikeInfo, error)
+	ResolveStrikeOn(expiry time.Time, strike int64, optionType string) (instruments.StrikeInfo, error)
 }
 
 // resolveOn resolves strike/opt on expiry; without an expiry (or a resolver
 // that cannot pick one) it falls back to the nearest expiry.
-func (svc *Service) resolveOn(now, expiry time.Time, strike int64, opt string) (orderexec.StrikeInfo, error) {
+func (svc *Service) resolveOn(now, expiry time.Time, strike int64, opt string) (instruments.StrikeInfo, error) {
 	r := svc.resolverForLegs()
 	if er, ok := r.(expiryResolver); ok && !expiry.IsZero() {
 		return er.ResolveStrikeOn(expiry, strike, opt)
@@ -105,10 +105,66 @@ func (svc *Service) resolveOn(now, expiry time.Time, strike int64, opt string) (
 	return r.ResolveStrike(now, strike, opt)
 }
 
+// offlineResolver resolves contracts without a broker call. Satisfied by
+// *instruments.StrikePicker (instrument master + the day's resolved cache).
+type offlineResolver interface {
+	LookupOn(expiry time.Time, strike int64, optionType string) (instruments.StrikeInfo, bool)
+	LookupNearest(now time.Time, strike int64, optionType string) (instruments.StrikeInfo, bool)
+}
+
+// lookupOffline is resolveOn without a broker call. ok is false on a miss.
+// A resolver that is not an offlineResolver (test fakes, in memory) is
+// asked through resolveOn.
+func (svc *Service) lookupOffline(now, expiry time.Time, strike int64, opt string) (instruments.StrikeInfo, bool) {
+	r := svc.resolverForLegs()
+	or, isOffline := r.(offlineResolver)
+	if !isOffline {
+		info, err := svc.resolveOn(now, expiry, strike, opt)
+		return info, err == nil
+	}
+	if _, isExp := r.(expiryResolver); expiry.IsZero() || !isExp {
+		return or.LookupNearest(now, strike, opt)
+	}
+	return or.LookupOn(expiry, strike, opt)
+}
+
+// resolveEntryContract is resolveOn for the signal path: never SearchScrip.
+// On a miss the entry is refused and one background broker lookup caches
+// the contract for the next signal.
+func (svc *Service) resolveEntryContract(now, expiry time.Time, strike int64, opt string) (instruments.StrikeInfo, error) {
+	if info, ok := svc.lookupOffline(now, expiry, strike, opt); ok {
+		return info, nil
+	}
+	if svc.contractWarming.CompareAndSwap(false, true) {
+		go func() {
+			defer svc.contractWarming.Store(false)
+			if _, err := svc.resolveOn(time.Now(), expiry, strike, opt); err != nil {
+				log.Printf("[stratengine] background lookup %d%s: %v", strike, opt, err)
+			}
+		}()
+	}
+	return instruments.StrikeInfo{}, fmt.Errorf("%d%s not in instrument master (broker lookup started)", strike, opt)
+}
+
+// srPremiumOffline is srPremium for the signal path: a contract the
+// instrument master does not list has no premium.
+func (svc *Service) srPremiumOffline(now time.Time, opt string) func(instruments.OptionContract) float64 {
+	return func(c instruments.OptionContract) float64 {
+		if c.Premium > 0 {
+			return c.Premium
+		}
+		info, ok := svc.lookupOffline(now, c.Expiry, c.Strike, opt)
+		if !ok {
+			return 0
+		}
+		return float64(svc.orderExecutor.GetLTP(info.Token)) / 100
+	}
+}
+
 // srPremium returns a contract's premium in rupees. OptionGreek carries no
 // LTP; premiums come from the subscribed ladder.
-func (svc *Service) srPremium(now time.Time, opt string) func(orderexec.OptionContract) float64 {
-	return func(c orderexec.OptionContract) float64 {
+func (svc *Service) srPremium(now time.Time, opt string) func(instruments.OptionContract) float64 {
+	return func(c instruments.OptionContract) float64 {
 		if c.Premium > 0 {
 			return c.Premium
 		}
@@ -134,7 +190,7 @@ type srRejects struct {
 // srEval is one side's greek selection: the winner (if any), the expiry
 // examined and why the other contracts were dropped.
 type srEval struct {
-	Best    orderexec.OptionContract
+	Best    instruments.OptionContract
 	Found   bool
 	Expiry  time.Time
 	DTE     int
@@ -143,15 +199,15 @@ type srEval struct {
 
 // selectSRContract applies the greek filters to one side of the chain.
 // premium returns a contract's premium in rupees (the chain's unit), 0 if unknown.
-func selectSRContract(chain []orderexec.OptionContract, opt string, now time.Time, lim srGreekLimits,
-	premium func(orderexec.OptionContract) float64) (orderexec.OptionContract, error) {
+func selectSRContract(chain []instruments.OptionContract, opt string, now time.Time, lim srGreekLimits,
+	premium func(instruments.OptionContract) float64) (instruments.OptionContract, error) {
 	ev, err := evalSRContracts(chain, opt, now, lim, premium)
 	if err != nil {
-		return orderexec.OptionContract{}, err
+		return instruments.OptionContract{}, err
 	}
 	if !ev.Found {
 		r := ev.Rejects
-		return orderexec.OptionContract{}, fmt.Errorf("SR strike: no %s passes greeks (dte=%d; out: delta %d, no premium %d, theta %d, gamma %d, liquidity %d, iv %d, cost %d)",
+		return instruments.OptionContract{}, fmt.Errorf("SR strike: no %s passes greeks (dte=%d; out: delta %d, no premium %d, theta %d, gamma %d, liquidity %d, iv %d, cost %d)",
 			opt, ev.DTE, r.Delta, r.Premium, r.Theta, r.Gamma, r.Liquidity, r.IV, r.Cost)
 	}
 	return ev.Best, nil
@@ -159,8 +215,8 @@ func selectSRContract(chain []orderexec.OptionContract, opt string, now time.Tim
 
 // evalSRContracts runs the greek filters and reports the winner and rejects.
 // It errors only when the chain has no contract of this type after today.
-func evalSRContracts(chain []orderexec.OptionContract, opt string, now time.Time, lim srGreekLimits,
-	premium func(orderexec.OptionContract) float64) (srEval, error) {
+func evalSRContracts(chain []instruments.OptionContract, opt string, now time.Time, lim srGreekLimits,
+	premium func(instruments.OptionContract) float64) (srEval, error) {
 	today := dayStart(now)
 	minDTE := lim.MinDTE
 	if minDTE < 1 {

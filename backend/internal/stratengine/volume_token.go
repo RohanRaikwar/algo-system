@@ -5,13 +5,13 @@ import (
 	"log"
 	"time"
 
-	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/instruments"
 )
 
 // futureResolver finds the current NIFTY future. Satisfied by
-// *orderexec.InstrumentMaster.
+// *instruments.InstrumentMaster.
 type futureResolver interface {
-	NearestFuture(name string, now time.Time) (*orderexec.Instrument, error)
+	NearestFuture(name string, now time.Time) (*instruments.Instrument, error)
 }
 
 // volumeTokenSetter is a strategy that takes volume from another instrument.
@@ -33,7 +33,7 @@ func (svc *Service) refreshVolumeToken(ctx context.Context, now time.Time) {
 	svc.refreshExtraVolumeTokens(ctx, now)
 	res := svc.futures
 	if res == nil {
-		res = orderexec.GetInstrumentMaster()
+		res = instruments.GetInstrumentMaster()
 	}
 	fut, err := res.NearestFuture("NIFTY", now)
 	if err != nil {

@@ -1,13 +1,17 @@
 package stratengine
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/markethours"
+	"trading-systemv1/internal/instruments"
 	"trading-systemv1/internal/strategy"
 )
 
@@ -20,25 +24,34 @@ import (
 
 const deltaChainTTL = 60 * time.Second
 
+// defaultEntryChainMaxAge is how old a cached chain an entry may use
+// (STRAT_ENTRY_CHAIN_MAX_AGE).
+const defaultEntryChainMaxAge = 2 * time.Minute
+
 // greeksSource loads the NIFTY option chain with greeks. Satisfied by
-// *orderexec.StrikePicker (needs a SmartConnect session).
+// *instruments.StrikePicker (needs a SmartConnect session).
 type greeksSource interface {
-	LoadOptionChain(entryTime time.Time) ([]orderexec.OptionContract, error)
+	LoadOptionChain(entryTime time.Time) ([]instruments.OptionContract, error)
 }
 
 type deltaState struct {
-	greeks  greeksSource // test hook; nil = the strike picker
-	chainMu sync.Mutex
-	chain   []orderexec.OptionContract
-	chainAt time.Time
+	greeks greeksSource // test hook; nil = the strike picker
+
+	chainLoadMu sync.Mutex // one LoadOptionChain at a time; held across the broker call
+	chainMu     sync.Mutex // guards chain/chainAt only; never held across a broker call
+	chain       []instruments.OptionContract
+	chainAt     time.Time
+
+	chainRefreshing atomic.Bool // an async refresh started by entryChain is running
+	contractWarming atomic.Bool // a background contract lookup started by resolveEntryContract is running
 }
 
 func (svc *Service) greeksFor() (greeksSource, error) {
 	if svc.greeks != nil {
 		return svc.greeks, nil
 	}
-	if svc.strikePicker != nil {
-		return svc.strikePicker, nil
+	if sp := svc.strikePicker.Load(); sp != nil {
+		return sp, nil
 	}
 	if r, ok := svc.resolverForLegs().(greeksSource); ok {
 		return r, nil
@@ -48,7 +61,7 @@ func (svc *Service) greeksFor() (greeksSource, error) {
 
 // optionChain returns the chain, cached for deltaChainTTL (OptionGreek is
 // one broker call per expiry).
-func (svc *Service) optionChain(now time.Time) ([]orderexec.OptionContract, error) {
+func (svc *Service) optionChain(now time.Time) ([]instruments.OptionContract, error) {
 	return svc.optionChainFresh(now, deltaChainTTL)
 }
 
@@ -58,11 +71,17 @@ func (svc *Service) optionChain(now time.Time) ([]orderexec.OptionContract, erro
 // call LoadOptionChain and double the broker calls: whichever path loads
 // first refreshes chain/chainAt, and the other reuses it as long as its own
 // TTL still calls the cached load fresh.
-func (svc *Service) optionChainFresh(now time.Time, ttl time.Duration) ([]orderexec.OptionContract, error) {
-	svc.chainMu.Lock()
-	defer svc.chainMu.Unlock()
-	if svc.chain != nil && now.Sub(svc.chainAt) < ttl && !now.Before(svc.chainAt) {
-		return svc.chain, nil
+//
+// Loads are serialised by chainLoadMu; chainMu is held only to read or swap
+// the cache, so entryChain never waits on a broker call.
+func (svc *Service) optionChainFresh(now time.Time, ttl time.Duration) ([]instruments.OptionContract, error) {
+	if chain, ok := svc.cachedChain(now, ttl); ok {
+		return chain, nil
+	}
+	svc.chainLoadMu.Lock()
+	defer svc.chainLoadMu.Unlock()
+	if chain, ok := svc.cachedChain(now, ttl); ok {
+		return chain, nil // loaded by the caller we waited for
 	}
 	src, err := svc.greeksFor()
 	if err != nil {
@@ -72,8 +91,85 @@ func (svc *Service) optionChainFresh(now time.Time, ttl time.Duration) ([]ordere
 	if err != nil {
 		return nil, err
 	}
+	svc.chainMu.Lock()
 	svc.chain, svc.chainAt = chain, now
+	svc.chainMu.Unlock()
 	return chain, nil
+}
+
+// cachedChain returns the cached chain when it is younger than maxAge.
+func (svc *Service) cachedChain(now time.Time, maxAge time.Duration) ([]instruments.OptionContract, bool) {
+	svc.chainMu.Lock()
+	defer svc.chainMu.Unlock()
+	if svc.chain != nil && now.Sub(svc.chainAt) < maxAge && !now.Before(svc.chainAt) {
+		return svc.chain, true
+	}
+	return nil, false
+}
+
+// entryChain is the chain for the signal path: the cache only, never a
+// broker call. A cache older than EntryChainMaxAge refuses the entry
+// (fail-closed) and starts one background refresh, so a later signal finds
+// it warm. strikeSelLoop and the picker keep the cache fresh in market hours.
+func (svc *Service) entryChain(now time.Time) ([]instruments.OptionContract, error) {
+	maxAge := svc.cfg.EntryChainMaxAge
+	if maxAge <= 0 {
+		maxAge = defaultEntryChainMaxAge
+	}
+	if chain, ok := svc.cachedChain(now, maxAge); ok {
+		return chain, nil
+	}
+	if _, err := svc.greeksFor(); err != nil {
+		return nil, err
+	}
+	svc.refreshChainAsync()
+	return nil, fmt.Errorf("option chain older than %s (refresh started)", maxAge)
+}
+
+// chainWarmEvery is how often chainWarmLoop asks for the chain; with
+// deltaChainTTL it reloads at most once a minute, and it shares the cache
+// with strikeSelLoop and the picker, so it adds no broker calls when they run.
+const chainWarmEvery = 30 * time.Second
+
+// needsEntryChain reports whether any entry path reads the chain.
+func (svc *Service) needsEntryChain() bool {
+	return svc.cfg.SREnabled || svc.cfg.RangeDeltaGuard || svc.cfg.OptionAutomation
+}
+
+// chainWarmLoop keeps the chain cache fresh in market hours, off the
+// signal path, so entryChain finds it warm.
+func (svc *Service) chainWarmLoop(ctx context.Context) {
+	t := time.NewTicker(chainWarmEvery)
+	defer t.Stop()
+	for {
+		now := time.Now()
+		if markethours.IsMarketOpen(now) {
+			if _, err := svc.greeksFor(); err == nil {
+				if _, err := svc.optionChain(now); err != nil {
+					log.Printf("[stratengine] option chain warm-up failed: %v", err)
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// refreshChainAsync reloads the chain in the background unless a refresh
+// it started is still running.
+func (svc *Service) refreshChainAsync() {
+	if !svc.chainRefreshing.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer svc.chainRefreshing.Store(false)
+		if _, err := svc.optionChainFresh(time.Now(), deltaChainTTL); err != nil {
+			log.Printf("[stratengine] option chain refresh failed: %v", err)
+		}
+	}()
 }
 
 // symbolExpiry reads "06OCT26" out of "NIFTY06OCT2624200CE".
@@ -95,7 +191,7 @@ func sameDay(a, b time.Time) bool {
 }
 
 // findContract finds a strike/type/expiry in the chain.
-func findContract(chain []orderexec.OptionContract, info orderexec.StrikeInfo, opt string) (orderexec.OptionContract, bool) {
+func findContract(chain []instruments.OptionContract, info instruments.StrikeInfo, opt string) (instruments.OptionContract, bool) {
 	exp, haveExp := symbolExpiry(info.Symbol)
 	for _, c := range chain {
 		if c.Strike != info.Strike || string(c.OptionType) != opt {
@@ -106,7 +202,7 @@ func findContract(chain []orderexec.OptionContract, info orderexec.StrikeInfo, o
 		}
 		return c, true
 	}
-	return orderexec.OptionContract{}, false
+	return instruments.OptionContract{}, false
 }
 
 // normIV returns IV in percent; a feed reporting a fraction (0.15) is scaled.
@@ -119,8 +215,8 @@ func normIV(iv float64) float64 {
 
 // entryQualityCheck applies the chain-based filters to a bought option:
 // liquidity, IV ceiling, and expected gain at target vs round-trip costs.
-func (svc *Service) entryQualityCheck(sig *strategy.Signal, info orderexec.StrikeInfo, now time.Time) error {
-	chain, err := svc.optionChain(now)
+func (svc *Service) entryQualityCheck(sig *strategy.Signal, info instruments.StrikeInfo, now time.Time) error {
+	chain, err := svc.entryChain(now)
 	if err != nil {
 		return fmt.Errorf("quality check: no option chain (%v)", err)
 	}

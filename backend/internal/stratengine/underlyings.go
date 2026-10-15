@@ -3,6 +3,7 @@ package stratengine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -14,7 +15,7 @@ import (
 	"trading-systemv1/internal/markethours"
 	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/optionpicker"
-	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/instruments"
 	"trading-systemv1/internal/strategy"
 	"trading-systemv1/internal/underlying"
 )
@@ -35,12 +36,16 @@ type srExtra struct {
 	prof  underlying.Profile
 	strat *strategy.Nifty50SR
 
-	mu      sync.Mutex
-	picker  *orderexec.StrikePicker
+	mu      sync.Mutex // guards picker, chain, chainAt; never held across a broker call
+	picker  *instruments.StrikePicker
 	greeks  greeksSource  // test hook; nil = picker
 	res     extraResolver // test hook; nil = picker
-	chain   []orderexec.OptionContract
+	chain   []instruments.OptionContract
 	chainAt time.Time
+
+	chainLoadMu     sync.Mutex // one LoadOptionChain at a time
+	chainRefreshing atomic.Bool
+	contractWarming atomic.Bool
 
 	ladderBusy       atomic.Bool
 	ladderCenter     atomic.Int64
@@ -54,7 +59,7 @@ type srExtra struct {
 }
 
 // extraResolver resolves an extra underlying's contracts. Satisfied by
-// *orderexec.StrikePicker.
+// *instruments.StrikePicker.
 type extraResolver interface {
 	legResolver
 	expiryResolver
@@ -86,6 +91,8 @@ func srExtraConfig(base strategy.Nifty50SRConfig, p underlying.Profile) strategy
 	c.SupportStopZonePts = config.GetEnvInt64(pre+"SUPPORT_STOP_ZONE_PAISE", c.SupportStopZonePts)
 	c.TouchTolPts = config.GetEnvInt64(pre+"TOUCH_TOL_PAISE", c.TouchTolPts)
 	c.StopMinPts = config.GetEnvInt64(pre+"STOP_MIN_PAISE", c.StopMinPts)
+	c.SweepMinWickPts = config.GetEnvInt64(pre+"SWEEP_MIN_WICK_PAISE", c.SweepMinWickPts)
+	c.SweepEnabled = c.SweepEnabled && c.SweepMinWickPts > 0
 	return c
 }
 
@@ -96,13 +103,13 @@ func (svc *Service) buildSRExtras(base strategy.Nifty50SRConfig) []*srExtra {
 	svc.srExtras = nil
 	now := time.Now()
 	for _, p := range underlying.All()[1:] {
-		if step := orderexec.GetInstrumentMaster().StrikeStep(p.OptionName, p.FNOExchange, now); step > 0 && step != p.StrikeStep {
+		if step := instruments.GetInstrumentMaster().StrikeStep(p.OptionName, p.FNOExchange, now); step > 0 && step != p.StrikeStep {
 			log.Printf("[stratengine] %s strike step %d from instrument master (profile said %d)", p.Key, step, p.StrikeStep)
 			p.StrikeStep = step
 		}
 		c := srExtraConfig(base, p)
 		ex := &srExtra{prof: p, strat: strategy.NewNifty50SR(svc.cfg.Qty, c)}
-		ex.picker = orderexec.NewStrikePickerFor(nil, p)
+		ex.picker = instruments.NewStrikePickerFor(nil, p)
 		ex.strat.SetExpiry(ex.picker.NextExpiry(now))
 		svc.srExtras = append(svc.srExtras, ex)
 	}
@@ -167,30 +174,30 @@ func (svc *Service) subscribeOn(ctx context.Context, ex *srExtra, tokens ...stri
 // extraPicker returns ex's strike picker, rebuilt with a broker session
 // once one exists (the NIFTY executor's, or the NIFTY strike picker's
 // standalone session): OptionGreek needs one, master lookups do not.
-func (svc *Service) extraPicker(ex *srExtra) *orderexec.StrikePicker {
+func (svc *Service) extraPicker(ex *srExtra) *instruments.StrikePicker {
 	ex.mu.Lock()
 	defer ex.mu.Unlock()
 	if ex.picker != nil && ex.picker.SmartConnect() != nil {
 		return ex.picker
 	}
 	sc := svc.orderExecutor.GetSmartConnect()
-	if sc == nil && svc.strikePicker != nil {
-		sc = svc.strikePicker.SmartConnect()
+	if sp := svc.strikePicker.Load(); sc == nil && sp != nil {
+		sc = sp.SmartConnect()
 	}
 	if sc != nil || ex.picker == nil {
-		ex.picker = orderexec.NewStrikePickerFor(sc, ex.prof)
+		ex.picker = instruments.NewStrikePickerFor(sc, ex.prof)
 	}
 	return ex.picker
 }
 
 // extraChain returns ex's option chain with greeks, cached deltaChainTTL.
-func (svc *Service) extraChain(ex *srExtra, now time.Time) ([]orderexec.OptionContract, error) {
+func (svc *Service) extraChain(ex *srExtra, now time.Time) ([]instruments.OptionContract, error) {
 	return svc.extraChainFresh(ex, now, deltaChainTTL)
 }
 
 // extraChainFresh is extraChain with an explicit TTL (the picker refreshes
 // every 15s and shares this cache, as NIFTY's picker shares optionChain).
-func (svc *Service) extraChainFresh(ex *srExtra, now time.Time, ttl time.Duration) ([]orderexec.OptionContract, error) {
+func (svc *Service) extraChainFresh(ex *srExtra, now time.Time, ttl time.Duration) ([]instruments.OptionContract, error) {
 	src := ex.greeks
 	if src == nil {
 		p := svc.extraPicker(ex)
@@ -199,10 +206,13 @@ func (svc *Service) extraChainFresh(ex *srExtra, now time.Time, ttl time.Duratio
 		}
 		src = p
 	}
-	ex.mu.Lock()
-	defer ex.mu.Unlock()
-	if ex.chain != nil && now.Sub(ex.chainAt) < ttl && !now.Before(ex.chainAt) {
-		return ex.chain, nil
+	if chain, ok := ex.cachedChain(now, ttl); ok {
+		return chain, nil
+	}
+	ex.chainLoadMu.Lock()
+	defer ex.chainLoadMu.Unlock()
+	if chain, ok := ex.cachedChain(now, ttl); ok {
+		return chain, nil
 	}
 	chain, err := src.LoadOptionChain(now)
 	if err != nil {
@@ -211,8 +221,68 @@ func (svc *Service) extraChainFresh(ex *srExtra, now time.Time, ttl time.Duratio
 	if len(chain) == 0 {
 		return nil, fmt.Errorf("empty %s option chain", ex.prof.OptionName)
 	}
+	ex.mu.Lock()
 	ex.chain, ex.chainAt = chain, now
+	ex.mu.Unlock()
 	return chain, nil
+}
+
+// cachedChain returns ex's cached chain when it is younger than maxAge.
+func (ex *srExtra) cachedChain(now time.Time, maxAge time.Duration) ([]instruments.OptionContract, bool) {
+	ex.mu.Lock()
+	defer ex.mu.Unlock()
+	if ex.chain != nil && now.Sub(ex.chainAt) < maxAge && !now.Before(ex.chainAt) {
+		return ex.chain, true
+	}
+	return nil, false
+}
+
+// errChainStale: a chain source exists but the cache is too old for an
+// entry. Unlike "no source" it refuses the entry.
+var errChainStale = errors.New("option chain stale")
+
+// extraEntryChain is entryChain for ex: the cache only, never a broker
+// call. A stale cache starts one background refresh and returns
+// errChainStale; no chain source returns the source error.
+func (svc *Service) extraEntryChain(ex *srExtra, now time.Time) ([]instruments.OptionContract, error) {
+	maxAge := svc.cfg.EntryChainMaxAge
+	if maxAge <= 0 {
+		maxAge = defaultEntryChainMaxAge
+	}
+	if chain, ok := ex.cachedChain(now, maxAge); ok {
+		return chain, nil
+	}
+	if ex.greeks == nil && svc.extraPicker(ex).SmartConnect() == nil {
+		return nil, fmt.Errorf("no broker session for %s OptionGreek", ex.prof.OptionName)
+	}
+	if ex.chainRefreshing.CompareAndSwap(false, true) {
+		go func() {
+			defer ex.chainRefreshing.Store(false)
+			if _, err := svc.extraChainFresh(ex, time.Now(), deltaChainTTL); err != nil {
+				log.Printf("[stratengine] %s option chain refresh failed: %v", ex.prof.OptionName, err)
+			}
+		}()
+	}
+	return nil, fmt.Errorf("%w: older than %s (refresh started)", errChainStale, maxAge)
+}
+
+// extraOffline is lookupOffline for ex's resolver.
+func (svc *Service) extraOffline(ex *srExtra, now, expiry time.Time, strike int64, opt string) (instruments.StrikeInfo, bool) {
+	r := svc.resolverOf(ex)
+	or, isOffline := r.(offlineResolver)
+	var info instruments.StrikeInfo
+	var err error
+	switch {
+	case isOffline && expiry.IsZero():
+		return or.LookupNearest(now, strike, opt)
+	case isOffline:
+		return or.LookupOn(expiry, strike, opt)
+	case expiry.IsZero():
+		info, err = r.ResolveStrike(now, strike, opt)
+	default:
+		info, err = r.ResolveStrikeOn(expiry, strike, opt)
+	}
+	return info, err == nil
 }
 
 // resolveExtraEntry turns an extra underlying's SR entry into the exact
@@ -232,16 +302,20 @@ func (svc *Service) resolveExtraEntry(ctx context.Context, ex *srExtra, sig *str
 	opt := optionTypeFor(sig.Side)
 	strike, expiry := sig.Strike, time.Time{}
 
-	if chain, err := svc.extraChain(ex, now); err == nil {
+	chain, chainErr := svc.extraEntryChain(ex, now)
+	if errors.Is(chainErr, errChainStale) {
+		return chainErr
+	}
+	if chainErr == nil {
 		lim := svc.srGreekLimits()
 		lim.TargetMove = sig.TargetMove
 		lim.ViewTargetMove = ex.prof.Scale(lim.ViewTargetMove)
-		premium := func(c orderexec.OptionContract) float64 {
+		premium := func(c instruments.OptionContract) float64 {
 			if c.Premium > 0 {
 				return c.Premium
 			}
-			info, err := picker.ResolveStrikeOn(c.Expiry, c.Strike, opt)
-			if err != nil {
+			info, ok := svc.extraOffline(ex, now, c.Expiry, c.Strike, opt)
+			if !ok {
 				return 0
 			}
 			return float64(svc.orderExecutor.GetLTP(info.Token)) / 100
@@ -256,18 +330,27 @@ func (svc *Service) resolveExtraEntry(ctx context.Context, ex *srExtra, sig *str
 		svc.recordExtraPick(ex, *sig, c, premium(c), now)
 		strike, expiry = c.Strike, c.Expiry
 	} else if ex.noGreeksLogged.CompareAndSwap(false, true) {
-		log.Printf("[stratengine] ⚠️  %s: no option greeks (%v) — entries take the ATM strike on the nearest expiry without greek checks", sig.StrategyName, err)
+		log.Printf("[stratengine] ⚠️  %s: no option greeks (%v) — entries take the ATM strike on the nearest expiry without greek checks", sig.StrategyName, chainErr)
 	}
 
-	var info orderexec.StrikeInfo
-	var err error
-	if expiry.IsZero() {
-		info, err = picker.ResolveStrike(now, strike, opt)
-	} else {
-		info, err = picker.ResolveStrikeOn(expiry, strike, opt)
-	}
-	if err != nil {
-		return fmt.Errorf("strike %d%s not resolvable: %w", strike, opt, err)
+	info, ok := svc.extraOffline(ex, now, expiry, strike, opt)
+	if !ok {
+		if ex.contractWarming.CompareAndSwap(false, true) {
+			name := sig.StrategyName
+			go func() {
+				defer ex.contractWarming.Store(false)
+				var err error
+				if expiry.IsZero() {
+					_, err = picker.ResolveStrike(time.Now(), strike, opt)
+				} else {
+					_, err = picker.ResolveStrikeOn(expiry, strike, opt)
+				}
+				if err != nil {
+					log.Printf("[stratengine] %s background lookup %d%s: %v", name, strike, opt, err)
+				}
+			}()
+		}
+		return fmt.Errorf("strike %d%s not resolvable: not in instrument master (broker lookup started)", strike, opt)
 	}
 	if svc.orderExecutor.GetLTP(info.Token) <= 0 {
 		svc.subscribeOn(ctx, ex, info.Token)
@@ -446,7 +529,7 @@ func (ex *srExtra) ladderTokens(res legResolver, now time.Time, spot int64) []st
 // refreshExtraVolumeTokens points each extra SR instance's volume at its
 // index's nearest future on its own segment.
 func (svc *Service) refreshExtraVolumeTokens(ctx context.Context, now time.Time) {
-	im := orderexec.GetInstrumentMaster()
+	im := instruments.GetInstrumentMaster()
 	for _, ex := range svc.srExtras {
 		fut, err := im.NearestFutureOn(ex.prof.OptionName, ex.prof.FNOExchange, now)
 		if err != nil {
@@ -481,8 +564,8 @@ func warmupExtras(reader model.CandleReader, extras []*srExtra, days int, now ti
 // Extra underlyings' strike selection views, one full-state map by index
 // key, so NIFTY's pub:strikesel stays as it was.
 const (
-	strikeSelXKey     = "strikeselx:state"
-	strikeSelXChannel = "pub:strikeselx"
+	strikeSelXKey     = model.StrikeSelXKey
+	strikeSelXChannel = model.StrikeSelXChannel
 )
 
 // extraLimits are the SR greek limits with the view target scaled to ex.
@@ -493,9 +576,9 @@ func (svc *Service) extraLimits(ex *srExtra) srGreekLimits {
 }
 
 // extraPremium is srPremium on ex's contracts.
-func (svc *Service) extraPremium(ex *srExtra, opt string) func(orderexec.OptionContract) float64 {
+func (svc *Service) extraPremium(ex *srExtra, opt string) func(instruments.OptionContract) float64 {
 	res := svc.resolverOf(ex)
-	return func(c orderexec.OptionContract) float64 {
+	return func(c instruments.OptionContract) float64 {
 		if c.Premium > 0 {
 			return c.Premium
 		}
@@ -508,7 +591,7 @@ func (svc *Service) extraPremium(ex *srExtra, opt string) func(orderexec.OptionC
 }
 
 // extraContractView is contractView resolving on ex's segment.
-func (svc *Service) extraContractView(ex *srExtra, c orderexec.OptionContract, premium float64, now time.Time) srContractView {
+func (svc *Service) extraContractView(ex *srExtra, c instruments.OptionContract, premium float64, now time.Time) srContractView {
 	v := srContractView{
 		Strike: c.Strike, Option: string(c.OptionType), Symbol: c.Symbol, Token: c.Token,
 		Expiry: dayStart(c.Expiry).Format("2006-01-02"), DTE: int(dayStart(c.Expiry).Sub(dayStart(now)).Hours() / 24),
@@ -524,7 +607,7 @@ func (svc *Service) extraContractView(ex *srExtra, c orderexec.OptionContract, p
 }
 
 // recordExtraPick stores the contract bought for an extra SR entry.
-func (svc *Service) recordExtraPick(ex *srExtra, sig strategy.Signal, c orderexec.OptionContract, premium float64, now time.Time) {
+func (svc *Service) recordExtraPick(ex *srExtra, sig strategy.Signal, c instruments.OptionContract, premium float64, now time.Time) {
 	last := &srLastPickView{
 		srContractView: svc.extraContractView(ex, c, premium, now),
 		Side:           string(sig.Side),
@@ -607,7 +690,7 @@ func (svc *Service) refreshExtraStrikeSel(ctx context.Context, ex *srExtra, now 
 // subscribeExtraExpiryLadder is subscribeSRExpiryLadder for ex: when SR
 // buys a later expiry than the nearest (SRMinDTE), its strikes around spot
 // are kept streaming so they have premiums.
-func (svc *Service) subscribeExtraExpiryLadder(ctx context.Context, ex *srExtra, chain []orderexec.OptionContract, now time.Time) {
+func (svc *Service) subscribeExtraExpiryLadder(ctx context.Context, ex *srExtra, chain []instruments.OptionContract, now time.Time) {
 	lim := svc.srGreekLimits()
 	if lim.MinDTE <= 1 || svc.orderExecutor == nil {
 		return

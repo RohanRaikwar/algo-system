@@ -247,7 +247,7 @@ func (w *Writer) RunFormingTFCandles(ctx context.Context, ch <-chan model.TFCand
 			}
 			jsonBytes := tfc.JSON()
 			jsonData := *(*string)(unsafe.Pointer(&jsonBytes))
-			pubsubCh := "pub:candle:" + itoa(tfc.TF) + "s:" + tfc.Exchange + ":" + tfc.Token
+			pubsubCh := model.CandleChannelPrefix + itoa(tfc.TF) + "s:" + tfc.Exchange + ":" + tfc.Token
 			w.client.Publish(ctx, pubsubCh, jsonData)
 		}
 	}
@@ -326,7 +326,7 @@ func (w *Writer) PublishFormingBatch(ctx context.Context, candles []model.TFCand
 	pipe := w.client.Pipeline()
 	for _, tfc := range candles {
 		jsonData := string(tfc.JSON())
-		pubsubCh := fmt.Sprintf("pub:candle:%ds:%s:%s", tfc.TF, tfc.Exchange, tfc.Token)
+		pubsubCh := fmt.Sprintf("%s%ds:%s:%s", model.CandleChannelPrefix, tfc.TF, tfc.Exchange, tfc.Token)
 		pipe.Publish(ctx, pubsubCh, jsonData)
 	}
 
@@ -366,7 +366,7 @@ func (w *Writer) LoadTFRegistry(ctx context.Context) ([]int, error) {
 func (w *Writer) writeCandle(ctx context.Context, candle model.Candle) {
 	latestKey := fmt.Sprintf("candle:1s:latest:%s:%s", candle.Exchange, candle.Token)
 	streamKey := fmt.Sprintf("candle:1s:%s:%s", candle.Exchange, candle.Token)
-	pubsubCh := fmt.Sprintf("pub:candle:1s:%s:%s", candle.Exchange, candle.Token)
+	pubsubCh := fmt.Sprintf("%s%s:%s", model.Candle1sChannelPref, candle.Exchange, candle.Token)
 	jsonData := string(candle.JSON())
 
 	ctx, cancel := context.WithTimeout(ctx, candleWriteTimeout)
@@ -504,7 +504,7 @@ func (w *Writer) tryWriteTFCandle(ctx context.Context, tfc model.TFCandle) error
 	pipe.Set(ctx, latestKey, jsonData, defaultLatestTTL)
 
 	// PUBLISH for real-time subscribers
-	pubsubCh := fmt.Sprintf("pub:candle:%ds:%s:%s", tfc.TF, tfc.Exchange, tfc.Token)
+	pubsubCh := fmt.Sprintf("%s%ds:%s:%s", model.CandleChannelPrefix, tfc.TF, tfc.Exchange, tfc.Token)
 	pipe.Publish(ctx, pubsubCh, jsonData)
 
 	_, err = pipe.Exec(ctx)
@@ -585,8 +585,8 @@ func (w *Writer) PublishMarketState(state string) {
 	defer cancel()
 
 	pipe := w.client.Pipeline()
-	pipe.Set(ctx, "market:state", state, 24*time.Hour)
-	pipe.Publish(ctx, "pub:market:state", state)
+	pipe.Set(ctx, model.MarketStateKey, state, 24*time.Hour)
+	pipe.Publish(ctx, model.MarketStateChannel, state)
 	if _, err := pipe.Exec(ctx); err != nil {
 		log.Printf("[redis] failed to publish market state %q: %v", state, err)
 	} else {
@@ -599,7 +599,7 @@ func (w *Writer) PublishMarketState(state string) {
 // Bounded by tickPublishTimeout so a stalled Redis cannot block the tick router.
 func (w *Writer) PublishTick(ctx context.Context, tick model.Tick) error {
 	jsonData := string(tick.JSON())
-	pubsubCh := "pub:tick:" + tick.Exchange + ":" + tick.Token
+	pubsubCh := model.TickChannelPrefix + tick.Exchange + ":" + tick.Token
 	ctx, cancel := context.WithTimeout(ctx, tickPublishTimeout)
 	err := w.client.Publish(ctx, pubsubCh, jsonData).Err()
 	cancel()
@@ -620,7 +620,7 @@ func (w *Writer) PublishTicks(ctx context.Context, ticks []model.Tick) error {
 	pipe := w.client.Pipeline()
 	for i := range ticks {
 		t := &ticks[i]
-		pipe.Publish(ctx, "pub:tick:"+t.Exchange+":"+t.Token, string(t.JSON()))
+		pipe.Publish(ctx, model.TickChannelPrefix+t.Exchange+":"+t.Token, string(t.JSON()))
 	}
 	_, err := pipe.Exec(ctx)
 	if err != nil && w.OnWriteError != nil {

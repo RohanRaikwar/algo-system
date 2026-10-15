@@ -37,6 +37,7 @@
 .regimeDEAD,
 .regimeWARMING { color: var(--sg-muted); background: var(--sg-line-soft); }
 .paper { color: var(--sg-muted); background: var(--sg-line-soft); }
+.sweep { color: var(--sg-warn); background: var(--sg-line-soft); font-weight: 600; }
 
 .updated {
     margin-left: auto;
@@ -85,6 +86,8 @@
 .watch { margin: 0; line-height: 1.4; }
 .watchLive { color: var(--sg-warn); }
 .reject { margin: 6px 0 0; font-size: 11px; color: var(--sg-faint); }
+.sweeps { margin: 6px 0 0; padding: 0; list-style: none; font-size: 11px; color: var(--sg-warn); }
+.sweeps li + li { margin-top: 2px; }
 
 .posHead {
     display: flex;

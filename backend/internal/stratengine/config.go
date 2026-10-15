@@ -116,6 +116,11 @@ type Config struct {
 	SRBoxBars   int
 	SRBoxATRPct int64
 	SRGateMode  string // warn (default: flag the entry) | block
+	// SR liquidity sweep (warning only): a 1m wick ≥ SRSweepMinWickPts
+	// (paise) through a key level that closes back inside. 0 = off.
+	SRSweepMinWickPts  int64
+	SRSweepCooldownMin int
+	SRSweepWarnMin     int
 	// SR support stop: at breakeven the stop goes under the nearest strong
 	// support (≥ SRSupportStopTouches touches) by SRSupportStopZonePts
 	// instead of to entry. off | breakeven | trail.
@@ -142,6 +147,10 @@ type Config struct {
 	PickMaxSpreadPct float64       // (ask−bid)/mid × 100 ceiling
 	PickMaxQuoteAge  time.Duration // bid/ask older than this is not tradable
 	PickMaxChainAge  time.Duration // greeks snapshot older than this refuses selection
+
+	// EntryChainMaxAge: an entry uses the cached option chain only; older
+	// than this refuses the entry and starts a background refresh.
+	EntryChainMaxAge time.Duration
 	PickRank         string        // delta (closest to band middle) | return (highest expected return on premium)
 	PickHoldMinutes  float64       // real trade hold (1–5h, mostly 3–4h): theta rule and return rank decay term
 
@@ -228,6 +237,9 @@ func LoadConfig() Config {
 		SRBoxBars:             config.GetEnvInt("STRAT_SR_BOX_BARS", 6),
 		SRBoxATRPct:           config.GetEnvInt64("STRAT_SR_BOX_ATR_PCT", 150),
 		SRGateMode:            config.GetEnv("STRAT_SR_GATE_MODE", "warn"),
+		SRSweepMinWickPts:     config.GetEnvInt64("STRAT_SR_SWEEP_MIN_WICK_PAISE", 500),
+		SRSweepCooldownMin:    config.GetEnvInt("STRAT_SR_SWEEP_COOLDOWN_MIN", 15),
+		SRSweepWarnMin:        config.GetEnvInt("STRAT_SR_SWEEP_WARN_MIN", 5),
 		SRSupportStopMode:     config.GetEnv("STRAT_SR_SUPPORT_STOP", "breakeven"),
 		SRSupportStopTouches:  config.GetEnvInt("STRAT_SR_SUPPORT_STOP_TOUCHES", 3),
 		SRSupportStopZonePts:  config.GetEnvInt64("STRAT_SR_SUPPORT_STOP_ZONE_PAISE", 300),
@@ -242,6 +254,7 @@ func LoadConfig() Config {
 		PickMaxSpreadPct:      getEnvFloat("STRAT_PICK_MAX_SPREAD_PCT", 2),
 		PickMaxQuoteAge:       getEnvDuration("STRAT_PICK_MAX_QUOTE_AGE", 3*time.Second),
 		PickMaxChainAge:       getEnvDuration("STRAT_PICK_MAX_CHAIN_AGE", 2*time.Minute),
+		EntryChainMaxAge:      getEnvDuration("STRAT_ENTRY_CHAIN_MAX_AGE", defaultEntryChainMaxAge),
 		PickRank:              config.GetEnv("STRAT_PICK_RANK", "return"),
 		PickHoldMinutes:       getEnvFloat("STRAT_PICK_HOLD_MIN", 240),
 		PaperSlippageBps:      config.GetEnvInt64("STRAT_PAPER_SLIPPAGE_BPS", 50),

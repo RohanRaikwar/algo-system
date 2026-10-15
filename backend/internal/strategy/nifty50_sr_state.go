@@ -109,6 +109,16 @@ type Nifty50SRConfig struct {
 	// level (paise); 0 = TouchTolPts.
 	RetestTolPts int64
 
+	// Liquidity sweep (sr_sweep.go): a 1m bar wicking at least
+	// SweepMinWickPts through a key level and closing back inside. Shown
+	// on the view; a CALL within SweepWarnMin minutes of a high sweep (PUT
+	// after a low sweep) is flagged, never refused, whatever GateMode
+	// says. A level is not reported again within SweepCooldownMin.
+	SweepEnabled     bool
+	SweepMinWickPts  int64
+	SweepCooldownMin int
+	SweepWarnMin     int
+
 	// Entry advice (WATCH_BUY): setups that only publish a signal, never an
 	// order. They catch strong one-way days where price never pulls back to
 	// VWAP/EMA21 or retests the broken level (9 Oct 2026: +260 pts, no entry).
@@ -207,6 +217,11 @@ func DefaultNifty50SRConfig() Nifty50SRConfig {
 		// refusing these entries would have done.
 		GateMode: SRGateWarn,
 
+		SweepEnabled:     true,
+		SweepMinWickPts:  500, // 5 pts
+		SweepCooldownMin: 15,
+		SweepWarnMin:     5,
+
 		AdvicePullFastEMA:   true,
 		AdviceContinueMin:   15,
 		AdviceMaxRiskATRPct: 150,
@@ -272,6 +287,10 @@ type nifty50SRState struct {
 	// ── Entry advice (not snapshotted: a restart only loses today's cap) ──
 	AdviceToday    int
 	AdviceCooldown int
+
+	// ── Liquidity sweeps today (not snapshotted, view/warning only) ──
+	Sweeps  []SRSweep
+	sweepAt map[int64]time.Time // level → last sweep bar
 
 	LastCloseTS time.Time
 }

@@ -185,11 +185,17 @@ func (s *Nifty50SR) OnTFCandle(candle model.TFCandle) *Signal {
 	if !st.LastCloseTS.IsZero() && !candle.TS.After(st.LastCloseTS) {
 		return nil
 	}
+	day := candle.TS.In(ist).Format("2006-01-02")
+	// Levels as they stood before this bar, for the sweep check; none on
+	// the day's first bar (yesterday's day high/low is not today's).
+	var preLevels []sweepLevel
+	if s.cfg.SweepEnabled && !st.LastCloseTS.IsZero() && st.LastCloseTS.In(ist).Format("2006-01-02") == day {
+		preLevels = sweepLevels(st.ctx.State())
+	}
 	st.LastCloseTS = candle.TS
 	st.ctx.update(candle.TS, barOf(candle))
 	st.LastClose = candle.Close
 
-	day := candle.TS.In(ist).Format("2006-01-02")
 	s.barTS = candle.TS
 	if s.rejectDay != day {
 		s.rejectDay, s.dayRejects, s.dayWarns, s.lastReject, s.lastRejectTS = day, nil, nil, "", time.Time{}
@@ -199,6 +205,7 @@ func (s *Nifty50SR) OnTFCandle(candle model.TFCandle) *Signal {
 		st.LastSide, st.LastADX = SideNone, 0
 		st.PendingSide = SideNone
 		st.AdviceToday, st.AdviceCooldown = 0, 0
+		st.Sweeps, st.sweepAt = nil, nil
 	}
 	if st.CooldownLeft > 0 {
 		st.CooldownLeft--
@@ -210,6 +217,13 @@ func (s *Nifty50SR) OnTFCandle(candle model.TFCandle) *Signal {
 	closeMin := minutesIST(candle.TS) + 1 // TS is the bucket start
 	if closeMin <= sessionOpenMin || closeMin > hhmm(15, 30) {
 		return nil
+	}
+	if len(preLevels) > 0 {
+		if sw, ok := detectSweep(barOf(candle), candle.TS, preLevels, s.cfg.SweepMinWickPts); ok &&
+			st.recordSweep(sw, time.Duration(s.cfg.SweepCooldownMin)*time.Minute) {
+			log.Printf("[strategy] %s: sweep %s %d (%s) wick %dpts close=%d",
+				s.Name(), sw.Side, sw.Level/100, sw.Source, sw.Wick/100, sw.Close)
+		}
 	}
 	if closeMin >= s.cfg.TimeExitMin {
 		if st.Side != SideNone {
@@ -764,6 +778,10 @@ func (s *Nifty50SR) checkEntry(candle model.TFCandle, st *nifty50SRState, ss SRS
 	warns := s.situationWarnings(st, ss, side, kind, day, closeMin)
 	if s.cfg.GateMode == SRGateBlock && len(warns) > 0 {
 		return fail(kindTag(kind) + ":" + warns[0])
+	}
+	// Sweep warnings never refuse, whatever GateMode says.
+	if w := s.sweepWarning(st, side, candle.TS); w != "" {
+		warns = append(warns, w)
 	}
 	entry := candle.Close
 	risk := absInt64(entry - stop)

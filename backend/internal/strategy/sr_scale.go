@@ -12,6 +12,7 @@ func (c Nifty50SRConfig) ScalePoints(scale func(paise int64) int64) Nifty50SRCon
 	c.DayRunPts = scale(c.DayRunPts)
 	c.RetestTolPts = scale(c.RetestTolPts)
 	c.MaxDayLossPts = scale(c.MaxDayLossPts)
+	c.SweepMinWickPts = scale(c.SweepMinWickPts)
 
 	c.Context.FlatVWAPSlopePts = scale(c.Context.FlatVWAPSlopePts)
 	c.Context.MinATRPts = scale(c.Context.MinATRPts)

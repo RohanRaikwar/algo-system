@@ -86,6 +86,11 @@ type SRView struct {
 	Warn     []string       `json:"warn,omitempty"`
 	Warns    map[string]int `json:"warns,omitempty"`
 	GateMode string         `json:"gate_mode"`
+
+	// Sweeps are today's latest liquidity sweeps (oldest first);
+	// SweepWarnMin is how long one flags an entry against it.
+	Sweeps       []SRSweep `json:"sweeps,omitempty"`
+	SweepWarnMin int       `json:"sweep_warn_min,omitempty"`
 }
 
 // View returns the dashboard view for key ("NSE:99926000"); false before
@@ -123,10 +128,17 @@ func (s *Nifty50SR) View(key string) (SRView, bool) {
 		}
 	}
 	v.GateMode = s.cfg.GateMode
+	if len(st.Sweeps) > 0 {
+		v.Sweeps, v.SweepWarnMin = append([]SRSweep{}, st.Sweeps...), s.cfg.SweepWarnMin
+	}
 	if st.LastClose > 0 {
 		day, closeMin := dayPosition(ss, st.LastClose), minutesIST(st.LastCloseTS)+1
 		for _, side := range []PositionSide{SideCall, SidePut} {
-			for _, w := range s.situationWarnings(st, ss, side, SRKindPullback, day, closeMin) {
+			ws := s.situationWarnings(st, ss, side, SRKindPullback, day, closeMin)
+			if w := s.sweepWarning(st, side, st.LastCloseTS); w != "" {
+				ws = append(ws, w)
+			}
+			for _, w := range ws {
 				v.Warn = append(v.Warn, strings.ToLower(string(side))+":"+w)
 			}
 		}

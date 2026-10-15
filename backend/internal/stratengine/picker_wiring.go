@@ -10,7 +10,7 @@ import (
 
 	"trading-systemv1/internal/markethours"
 	"trading-systemv1/internal/optionpicker"
-	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/instruments"
 	"trading-systemv1/internal/strategy"
 	"trading-systemv1/pkg/smartconnect"
 )
@@ -65,7 +65,7 @@ func (a chainAdapter) Load(now time.Time) ([]optionpicker.Contract, error) {
 }
 
 // resolverAdapter: offline instrument master for Lookup, broker for Search.
-type resolverAdapter struct{ sp *orderexec.StrikePicker }
+type resolverAdapter struct{ sp *instruments.StrikePicker }
 
 func (r resolverAdapter) Lookup(e time.Time, k int64, o string) (string, string, bool) {
 	info, ok := r.sp.LookupOn(e, k, o)
@@ -103,7 +103,7 @@ func (svc *Service) newPicker() *optionpicker.Picker {
 	if !svc.cfg.SREnabled {
 		return nil
 	}
-	sp := orderexec.NewStrikePicker(svc.orderExecutor.GetSmartConnect())
+	sp := instruments.NewStrikePicker(svc.orderExecutor.GetSmartConnect())
 	log.Printf("[stratengine] 🎯 option picker mode=%s", svc.cfg.PickerMode)
 	return optionpicker.New(svc.pickerConfig(), chainAdapter{svc}, resolverAdapter{sp}, subscriberAdapter{svc})
 }
