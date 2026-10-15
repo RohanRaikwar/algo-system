@@ -112,6 +112,50 @@ func IndexKeys() string {
 	return strings.Join(out, ",")
 }
 
+// SubscribeTokensEnv is SUBSCRIBE_TOKENS (default IndexSubscribeTokens)
+// with every extra underlying's index added when missing, so
+// UNDERLYINGS=NIFTY,SENSEX streams, stores and charts SENSEX even where
+// SUBSCRIBE_TOKENS was set for NIFTY alone.
+func SubscribeTokensEnv() string {
+	list := GetEnv("SUBSCRIBE_TOKENS", IndexSubscribeTokens())
+	for _, p := range extraUnderlyings() {
+		list = appendMissing(list, p.IndexSubscribeToken())
+	}
+	return list
+}
+
+// IndexKeysEnv is the "<EXCH>:<token>" list in env var name (default
+// IndexKeys) with every extra underlying's index key added when missing.
+func IndexKeysEnv(name string) string {
+	list := GetEnv(name, IndexKeys())
+	for _, p := range extraUnderlyings() {
+		list = appendMissing(list, p.IndexKey())
+	}
+	return list
+}
+
+// ExtraIndexTokens are the bare index tokens of the extra underlyings.
+func ExtraIndexTokens() []string {
+	var out []string
+	for _, p := range extraUnderlyings() {
+		out = append(out, p.IndexToken)
+	}
+	return out
+}
+
+// appendMissing adds item to a comma list unless already in it.
+func appendMissing(list, item string) string {
+	for _, v := range strings.Split(list, ",") {
+		if strings.EqualFold(strings.TrimSpace(v), item) {
+			return list
+		}
+	}
+	if strings.TrimSpace(list) == "" {
+		return item
+	}
+	return list + "," + item
+}
+
 // extraUnderlyings are the underlyings UNDERLYINGS adds beyond NIFTY (the
 // primary, which INDEX_TOKEN names), minus any equal to INDEX_TOKEN.
 func extraUnderlyings() []underlying.Profile {

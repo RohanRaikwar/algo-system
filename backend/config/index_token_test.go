@@ -35,3 +35,25 @@ func TestIndexListsIncludeUnderlyings(t *testing.T) {
 		t.Errorf("default IndexSubscribeTokens = %q", got)
 	}
 }
+
+// An explicit NIFTY-only list still gets the extra underlyings.
+func TestEnvListsAddUnderlyings(t *testing.T) {
+	t.Setenv("INDEX_TOKEN", "")
+	t.Setenv("UNDERLYINGS", "NIFTY,SENSEX")
+	t.Setenv("SUBSCRIBE_TOKENS", "1:99926000")
+	t.Setenv("STRAT_SUBSCRIBE_TOKENS", "NSE:99926000")
+	if got := SubscribeTokensEnv(); got != "1:99926000,3:99919000" {
+		t.Errorf("SubscribeTokensEnv = %q", got)
+	}
+	if got := IndexKeysEnv("STRAT_SUBSCRIBE_TOKENS"); got != "NSE:99926000,BSE:99919000" {
+		t.Errorf("IndexKeysEnv = %q", got)
+	}
+	t.Setenv("STRAT_SUBSCRIBE_TOKENS", "NSE:99926000,bse:99919000")
+	if got := IndexKeysEnv("STRAT_SUBSCRIBE_TOKENS"); got != "NSE:99926000,bse:99919000" {
+		t.Errorf("duplicate added: %q", got)
+	}
+	t.Setenv("UNDERLYINGS", "")
+	if got := SubscribeTokensEnv(); got != "1:99926000" {
+		t.Errorf("without UNDERLYINGS = %q", got)
+	}
+}

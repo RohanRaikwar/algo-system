@@ -255,7 +255,7 @@ func LoadConfig() Config {
 	}
 
 	// Parse token keys
-	if tokens := config.GetEnv("STRAT_SUBSCRIBE_TOKENS", config.IndexKeys()); tokens != "" {
+	if tokens := config.IndexKeysEnv("STRAT_SUBSCRIBE_TOKENS"); tokens != "" {
 		for _, t := range strings.Split(tokens, ",") {
 			t = strings.TrimSpace(t)
 			if t != "" {

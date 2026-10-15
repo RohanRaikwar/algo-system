@@ -66,9 +66,9 @@ func LoadConfig() Config {
 		SQLitePath:      config.GetEnv("SQLITE_PATH", "data/candles.db"),
 		MetricsAddr:     config.GetEnv("METRICS_ADDR", ":9090"),
 		SimWSURL:        config.GetEnv("SIM_WS_URL", "ws://localhost:9001/ws"),
-		CandleTokens:    parseCandleTokens(config.GetEnv("CANDLE_TOKENS", "")),
+		CandleTokens:    parseCandleTokens(candleTokensEnv()),
 		CloseRefToken:   config.GetEnv("CLOSE_REF_TOKEN", config.IndexToken()),
-		Persist1sTokens: subscribeTokenSet(config.GetEnv("SUBSCRIBE_TOKENS", config.IndexSubscribeTokens())),
+		Persist1sTokens: subscribeTokenSet(config.SubscribeTokensEnv()),
 	}
 	c.FeedConnections = parseFeedConnections(config.GetEnv("FEED_CONNECTIONS", "2"))
 
@@ -120,4 +120,19 @@ func parseFeedConnections(v string) int {
 		return 2
 	}
 	return min(max(n, 1), ws.MaxFeedConns)
+}
+
+// candleTokensEnv is CANDLE_TOKENS with the extra underlyings' indexes
+// added when the filter is set (empty stays empty: every token).
+func candleTokensEnv() string {
+	list := config.GetEnv("CANDLE_TOKENS", "")
+	if strings.TrimSpace(list) == "" {
+		return list
+	}
+	for _, t := range config.ExtraIndexTokens() {
+		if !parseCandleTokens(list)[t] {
+			list += "," + t
+		}
+	}
+	return list
 }
