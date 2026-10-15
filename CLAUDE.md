@@ -77,6 +77,7 @@ Channels the gateway forwards to the browser are listed in `dynamicPubSubPattern
 | `pub:pnl` | stratengine |
 | `pub:strike` | stratengine |
 | `pub:sr` | stratengine |
+| `pub:srx` | stratengine (SR views of extra underlyings, map by index key) |
 | `pub:refused` | stratengine |
 | `pub:strikesel` | stratengine |
 
@@ -124,6 +125,10 @@ Exits must never be blocked. Existing gates (profit cap, position mutual-exclusi
 Every real order is journaled through `internal/oms` (state machine + ledger + SQLite `STRAT_ORDER_JOURNAL_PATH`, default `data/orders.db`, `synchronous=FULL`). A real BUY claims its intent and is journaled `SUBMITTING` before it is sent; if either fails, or the intent was already claimed (a replayed signal), the BUY is not sent. With `STRAT_LIVE_ORDERS=true` a missing journal refuses real entries. Exits are journaled best-effort and always sent. Entry keys are deterministic from `Signal.SignalTS` (stamped by `TFEngine` with the candle close or tick time); exit and retry keys stay unique. The Redis snapshot is still the executor's restore source; the journal is the audit trail and the base for the future standalone OMS.
 
 `internal/orderexec` also holds a sliding-window `RateLimiter` and `internal/circuitbreaker` guards the broker connection. New checks on the order path belong next to these in `ExecuteSignal`, not scattered.
+
+## Multiple underlyings (NIFTY + SENSEX)
+
+`internal/underlying` holds one `Profile` per tradable index: index token, option name and segment (NFO/BFO), strike step, lot and freeze fallbacks, expiry weekday, SR strategy name and an integer point scale. NIFTY is the primary and keeps every pre-existing path byte-identical; `UNDERLYINGS=NIFTY,SENSEX` adds SENSEX (`BSE:99919000`, options on BFO, strategy `SENSEX_SR`). Option symbols come from the instrument master (`FindOption`), never built by string for non-NIFTY underlyings, because BFO weekly symbols use a different format (`SENSEX26N0564600CE`). The executor routes each order to its contract's segment (`exchangeFor`), reconciles positions keyed by segment+token, and applies per-underlying freeze qty, paper size and opposite-side guard. stratengine runs one SR instance per extra underlying (`underlyings.go`) with scaled point parameters (`STRAT_SR_<KEY>_*` overrides). `go run ./cmd/sensexcheck` verifies the master (and OptionGreek with Angel credentials) read-only. `SENSEX_SR` is paper until named in `STRAT_LIVE_STRATEGIES`.
 
 ## Staging vs production
 
