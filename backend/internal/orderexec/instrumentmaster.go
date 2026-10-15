@@ -70,6 +70,7 @@ type InstrumentMaster struct {
 	mu          sync.RWMutex
 	instruments map[string]*Instrument // key: symbol
 	byToken     map[string]*Instrument // key: exch_seg + ":" + token
+	byOption    map[string]*Instrument // key: optionKey(name, seg, expiry, strike, CE/PE)
 	lastUpdated time.Time
 	cacheTTL    time.Duration
 	loading     bool
@@ -484,11 +485,99 @@ func (im *InstrumentMaster) GetInstrument(symbol string) (*Instrument, error) {
 func (im *InstrumentMaster) setInstrumentsLocked(instruments []Instrument) {
 	im.instruments = make(map[string]*Instrument, len(instruments))
 	im.byToken = make(map[string]*Instrument, len(instruments))
+	im.byOption = make(map[string]*Instrument)
 	for i := range instruments {
 		inst := &instruments[i]
 		im.instruments[inst.Symbol] = inst
 		im.byToken[inst.ExchSeg+":"+inst.Token] = inst
+		if k, ok := instOptionKey(inst); ok {
+			im.byOption[k] = inst
+		}
 	}
+}
+
+// optionKey identifies an option contract independent of its trading
+// symbol, whose format differs by exchange (NFO "NIFTY03NOV2621250PE",
+// BFO weekly "SENSEX26N0564600CE"). strike is in index points.
+func optionKey(name, exchSeg string, expiry time.Time, strike int64, optionType string) string {
+	return name + "|" + exchSeg + "|" + strings.ToUpper(expiry.In(istZone).Format("02Jan2006")) +
+		"|" + strconv.FormatInt(strike, 10) + "|" + optionType
+}
+
+// instOptionKey is optionKey for a master row; ok=false when it is not an
+// index option. The master's strike is in paise ("6460000.000000").
+func instOptionKey(inst *Instrument) (string, bool) {
+	if inst.InstrumentType != "OPTIDX" {
+		return "", false
+	}
+	var optType string
+	switch {
+	case strings.HasSuffix(inst.Symbol, "CE"):
+		optType = "CE"
+	case strings.HasSuffix(inst.Symbol, "PE"):
+		optType = "PE"
+	default:
+		return "", false
+	}
+	paise, err := strconv.ParseFloat(strings.TrimSpace(inst.Strike), 64)
+	if err != nil || paise <= 0 {
+		return "", false
+	}
+	exp, ok := parseMasterExpiry(inst.Expiry)
+	if !ok {
+		return "", false
+	}
+	return optionKey(inst.Name, inst.ExchSeg, exp, int64(paise+0.5)/100, optType), true
+}
+
+// FindOption returns the listed option on name (e.g. "SENSEX") on exchSeg
+// ("BFO") with that expiry day, strike (index points) and type ("CE"/"PE"),
+// or nil when it is not listed or the master is not loaded.
+func (im *InstrumentMaster) FindOption(name, exchSeg string, expiry time.Time, strike int64, optionType string) *Instrument {
+	im.mu.RLock()
+	defer im.mu.RUnlock()
+	if !im.loaded {
+		return nil
+	}
+	return im.byOption[optionKey(name, exchSeg, expiry, strike, strings.ToUpper(optionType))]
+}
+
+// StrikeStep returns the smallest gap (index points) between listed
+// strikes of name's options on exchSeg for the nearest listed expiry, or 0
+// when unknown.
+func (im *InstrumentMaster) StrikeStep(name, exchSeg string, from time.Time) int64 {
+	exps := im.OptionExpiriesOn(name, exchSeg, from)
+	if len(exps) == 0 {
+		return 0
+	}
+	want := strings.ToUpper(exps[0].Format("02Jan2006"))
+	im.mu.RLock()
+	defer im.mu.RUnlock()
+	seen := map[int64]bool{}
+	var strikes []int64
+	for _, inst := range im.instruments {
+		if inst.Name != name || inst.ExchSeg != exchSeg || inst.InstrumentType != "OPTIDX" ||
+			strings.ToUpper(inst.Expiry) != want {
+			continue
+		}
+		paise, err := strconv.ParseFloat(strings.TrimSpace(inst.Strike), 64)
+		if err != nil || paise <= 0 {
+			continue
+		}
+		k := int64(paise+0.5) / 100
+		if !seen[k] {
+			seen[k] = true
+			strikes = append(strikes, k)
+		}
+	}
+	sort.Slice(strikes, func(i, j int) bool { return strikes[i] < strikes[j] })
+	var step int64
+	for i := 1; i < len(strikes); i++ {
+		if d := strikes[i] - strikes[i-1]; d > 0 && (step == 0 || d < step) {
+			step = d
+		}
+	}
+	return step
 }
 
 // SymbolForToken returns the trading symbol (e.g. "NIFTY06OCT2622500PE") of
@@ -506,11 +595,17 @@ func (im *InstrumentMaster) SymbolForToken(exchSeg, token string) string {
 	return ""
 }
 
-// OptionExpiries returns the distinct expiry dates (IST midnight, sorted) of
-// the NFO options on name (e.g. "NIFTY") on or after from's IST date, or nil
-// when the master is not loaded. These are the real listed expiries, so a
-// holiday-shifted week (Tue 20 Oct 2026 → Mon 19 Oct) is reported as listed.
+// OptionExpiries is OptionExpiriesOn for NFO.
 func (im *InstrumentMaster) OptionExpiries(name string, from time.Time) []time.Time {
+	return im.OptionExpiriesOn(name, "NFO", from)
+}
+
+// OptionExpiriesOn returns the distinct expiry dates (IST midnight, sorted)
+// of the options on name (e.g. "NIFTY") on exchSeg ("NFO", "BFO") on or
+// after from's IST date, or nil when the master is not loaded. These are the
+// real listed expiries, so a holiday-shifted week (Tue 20 Oct 2026 → Mon 19
+// Oct) is reported as listed.
+func (im *InstrumentMaster) OptionExpiriesOn(name, exchSeg string, from time.Time) []time.Time {
 	im.mu.RLock()
 	defer im.mu.RUnlock()
 	if !im.loaded {
@@ -521,7 +616,7 @@ func (im *InstrumentMaster) OptionExpiries(name string, from time.Time) []time.T
 	seen := make(map[string]bool)
 	var out []time.Time
 	for _, inst := range im.instruments {
-		if inst.Name != name || inst.ExchSeg != "NFO" || seen[inst.Expiry] ||
+		if inst.Name != name || inst.ExchSeg != exchSeg || seen[inst.Expiry] ||
 			!(strings.HasSuffix(inst.Symbol, "CE") || strings.HasSuffix(inst.Symbol, "PE")) {
 			continue
 		}

@@ -6,24 +6,30 @@ import (
 	"time"
 )
 
-// NearestFuture returns the nearest-expiry index future for name (e.g.
-// "NIFTY") on NFO that has not expired before now's IST date.
+// NearestFuture is NearestFutureOn for NFO.
 func (im *InstrumentMaster) NearestFuture(name string, now time.Time) (*Instrument, error) {
+	return im.NearestFutureOn(name, "NFO", now)
+}
+
+// NearestFutureOn returns the nearest-expiry index future for name (e.g.
+// "NIFTY") on exchSeg ("NFO", "BFO") that has not expired before now's IST
+// date.
+func (im *InstrumentMaster) NearestFutureOn(name, exchSeg string, now time.Time) (*Instrument, error) {
 	im.mu.RLock()
 	defer im.mu.RUnlock()
 	if !im.loaded {
 		return nil, fmt.Errorf("instrument master not loaded yet")
 	}
-	return nearestFuture(im.instruments, name, now)
+	return nearestFuture(im.instruments, name, exchSeg, now)
 }
 
-func nearestFuture(instruments map[string]*Instrument, name string, now time.Time) (*Instrument, error) {
+func nearestFuture(instruments map[string]*Instrument, name, exchSeg string, now time.Time) (*Instrument, error) {
 	n := now.In(istZone)
 	today := time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, istZone)
 	var best *Instrument
 	var bestExp time.Time
 	for _, inst := range instruments {
-		if inst.Name != name || inst.InstrumentType != "FUTIDX" || inst.ExchSeg != "NFO" || inst.Token == "" {
+		if inst.Name != name || inst.InstrumentType != "FUTIDX" || inst.ExchSeg != exchSeg || inst.Token == "" {
 			continue
 		}
 		exp, ok := parseMasterExpiry(inst.Expiry)

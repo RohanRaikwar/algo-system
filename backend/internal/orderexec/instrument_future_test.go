@@ -14,15 +14,15 @@ func TestNearestFuture(t *testing.T) {
 		"NIFTYOPT":        {Token: "8", Name: "NIFTY", Expiry: "06OCT2026", InstrumentType: "OPTIDX", ExchSeg: "NFO"},
 	}
 	now := time.Date(2026, 9, 30, 10, 0, 0, 0, istZone) // Sept series expired yesterday
-	got, err := nearestFuture(m, "NIFTY", now)
+	got, err := nearestFuture(m, "NIFTY", "NFO", now)
 	if err != nil || got.Token != "1" {
 		t.Fatalf("nearest = %+v err=%v", got, err)
 	}
 	onExpiry := time.Date(2026, 10, 28, 10, 0, 0, 0, istZone)
-	if got, _ := nearestFuture(m, "NIFTY", onExpiry); got.Token != "1" {
+	if got, _ := nearestFuture(m, "NIFTY", "NFO", onExpiry); got.Token != "1" {
 		t.Fatalf("on expiry day the current series still trades, got %+v", got)
 	}
-	if _, err := nearestFuture(m, "FINNIFTY", now); err == nil {
+	if _, err := nearestFuture(m, "FINNIFTY", "NFO", now); err == nil {
 		t.Fatal("missing future must error")
 	}
 	if _, ok := parseMasterExpiry("28OCT2026"); !ok {
