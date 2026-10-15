@@ -68,6 +68,7 @@ type Service struct {
 	futures     futureResolver // test hook; nil = instrument master
 
 	srPublishHook func(payload string) // test hook for publishSRState
+	srxPublishHook func(payload string) // test hook for publishSRXState
 
 	refused            refusedLog           // today's blocked entries (refused.go)
 	refusedPublishHook func(payload string) // test hook for recordRefusedEntry

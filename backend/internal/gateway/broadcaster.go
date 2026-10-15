@@ -119,6 +119,7 @@ var latestWinsChannels = map[string]bool{
 	"pub:pnl":       true,
 	"pub:strike":    true,
 	"pub:sr":        true,
+	"pub:srx":       true,
 	"pub:refused":   true,
 	"pub:strikesel": true,
 }

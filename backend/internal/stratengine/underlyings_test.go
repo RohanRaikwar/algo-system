@@ -139,3 +139,27 @@ func TestExtraLadder_StepsBySENSEXStrike(t *testing.T) {
 		t.Fatalf("first ladder strike = %s", res.calls[0])
 	}
 }
+
+// SENSEX's view goes out on pub:srx keyed by its index; NIFTY's pub:sr
+// is not touched by SENSEX candles.
+func TestPublishSRXState_KeyedByIndex(t *testing.T) {
+	svc, ex := sensexService(t)
+	var srx, sr []string
+	svc.srxPublishHook = func(p string) { srx = append(srx, p) }
+	svc.srPublishHook = func(p string) { sr = append(sr, p) }
+	ts := time.Date(2026, 10, 15, 4, 0, 0, 0, time.UTC)
+	ex.strat.OnTFCandle(model.TFCandle{Exchange: "BSE", Token: "99919000", TF: 60, TS: ts,
+		Open: 8420000, High: 8425000, Low: 8415000, Close: 8421000})
+
+	last := svc.publishSRXState(context.Background(), "")
+	if len(srx) != 1 || !strings.Contains(srx[0], `"BSE:99919000"`) || !strings.Contains(srx[0], `"strategy":"SENSEX_SR"`) {
+		t.Fatalf("srx publish = %v", srx)
+	}
+	if svc.publishSRXState(context.Background(), last) != last || len(srx) != 1 {
+		t.Fatalf("unchanged view republished")
+	}
+	svc.publishSRState(context.Background(), "")
+	if len(sr) != 0 {
+		t.Fatalf("NIFTY pub:sr published from a SENSEX candle: %v", sr)
+	}
+}

@@ -58,6 +58,7 @@ export function tfLabel(tf: number): string {
 /** Friendly names for instrument keys ("EXCHANGE:TOKEN"). */
 export const TOKEN_LABEL: Record<string, string> = {
     'NSE:99926000': 'NIFTY 50',
+    'BSE:99919000': 'SENSEX',
 };
 
 /** "NSE:99926000" → "NIFTY 50"; unknown keys show as-is. */

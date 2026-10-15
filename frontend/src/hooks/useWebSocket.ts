@@ -19,7 +19,7 @@ import type {
     SubscribeMsg, IndicatorSpecMsg,
 } from '../types/ws';
 import type { LiveOrdersPayload, SignalPayload } from '../types/signal';
-import { useSRStore, parseSRView } from '../store/useSRStore';
+import { useSRStore, parseSRView, parseSRXViews } from '../store/useSRStore';
 import { useOptionLTPStore } from '../store/useOptionLTPStore';
 import { useRefusedStore, parseRefusedView } from '../store/useRefusedStore';
 import { useStrikeSelStore, parseStrikeSelView } from '../store/useStrikeSelStore';
@@ -371,6 +371,12 @@ export function useWebSocket() {
                 if (view) useSRStore.getState().setView(view);
                 return;
             }
+            // ── SR on other underlyings (pub:srx, full state by index key) ──
+            if (envelope.channel === 'pub:srx' && envelope.data) {
+                const views = parseSRXViews(envelope.data);
+                if (views) useSRStore.getState().setExtra(views);
+                return;
+            }
 
             // ── Refused entries (pub:refused channel, full state) ──
             if (envelope.channel === 'pub:refused' && envelope.data) {
@@ -631,6 +637,9 @@ export function useWebSocket() {
                     } else if (u.channel === 'pub:sr') {
                         const view = parseSRView(u.data);
                         if (view) useSRStore.getState().setView(view);
+                    } else if (u.channel === 'pub:srx') {
+                        const views = parseSRXViews(u.data);
+                        if (views) useSRStore.getState().setExtra(views);
                     } else if (u.channel === 'pub:refused') {
                         const view = parseRefusedView(u.data);
                         if (view) useRefusedStore.getState().setView(view);
