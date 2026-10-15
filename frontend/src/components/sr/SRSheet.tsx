@@ -1,6 +1,7 @@
-import { useEffect, useRef, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { X } from 'lucide-react';
 import { useSelectedSRView } from '../../store/useSRStore';
+import { FnoInstrumentsTab } from '../signals/FnoInstrumentsTab';
 import { rejectLabel } from '../signals/SRStatusCard';
 import { KIND_LABEL, REGIME_LABEL, asOf, clock, hhmm, nearestLevels, pnlPaise, points, rupees, sourceLabel, watching } from './srFormat';
 import { DayPosition } from './DayPosition';
@@ -103,9 +104,12 @@ function SheetBody() {
     );
 }
 
-/** Phone bottom sheet for the S/R strategy: half (chart stays usable) or full height. */
+type SheetTab = 'sr' | 'fno';
+
+/** Phone bottom sheet for the S/R strategy and F&O instruments: half (chart stays usable) or full height. */
 export function SRSheet({ id, snap, onSnap, returnFocusRef }: SRSheetProps) {
     const v = useSelectedSRView();
+    const [tab, setTab] = useState<SheetTab>('sr');
     const sheetRef = useRef<HTMLDivElement>(null);
     const open = snap !== 'closed';
     const wasOpen = useRef(open);
@@ -180,9 +184,24 @@ export function SRSheet({ id, snap, onSnap, returnFocusRef }: SRSheetProps) {
                             <X size={18} />
                         </button>
                     </div>
+                    <div className={styles.sheetTabs} role="tablist" aria-label="Sheet view">
+                        {(['sr', 'fno'] as const).map(t => (
+                            <button
+                                key={t}
+                                type="button"
+                                role="tab"
+                                aria-selected={tab === t}
+                                className={`${styles.sheetTab}${tab === t ? ` ${styles.sheetTabOn}` : ''}`}
+                                onPointerDown={e => e.stopPropagation()}
+                                onClick={() => { haptic(); setTab(t); if (t === 'fno' && snap === 'half') onSnap('full'); }}
+                            >
+                                {t === 'sr' ? 'S/R strategy' : 'F&O instruments'}
+                            </button>
+                        ))}
+                    </div>
                 </div>
                 <div className={styles.sheetBody}>
-                    <SheetBody />
+                    {tab === 'sr' ? <SheetBody /> : <FnoInstrumentsTab />}
                 </div>
             </div>
         </>
