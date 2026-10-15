@@ -24,7 +24,7 @@ type Config struct {
 	MetricsAddr   string
 
 	// Persist1sTokens are the tokens whose 1s candles go to SQLite
-	// candles_1s: the static SUBSCRIBE_TOKENS (the index). Option strikes
+	// candles_1s: the subscribed indexes (INDEX_TOKEN + UNDERLYINGS). Option strikes
 	// subscribed at runtime are left out: ~117 of them wrote ~115 MB per
 	// trading day that nothing reads. TF candles persist for every token.
 	Persist1sTokens map[string]bool
@@ -67,8 +67,8 @@ func LoadConfig() Config {
 		MetricsAddr:     config.GetEnv("METRICS_ADDR", ":9090"),
 		SimWSURL:        config.GetEnv("SIM_WS_URL", "ws://localhost:9001/ws"),
 		CandleTokens:    parseCandleTokens(candleTokensEnv()),
-		CloseRefToken:   config.GetEnv("CLOSE_REF_TOKEN", config.IndexToken()),
-		Persist1sTokens: subscribeTokenSet(config.SubscribeTokensEnv()),
+		CloseRefToken:   config.IndexToken(),
+		Persist1sTokens: subscribeTokenSet(config.IndexSubscribeTokens()),
 	}
 	c.FeedConnections = parseFeedConnections(config.GetEnv("FEED_CONNECTIONS", "2"))
 

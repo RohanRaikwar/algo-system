@@ -100,7 +100,7 @@ func minDur(a, b time.Duration) time.Duration {
 	return b
 }
 
-// subscribeTokenSet returns the tokens of a SUBSCRIBE_TOKENS value
+// subscribeTokenSet returns the tokens of a "<type>:<token>" list
 // ("exchangeType:token,...") as a set.
 func subscribeTokenSet(s string) map[string]bool {
 	set := make(map[string]bool)

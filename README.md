@@ -71,7 +71,8 @@ All configuration is via environment variables (see `config.env.example`):
 | `REDIS_ADDR` | Redis address | `localhost:6379` |
 | `SQLITE_PATH` | SQLite database path | `data/candles.db` |
 | `METRICS_ADDR` | Prometheus metrics server addr | `:9090` |
-| `SUBSCRIBE_TOKENS` | Tokens to subscribe (format: `exchange_type:token`) | `1:99926000` (NIFTY 50) |
+| `INDEX_TOKEN` | Primary index (`EXCH:TOKEN`) | `NSE:99926000` (NIFTY 50) |
+| `UNDERLYINGS` | Indexes traded; adds their subscriptions | `NIFTY` (e.g. `NIFTY,SENSEX`) |
 
 ## Development
 

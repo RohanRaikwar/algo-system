@@ -27,7 +27,7 @@ func TestConfigValidate_RequiresSubscribeTokens(t *testing.T) {
 	cfg := validBaseConfig()
 	cfg.SubscribeTokenKeys = nil
 	if err := cfg.Validate(); err == nil {
-		t.Fatalf("expected error when STRAT_SUBSCRIBE_TOKENS is empty")
+		t.Fatalf("expected error with no index to subscribe")
 	}
 }
 

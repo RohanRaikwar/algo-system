@@ -255,7 +255,7 @@ func LoadConfig() Config {
 	}
 
 	// Parse token keys
-	if tokens := config.IndexKeysEnv("STRAT_SUBSCRIBE_TOKENS"); tokens != "" {
+	if tokens := config.IndexKeys(); tokens != "" {
 		for _, t := range strings.Split(tokens, ",") {
 			t = strings.TrimSpace(t)
 			if t != "" {
@@ -308,7 +308,7 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("STRAT_PICK_RANK=%q: want delta or return", c.PickRank)
 	}
 	if len(c.SubscribeTokenKeys) == 0 {
-		return fmt.Errorf("STRAT_SUBSCRIBE_TOKENS is required")
+		return fmt.Errorf("no index to subscribe (INDEX_TOKEN)")
 	}
 	return nil
 }

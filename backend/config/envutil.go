@@ -77,17 +77,16 @@ func indexInstrument() (exchange, token string) {
 	return exchange, token
 }
 
-// IndexToken is the instrument token of the traded index (INDEX_TOKEN,
-// NIFTY 50 by default). It is the default for every per-service token
-// list: SUBSCRIBE_TOKENS ("<type>:<token>"), the STRAT_/ANALYST_ subscribe
-// lists and EXITWATCH_INDEX_KEYS ("<EXCH>:<token>"), and CLOSE_REF_TOKEN.
-// Each of those still overrides it when set.
+// IndexToken is the instrument token of the primary index (INDEX_TOKEN,
+// NIFTY 50 by default). It drives the market-close detector and warmup;
+// with UNDERLYINGS it and the extra indexes make up every service's
+// subscribe list (IndexSubscribeTokens, IndexKeys).
 func IndexToken() string { _, t := indexInstrument(); return t }
 
 // IndexExchange is the index's exchange name, e.g. "NSE" or "BSE".
 func IndexExchange() string { e, _ := indexInstrument(); return e }
 
-// IndexSubscribeTokens is the SUBSCRIBE_TOKENS default in Angel's
+// IndexSubscribeTokens is what mdengine subscribes, in Angel's
 // "<exchange_type>:<token>" form, e.g. "1:99926000" or "3:99919000". It
 // lists INDEX_TOKEN first, then every extra underlying in UNDERLYINGS.
 func IndexSubscribeTokens() string {
@@ -110,18 +109,6 @@ func IndexKeys() string {
 		out = append(out, p.IndexKey())
 	}
 	return strings.Join(out, ",")
-}
-
-// SubscribeTokensEnv is SUBSCRIBE_TOKENS (default IndexSubscribeTokens)
-// with every extra underlying's index added when missing, so
-// UNDERLYINGS=NIFTY,SENSEX streams, stores and charts SENSEX even where
-// SUBSCRIBE_TOKENS was set for NIFTY alone.
-func SubscribeTokensEnv() string {
-	list := GetEnv("SUBSCRIBE_TOKENS", IndexSubscribeTokens())
-	for _, p := range extraUnderlyings() {
-		list = appendMissing(list, p.IndexSubscribeToken())
-	}
-	return list
 }
 
 // IndexKeysEnv is the "<EXCH>:<token>" list in env var name (default

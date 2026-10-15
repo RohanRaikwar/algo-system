@@ -36,24 +36,27 @@ func TestIndexListsIncludeUnderlyings(t *testing.T) {
 	}
 }
 
-// An explicit NIFTY-only list still gets the extra underlyings.
-func TestEnvListsAddUnderlyings(t *testing.T) {
+// The old override variables are ignored: the index lists come only from
+// INDEX_TOKEN and UNDERLYINGS.
+func TestOldOverridesIgnored(t *testing.T) {
 	t.Setenv("INDEX_TOKEN", "")
 	t.Setenv("UNDERLYINGS", "NIFTY,SENSEX")
 	t.Setenv("SUBSCRIBE_TOKENS", "1:99926000")
 	t.Setenv("STRAT_SUBSCRIBE_TOKENS", "NSE:99926000")
-	if got := SubscribeTokensEnv(); got != "1:99926000,3:99919000" {
-		t.Errorf("SubscribeTokensEnv = %q", got)
+	if got := IndexSubscribeTokens(); got != "1:99926000,3:99919000" {
+		t.Errorf("IndexSubscribeTokens = %q", got)
 	}
-	if got := IndexKeysEnv("STRAT_SUBSCRIBE_TOKENS"); got != "NSE:99926000,BSE:99919000" {
+	if got := IndexKeys(); got != "NSE:99926000,BSE:99919000" {
+		t.Errorf("IndexKeys = %q", got)
+	}
+}
+
+// EXITWATCH_INDEX_KEYS still overrides, with the extra underlyings added.
+func TestIndexKeysEnv(t *testing.T) {
+	t.Setenv("INDEX_TOKEN", "")
+	t.Setenv("UNDERLYINGS", "NIFTY,SENSEX")
+	t.Setenv("EXITWATCH_INDEX_KEYS", "NSE:99926000")
+	if got := IndexKeysEnv("EXITWATCH_INDEX_KEYS"); got != "NSE:99926000,BSE:99919000" {
 		t.Errorf("IndexKeysEnv = %q", got)
-	}
-	t.Setenv("STRAT_SUBSCRIBE_TOKENS", "NSE:99926000,bse:99919000")
-	if got := IndexKeysEnv("STRAT_SUBSCRIBE_TOKENS"); got != "NSE:99926000,bse:99919000" {
-		t.Errorf("duplicate added: %q", got)
-	}
-	t.Setenv("UNDERLYINGS", "")
-	if got := SubscribeTokensEnv(); got != "1:99926000" {
-		t.Errorf("without UNDERLYINGS = %q", got)
 	}
 }
