@@ -494,13 +494,9 @@ func TestRunOnce_CandlesSplitPerIndex(t *testing.T) {
 	if n := count(t, raw, `SELECT COUNT(*) FROM candles_tf WHERE token != '99919000'`); n != 0 {
 		t.Fatalf("SENSEX file holds %d rows of other tokens", n)
 	}
-	// The option row is never uploaded and goes once past the keep window.
-	s.now = func() time.Time { return testNow.AddDate(0, 0, 11) }
-	if err := s.RunOnce(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	// The option row was never uploaded and is already deleted locally.
 	if n := count(t, s.cfg.CandlesPath, `SELECT COUNT(*) FROM candles_tf WHERE exchange='BFO'`); n != 0 {
-		t.Fatalf("option candle not pruned")
+		t.Fatalf("option candle still stored locally")
 	}
 }
 

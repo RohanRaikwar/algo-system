@@ -110,7 +110,8 @@ func New(cfg Config) *Service {
 func (s *Service) daySources() []daySource {
 	// One candle file per index per day. Rows of any other token (option
 	// candles written before options stopped being stored) are never
-	// uploaded: they are pruned past the keep window.
+	// uploaded and are deleted on the next run (keep 0 days): no option
+	// data is kept locally either.
 	var indexKeys []string
 	var out []daySource
 	for _, p := range underlying.All() {
@@ -123,8 +124,8 @@ func (s *Service) daySources() []daySource {
 	}
 	other := "exchange || ':' || token NOT IN (" + strings.Join(indexKeys, ",") + ")"
 	out = append(out, daySource{name: legacyCandles, path: s.cfg.CandlesPath, pruneOnly: true, tables: []dayTable{
-		{"candles_1s", "", s.cfg.Keep1sDays, other},
-		{"candles_tf", "", s.cfg.KeepTFDays, other},
+		{"candles_1s", "", 0, other},
+		{"candles_tf", "", 0, other},
 	}})
 	return append(out, s.otherSources()...)
 }
