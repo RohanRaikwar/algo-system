@@ -418,8 +418,8 @@ func (svc *Service) eodAutoExitLoop(ctx context.Context) {
 		}
 
 		// Reset dynamic strike picker for next trading day.
-		if svc.strikePicker != nil {
-			svc.strikePicker.Reset()
+		if sp := svc.strikePicker.Load(); sp != nil {
+			sp.Reset()
 			atomic.StoreInt32(&svc.strikeResolved, 0)
 			atomic.StoreInt32(&svc.strikeResolving, 0)
 			atomic.StoreInt64(&svc.strikeRetryAfterNS, 0)

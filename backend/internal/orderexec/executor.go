@@ -20,6 +20,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"trading-systemv1/internal/circuitbreaker"
@@ -154,7 +155,7 @@ type OrderExecutor struct {
 	prom *metrics.Metrics
 
 	// Optional dynamic strike picker; set via SetStrikePicker.
-	picker *StrikePicker
+	picker atomic.Pointer[StrikePicker] // swapped by stratengine's ATM goroutine
 
 	// Optional PnL tracker for profit cap checking; set via SetPnLTracker.
 	pnlTracker PnLTracker
@@ -439,7 +440,7 @@ func (oe *OrderExecutor) logPrefix() string {
 // the static config tokens. If the picker is nil or not yet resolved,
 // static config tokens are used as fallback.
 func (oe *OrderExecutor) SetStrikePicker(picker *StrikePicker) {
-	oe.picker = picker
+	oe.picker.Store(picker)
 	log.Printf("%s 🎯 dynamic strike picker attached", oe.logPrefix())
 }
 
@@ -591,12 +592,12 @@ func (oe *OrderExecutor) resolveInstrument(sig strategy.Signal, direction string
 		return sig.FNOToken, sig.FNOSymbol, nil
 	}
 
-	if oe.picker != nil && oe.picker.Resolved() {
+	if picker := oe.picker.Load(); picker != nil && picker.Resolved() {
 		if isCall {
-			ce := oe.picker.GetCallToken()
+			ce := picker.GetCallToken()
 			return ce.Token, ce.Symbol, nil
 		}
-		pe := oe.picker.GetPutToken()
+		pe := picker.GetPutToken()
 		return pe.Token, pe.Symbol, nil
 	}
 

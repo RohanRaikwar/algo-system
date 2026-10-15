@@ -37,8 +37,8 @@ func (svc *Service) greeksFor() (greeksSource, error) {
 	if svc.greeks != nil {
 		return svc.greeks, nil
 	}
-	if svc.strikePicker != nil {
-		return svc.strikePicker, nil
+	if sp := svc.strikePicker.Load(); sp != nil {
+		return sp, nil
 	}
 	if r, ok := svc.resolverForLegs().(greeksSource); ok {
 		return r, nil

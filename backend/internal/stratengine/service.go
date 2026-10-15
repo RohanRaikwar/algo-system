@@ -51,7 +51,7 @@ type Service struct {
 	journal       *strategy.SignalJournal
 	notifier      notification.Notifier
 	orderExecutor *orderexec.OrderExecutor
-	strikePicker  *orderexec.StrikePicker
+	strikePicker  atomic.Pointer[orderexec.StrikePicker] // swapped by the ATM goroutine
 
 	// Global option picker (picker_wiring.go); nil when STRAT_PICKER_MODE=off.
 	picker    *optionpicker.Picker
@@ -541,7 +541,7 @@ func (svc *Service) tickRouterLoop(ctx context.Context, tfTickCh chan<- model.Ti
 						return
 					}
 
-					svc.strikePicker = picker
+					svc.strikePicker.Store(picker)
 					svc.orderExecutor.SetStrikePicker(picker)
 					if svc.srStrategy != nil {
 						svc.srStrategy.SetExpiry(picker.NextExpiry(time.Now()))
@@ -679,16 +679,17 @@ func (svc *Service) signalLoop(ctx context.Context) {
 
 				// ── Resolve FNO token for this signal ──
 				var fnoToken string
+				sp := svc.strikePicker.Load()
 				switch sig.Side {
 				case strategy.SideCall:
-					if svc.strikePicker != nil && svc.strikePicker.Resolved() {
-						fnoToken = svc.strikePicker.GetCallToken().Token
+					if sp != nil && sp.Resolved() {
+						fnoToken = sp.GetCallToken().Token
 					} else {
 						fnoToken = svc.cfg.CallFNOToken
 					}
 				case strategy.SidePut:
-					if svc.strikePicker != nil && svc.strikePicker.Resolved() {
-						fnoToken = svc.strikePicker.GetPutToken().Token
+					if sp != nil && sp.Resolved() {
+						fnoToken = sp.GetPutToken().Token
 					} else {
 						fnoToken = svc.cfg.PutFNOToken
 					}
@@ -952,7 +953,8 @@ func (svc *Service) applyOptionAutomation(ctx context.Context, sig *strategy.Sig
 	if sig.Side != strategy.SideCall && sig.Side != strategy.SidePut {
 		return
 	}
-	if svc.strikePicker == nil {
+	sp := svc.strikePicker.Load()
+	if sp == nil {
 		log.Printf("[stratengine] option automation skipped: strike picker not ready for %s", sig.Side)
 		return
 	}
@@ -967,7 +969,7 @@ func (svc *Service) applyOptionAutomation(ctx context.Context, sig *strategy.Sig
 	}
 
 	input := svc.buildAutomationInput(*sig, now, spotPrice)
-	pick, err := svc.strikePicker.ResolveForEntry(input)
+	pick, err := sp.ResolveForEntry(input)
 	if err != nil {
 		log.Printf("[stratengine] option automation fallback: %v", err)
 		return
@@ -976,14 +978,14 @@ func (svc *Service) applyOptionAutomation(ctx context.Context, sig *strategy.Sig
 	var previousToken string
 	switch sig.Side {
 	case strategy.SideCall:
-		previousToken = svc.strikePicker.GetCallToken().Token
+		previousToken = sp.GetCallToken().Token
 	case strategy.SidePut:
-		previousToken = svc.strikePicker.GetPutToken().Token
+		previousToken = sp.GetPutToken().Token
 	}
 
-	svc.strikePicker.ApplyPick(pick)
-	svc.orderExecutor.SetStrikePicker(svc.strikePicker)
-	svc.syncStrategyFNOTokens(svc.strikePicker.GetCallToken().Token, svc.strikePicker.GetPutToken().Token)
+	sp.ApplyPick(pick)
+	svc.orderExecutor.SetStrikePicker(sp)
+	svc.syncStrategyFNOTokens(sp.GetCallToken().Token, sp.GetPutToken().Token)
 
 	log.Printf("[stratengine] 🤖 option automation selected %s expiry=%s strike=%d symbol=%s token=%s fallback=%v reason=%s",
 		sig.Side,
@@ -1436,12 +1438,13 @@ func (svc *Service) publishSubscriptionMode(ctx context.Context, exchType, mode 
 }
 
 func (svc *Service) publishStrikeInfo(ctx context.Context, spotPrice int64) {
-	if svc.strikePicker == nil || !svc.strikePicker.Resolved() {
+	sp := svc.strikePicker.Load()
+	if sp == nil || !sp.Resolved() {
 		return
 	}
 
-	ce := svc.strikePicker.GetCallToken()
-	pe := svc.strikePicker.GetPutToken()
+	ce := sp.GetCallToken()
+	pe := sp.GetPutToken()
 	atmStrike := ce.Strike
 	if atmStrike == 0 {
 		atmStrike = pe.Strike

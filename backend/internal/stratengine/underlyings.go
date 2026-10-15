@@ -174,8 +174,8 @@ func (svc *Service) extraPicker(ex *srExtra) *orderexec.StrikePicker {
 		return ex.picker
 	}
 	sc := svc.orderExecutor.GetSmartConnect()
-	if sc == nil && svc.strikePicker != nil {
-		sc = svc.strikePicker.SmartConnect()
+	if sp := svc.strikePicker.Load(); sc == nil && sp != nil {
+		sc = sp.SmartConnect()
 	}
 	if sc != nil || ex.picker == nil {
 		ex.picker = orderexec.NewStrikePickerFor(sc, ex.prof)

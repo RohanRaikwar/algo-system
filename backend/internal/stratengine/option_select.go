@@ -230,8 +230,8 @@ func (svc *Service) resolverForLegs() legResolver {
 	if svc.legResolver != nil {
 		return svc.legResolver
 	}
-	if svc.strikePicker != nil {
-		return svc.strikePicker
+	if sp := svc.strikePicker.Load(); sp != nil {
+		return sp
 	}
 	svc.legPickerOnce.Do(func() {
 		// Offline instrument master first; SearchScrip only with a session.
