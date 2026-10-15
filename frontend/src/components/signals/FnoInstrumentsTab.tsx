@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useStrikeSelStore } from '../../store/useStrikeSelStore';
+import { useSelectedStrikeSel, useStrikeSelStore } from '../../store/useStrikeSelStore';
 import { SRStatusCard } from './SRStatusCard';
 import { useOptionLTPStore, livePremium } from '../../store/useOptionLTPStore';
 import { fetchStrikeSel } from '../../services/api';
@@ -343,7 +343,7 @@ function SideCard({ title, kind, side, chainError, params }: { title: string; ki
 }
 
 export function FnoInstrumentsTab() {
-    const view = useStrikeSelStore(s => s.view);
+    const view = useSelectedStrikeSel();
     const setView = useStrikeSelStore(s => s.setView);
 
     useEffect(() => {

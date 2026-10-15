@@ -34,6 +34,7 @@ func (svc *Service) warmupRangeStrategies() {
 	}
 	defer reader.Close()
 	warmRange(reader, warmers, svc.cfg.WarmupDays, time.Now())
+	warmupExtras(reader, svc.srExtras, svc.cfg.WarmupDays, time.Now())
 }
 
 func warmRange(reader model.CandleReader, warmers []rangeWarmer, days int, now time.Time) {

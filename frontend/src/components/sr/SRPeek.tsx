@@ -1,6 +1,6 @@
 import { forwardRef } from 'react';
 import { ChevronUp } from 'lucide-react';
-import { useSRStore } from '../../store/useSRStore';
+import { useSelectedSRView } from '../../store/useSRStore';
 import { REGIME_LABEL, peekSummary } from './srFormat';
 import { useLastNiftyPaise } from './useLastNiftyPaise';
 import styles from './SRMobile.module.css';
@@ -13,7 +13,7 @@ interface SRPeekProps {
 
 /** Phone strip above the tab bar: strategy state at a glance; tap opens the sheet. */
 export const SRPeek = forwardRef<HTMLButtonElement, SRPeekProps>(function SRPeek({ open, sheetId, onOpen }, ref) {
-    const v = useSRStore(s => s.view);
+    const v = useSelectedSRView();
     const last = useLastNiftyPaise(v?.key);
 
     if (!v) {

@@ -216,6 +216,7 @@ func (svc *Service) strikeSelLoop(ctx context.Context) {
 		now := time.Now()
 		if markethours.IsMarketOpen(now) {
 			svc.refreshStrikeSel(ctx, now)
+			svc.refreshExtraStrikeSels(ctx, now)
 		}
 		select {
 		case <-ctx.Done():

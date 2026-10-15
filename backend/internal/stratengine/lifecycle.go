@@ -61,6 +61,13 @@ func (svc *Service) persistSnapshot(ctx context.Context) error {
 			snapshots["nifty50_sr"] = srSnap
 		}
 	}
+	for _, ex := range svc.srExtras {
+		if snap, err := ex.strat.Snapshot(); err != nil {
+			log.Printf("[stratengine] %s snapshot error: %v", ex.strat.Name(), err)
+		} else {
+			snapshots[ex.snapshotKey()] = snap
+		}
+	}
 
 	// Snapshot P&L tracker state
 	pnlSnap, err := svc.pnlTracker.Snapshot()
@@ -144,6 +151,15 @@ func (svc *Service) restoreState(ctx context.Context) {
 			log.Printf("[stratengine] NIFTY50_SR restore error: %v", err)
 		} else {
 			log.Println("[stratengine] ✅ NIFTY50_SR strategy state restored")
+		}
+	}
+	for _, ex := range svc.srExtras {
+		if data, ok := snapshots[ex.snapshotKey()]; ok {
+			if err := ex.strat.Restore(data); err != nil {
+				log.Printf("[stratengine] %s restore error: %v", ex.strat.Name(), err)
+			} else {
+				log.Printf("[stratengine] ✅ %s strategy state restored", ex.strat.Name())
+			}
 		}
 	}
 
@@ -294,8 +310,8 @@ func (svc *Service) clearStalePositionsAt(now time.Time) {
 // not from today (IST "2006-01-02").
 func (svc *Service) forceExitStaleStrategies(today, reason string) []strategy.Signal {
 	var sigs []strategy.Signal
-	if svc.srStrategy != nil {
-		sigs = append(sigs, svc.srStrategy.ForceExitStale(today, reason)...)
+	for _, sr := range svc.srAll() {
+		sigs = append(sigs, sr.ForceExitStale(today, reason)...)
 	}
 	return sigs
 }
@@ -467,8 +483,8 @@ func (svc *Service) runEODExit(ctx context.Context) {
 // forceExitAllStrategies collects every strategy's exit signals.
 func (svc *Service) forceExitAllStrategies(reason string) []strategy.Signal {
 	var sigs []strategy.Signal
-	if svc.srStrategy != nil {
-		sigs = append(sigs, svc.srStrategy.ForceExitAll(reason)...)
+	for _, sr := range svc.srAll() {
+		sigs = append(sigs, sr.ForceExitAll(reason)...)
 	}
 	return sigs
 }

@@ -12,6 +12,7 @@ package archiver
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -20,15 +21,18 @@ import (
 	"time"
 
 	"trading-systemv1/internal/markethours"
+	"trading-systemv1/internal/underlying"
 )
 
 // dayTable is a table archived per IST day. tsExpr is the SQL expression
 // giving a row's unix-second time ("" means the ts column). keepDays < 0
-// means archived but never pruned.
+// means archived but never pruned. where, when set, limits the source to
+// some rows of a table shared with other sources (one index's candles).
 type dayTable struct {
 	name     string
 	tsExpr   string
 	keepDays int
+	where    string
 }
 
 func (t dayTable) expr() string {
@@ -37,6 +41,22 @@ func (t dayTable) expr() string {
 	}
 	return t.tsExpr
 }
+
+// cond is the row filter, "1" (every row) when unset.
+func (t dayTable) cond() string {
+	if t.where == "" {
+		return "1"
+	}
+	return "(" + t.where + ")"
+}
+
+// CandleSource is the archive source (and remote file prefix) of one
+// index's candles: "candles-NIFTY" → candles-NIFTY-2026-10-23.db.gz.
+func CandleSource(key string) string { return "candles-" + key }
+
+// legacyCandles is the source name of the days archived before candles
+// were split per index (both indexes, and option candles, in one file).
+const legacyCandles = "candles"
 
 // Day expressions for tables whose time is not a unix-second ts column.
 const (
@@ -49,6 +69,9 @@ type daySource struct {
 	name   string // remote file prefix and manifest key
 	path   string
 	tables []dayTable
+	// pruneOnly rows are never uploaded, only deleted past the keep
+	// window: option candles left from before options stopped being stored.
+	pruneOnly bool
 }
 
 // maxCatchUpDays bounds the per-run day loop if a table holds a bogus
@@ -85,30 +108,50 @@ func New(cfg Config) *Service {
 // out on its own. Journals (keepDays -1) are never pruned locally: P&L
 // analytics reads all of their history.
 func (s *Service) daySources() []daySource {
+	// One candle file per index per day. Rows of any other token (option
+	// candles written before options stopped being stored) are never
+	// uploaded and are deleted on the next run (keep 0 days): no option
+	// data is kept locally either.
+	var indexKeys []string
+	var out []daySource
+	for _, p := range underlying.All() {
+		w := fmt.Sprintf("exchange = '%s' AND token = '%s'", p.IndexExchange, p.IndexToken)
+		indexKeys = append(indexKeys, "'"+p.IndexKey()+"'")
+		out = append(out, daySource{name: CandleSource(p.Key), path: s.cfg.CandlesPath, tables: []dayTable{
+			{"candles_1s", "", s.cfg.Keep1sDays, w},
+			{"candles_tf", "", s.cfg.KeepTFDays, w},
+		}})
+	}
+	other := "exchange || ':' || token NOT IN (" + strings.Join(indexKeys, ",") + ")"
+	out = append(out, daySource{name: legacyCandles, path: s.cfg.CandlesPath, pruneOnly: true, tables: []dayTable{
+		{"candles_1s", "", 0, other},
+		{"candles_tf", "", 0, other},
+	}})
+	return append(out, s.otherSources()...)
+}
+
+// otherSources are the non-candle databases, one combined file per day.
+func (s *Service) otherSources() []daySource {
 	srcs := []daySource{
-		{name: "candles", path: s.cfg.CandlesPath, tables: []dayTable{
-			{"candles_1s", "", s.cfg.Keep1sDays},
-			{"candles_tf", "", s.cfg.KeepTFDays},
-		}},
 		{name: "exitwatch", path: s.cfg.ExitwatchPath, tables: []dayTable{
-			{"decisions", "", -1},
-			{"features_1hz", "", s.cfg.KeepFeaturesDays},
+			{"decisions", "", -1, ""},
+			{"features_1hz", "", s.cfg.KeepFeaturesDays, ""},
 		}},
 	}
 	for _, p := range s.cfg.JournalPaths {
 		srcs = append(srcs, daySource{name: baseName(p), path: p, tables: []dayTable{
-			{"signals", signalsDayExpr, -1},
+			{"signals", signalsDayExpr, -1, ""},
 		}})
 	}
 	if s.cfg.OrdersPath != "" {
 		srcs = append(srcs, daySource{name: baseName(s.cfg.OrdersPath), path: s.cfg.OrdersPath, tables: []dayTable{
-			{"order_events", fmt.Sprintf(nanosDayExpr, "ts"), -1},
-			{"intents", fmt.Sprintf(nanosDayExpr, "claimed_ts"), -1},
+			{"order_events", fmt.Sprintf(nanosDayExpr, "ts"), -1, ""},
+			{"intents", fmt.Sprintf(nanosDayExpr, "claimed_ts"), -1, ""},
 		}})
 	}
 	if s.cfg.ExitPolicyPath != "" {
 		srcs = append(srcs, daySource{name: baseName(s.cfg.ExitPolicyPath), path: s.cfg.ExitPolicyPath, tables: []dayTable{
-			{"exit_decisions", "", -1},
+			{"exit_decisions", "", -1, ""},
 		}})
 	}
 	return srcs
@@ -227,7 +270,7 @@ func (s *Service) archiveDaySource(ctx context.Context, man *manifest, src daySo
 	_, lastEnd := dayBounds(lastDay)
 	pruneLimit := lastEnd // rows before this are all safely archived
 	day := time.Unix(minTS, 0).In(markethours.IST)
-	for i := 0; i < maxCatchUpDays && !dayAfter(day, lastDay); i, day = i+1, day.AddDate(0, 0, 1) {
+	for i := 0; !src.pruneOnly && i < maxCatchUpDays && !dayAfter(day, lastDay); i, day = i+1, day.AddDate(0, 0, 1) {
 		if err := s.archiveDay(ctx, man, db, src, day); err != nil {
 			pruneLimit, _ = dayBounds(day)
 			log.Printf("[archiver] ❌ %s %s: %v (pruning stops before this day)", src.name, dayKey(day), err)
@@ -266,15 +309,16 @@ func (s *Service) archiveDaySource(ctx context.Context, man *manifest, src daySo
 }
 
 // archiveDay exports, compresses and uploads one day of src. A day with no
-// rows is skipped without a manifest entry. A day is exported once: rows
-// written into it after the export (only staging writes after the close)
-// are not archived before pruning.
+// rows is skipped without a manifest entry. An archived day is uploaded
+// again only when it later gains rows (rearchiveIfGrown).
 func (s *Service) archiveDay(ctx context.Context, man *manifest, db *sql.DB, src daySource, day time.Time) error {
 	key := dayKey(day)
-	if done, err := man.has(ctx, src.name, key); err != nil || done {
-		return err
-	}
 	start, end := dayBounds(day)
+	if done, err := man.has(ctx, src.name, key); err != nil {
+		return err
+	} else if done {
+		return s.rearchiveDirty(ctx, man, db, src, day)
+	}
 	raw := filepath.Join(s.cfg.TmpDir, fmt.Sprintf("%s-%s.db", src.name, key))
 	defer os.Remove(raw)
 	rows, err := exportDay(ctx, db, src.tables, start, end, raw)
@@ -282,9 +326,12 @@ func (s *Service) archiveDay(ctx context.Context, man *manifest, db *sql.DB, src
 		return err
 	}
 	if rows == 0 {
-		return nil
+		return clearDirty(ctx, db, src.name, key)
 	}
-	return s.uploadAndRecord(ctx, man, src.name, day, raw, rows)
+	if err := s.uploadAndRecord(ctx, man, src.name, day, raw, rows); err != nil {
+		return err
+	}
+	return clearDirty(ctx, db, src.name, key)
 }
 
 // uploadAndRecord gzips raw, uploads it to <root>/YYYY/MM/DD/, checks the
@@ -340,3 +387,49 @@ func fileSize(path string) int64 {
 }
 
 func mb(n int64) string { return fmt.Sprintf("%.1f MB", float64(n)/(1<<20)) }
+
+// rearchiveDirty uploads an archived day again when rows were written into
+// it after it was archived and the writer marked it in DirtyTable (the
+// candle backfill does, for a newly added index's history). The uploaded
+// file is the base and local rows are merged in, so tables already pruned
+// locally (1s candles) are kept.
+func (s *Service) rearchiveDirty(ctx context.Context, man *manifest, db *sql.DB, src daySource, day time.Time) error {
+	key := dayKey(day)
+	if s.store == nil || !isDirty(ctx, db, src.name, key) {
+		return nil
+	}
+	f := newDayFetcher(s.store, s.cfg.MegaRootDir, filepath.Join(s.cfg.TmpDir, "remote"), 0)
+	remote, err := f.fetch(ctx, src.name, day)
+	if errors.Is(err, ErrNoArchive) {
+		return clearDirty(ctx, db, src.name, key) // listed in the manifest but gone: the next run cannot do better
+	}
+	if err != nil {
+		return err
+	}
+	before, err := fileTableCounts(remote)
+	if err != nil {
+		return err
+	}
+	start, end := dayBounds(day)
+	if err := mergeIntoFile(ctx, db, remote, src.tables, start, end); err != nil {
+		return err
+	}
+	after, err := fileTableCounts(remote)
+	if err != nil {
+		return err
+	}
+	var rowsBefore, rows int64
+	for _, n := range before {
+		rowsBefore += n
+	}
+	for _, n := range after {
+		rows += n
+	}
+	if rows > rowsBefore {
+		log.Printf("[archiver] %s %s: %d late rows merged; uploading again", src.name, key, rows-rowsBefore)
+		if err := s.uploadAndRecord(ctx, man, src.name, day, remote, rows); err != nil {
+			return err
+		}
+	}
+	return clearDirty(ctx, db, src.name, key)
+}

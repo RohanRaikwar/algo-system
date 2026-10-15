@@ -18,6 +18,7 @@ type expectedPosition struct {
 // broker's net position for one instrument. Expected 0 means the broker
 // holds a position the executor does not know about.
 type PositionMismatch struct {
+	Exchange string // options segment ("NFO", "BFO")
 	Token    string
 	Symbol   string
 	Expected int64
@@ -40,16 +41,17 @@ func (oe *OrderExecutor) ReconcilePositions() ([]PositionMismatch, error) {
 	expected := make(map[string]expectedPosition)
 	settling := make(map[string]bool)
 	for _, rec := range oe.entryOrders {
+		k := posBookKey(oe.bookExchange(rec.Symbol), rec.Token)
 		if rec.Real && rec.Pending {
-			settling[rec.Token] = true
+			settling[k] = true
 		}
 		if !rec.Real || rec.Pending {
 			continue // pending BUYs aren't known to be held yet
 		}
-		e := expected[rec.Token]
+		e := expected[k]
 		e.Symbol = rec.Symbol
 		e.Qty += rec.Quantity
-		expected[rec.Token] = e
+		expected[k] = e
 	}
 	oe.mu.RUnlock()
 
@@ -64,7 +66,7 @@ func (oe *OrderExecutor) ReconcilePositions() ([]PositionMismatch, error) {
 		// status=false is an unreadable book, not an empty one.
 		return nil, fmt.Errorf("broker positions status=false: %v", book["message"])
 	}
-	mm, err := comparePositions(expected, book)
+	mm, err := comparePositions(expected, book, oe.bookExchange(""))
 	if err != nil {
 		return nil, err
 	}
@@ -72,16 +74,30 @@ func (oe *OrderExecutor) ReconcilePositions() ([]PositionMismatch, error) {
 	// unexpected yet; its settlement reports the outcome.
 	out := mm[:0]
 	for _, m := range mm {
-		if !settling[m.Token] {
+		if !settling[posBookKey(m.Exchange, m.Token)] {
 			out = append(out, m)
 		}
 	}
 	return out, nil
 }
 
-// comparePositions diffs expected positions against an Angel One
-// getPosition response. A token missing from the response counts as flat.
-func comparePositions(expected map[string]expectedPosition, book map[string]any) ([]PositionMismatch, error) {
+// bookExchange is exchangeFor with NFO for an unset FNOExchange, matching
+// how the broker labels NIFTY option positions.
+func (oe *OrderExecutor) bookExchange(symbol string) string {
+	if ex := oe.exchangeFor(symbol); ex != "" {
+		return ex
+	}
+	return "NFO"
+}
+
+// posBookKey keys a position by segment and token: tokens are only unique
+// within a segment, so an NFO and a BFO contract may share a number.
+func posBookKey(exchange, token string) string { return exchange + ":" + token }
+
+// comparePositions diffs expected positions (keyed by posBookKey) against
+// an Angel One getPosition response. A token missing from the response
+// counts as flat. A row without an exchange is taken as defaultExchange.
+func comparePositions(expected map[string]expectedPosition, book map[string]any, defaultExchange string) ([]PositionMismatch, error) {
 	broker := make(map[string]expectedPosition)
 	rows, _ := book["data"].([]any)
 	for _, r := range rows {
@@ -94,30 +110,43 @@ func comparePositions(expected map[string]expectedPosition, book map[string]any)
 		if err != nil {
 			return nil, fmt.Errorf("position %s netqty %v: %w", token, row["netqty"], err)
 		}
-		b := broker[token]
+		ex, _ := row["exchange"].(string)
+		if ex == "" {
+			ex = defaultExchange
+		}
+		k := posBookKey(ex, token)
+		b := broker[k]
 		b.Symbol = fmt.Sprint(row["tradingsymbol"])
 		b.Qty += qty
-		broker[token] = b
+		broker[k] = b
 	}
 
+	split := func(k string) (string, string) { ex, tok, _ := strings.Cut(k, ":"); return ex, tok }
 	var out []PositionMismatch
-	for token, e := range expected {
-		if b := broker[token]; b.Qty != e.Qty {
-			out = append(out, PositionMismatch{Token: token, Symbol: e.Symbol, Expected: e.Qty, Broker: b.Qty})
+	for k, e := range expected {
+		if b := broker[k]; b.Qty != e.Qty {
+			ex, tok := split(k)
+			out = append(out, PositionMismatch{Exchange: ex, Token: tok, Symbol: e.Symbol, Expected: e.Qty, Broker: b.Qty})
 		}
 	}
-	for token, b := range broker {
-		if _, known := expected[token]; !known && b.Qty != 0 {
-			out = append(out, PositionMismatch{Token: token, Symbol: b.Symbol, Broker: b.Qty})
+	for k, b := range broker {
+		if _, known := expected[k]; !known && b.Qty != 0 {
+			ex, tok := split(k)
+			out = append(out, PositionMismatch{Exchange: ex, Token: tok, Symbol: b.Symbol, Broker: b.Qty})
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Token < out[j].Token })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Token != out[j].Token {
+			return out[i].Token < out[j].Token
+		}
+		return out[i].Exchange < out[j].Exchange
+	})
 	return out, nil
 }
 
-// brokerNetQty returns the broker's net quantity for one instrument token
+// brokerNetQty returns the broker's net quantity for one instrument
 // (0 when the broker lists no position for it).
-func (oe *OrderExecutor) brokerNetQty(token string) (int64, error) {
+func (oe *OrderExecutor) brokerNetQty(symbol, token string) (int64, error) {
 	api := oe.brokerAPI()
 	if api == nil {
 		return 0, ErrNotLive
@@ -129,12 +158,13 @@ func (oe *OrderExecutor) brokerNetQty(token string) (int64, error) {
 	if st, ok := book["status"].(bool); ok && !st {
 		return 0, fmt.Errorf("broker positions status=false: %v", book["message"])
 	}
-	mm, err := comparePositions(map[string]expectedPosition{token: {}}, book)
+	ex := oe.bookExchange(symbol)
+	mm, err := comparePositions(map[string]expectedPosition{posBookKey(ex, token): {}}, book, oe.bookExchange(""))
 	if err != nil {
 		return 0, err
 	}
 	for _, m := range mm {
-		if m.Token == token {
+		if m.Token == token && m.Exchange == ex {
 			return m.Broker, nil
 		}
 	}

@@ -28,6 +28,8 @@ const (
 	analystLevelsKey  = "analyst:levels:latest"
 	ourSRChannel      = "pub:sr"
 	ourSRKey          = "sr:state"
+	ourSRXChannel     = "pub:srx" // extra underlyings' SR views (SENSEX_SR, …)
+	ourSRXKey         = "srx:state"
 	signalChannel     = "pub:signal"
 
 	evalEvery   = 250 * time.Millisecond // stall keeps growing between ticks
@@ -435,7 +437,7 @@ func (svc *Service) startHTTP(ctx context.Context) {
 // ── S/R level feeds ──
 
 func (svc *Service) subscribeLevels(ctx context.Context) {
-	ps := svc.rdb.Subscribe(ctx, analystLevelsChan, ourSRChannel)
+	ps := svc.rdb.Subscribe(ctx, analystLevelsChan, ourSRChannel, ourSRXChannel)
 	defer ps.Close()
 	ch := ps.Channel()
 	for {
@@ -445,6 +447,10 @@ func (svc *Service) subscribeLevels(ctx context.Context) {
 		case msg, ok := <-ch:
 			if !ok {
 				return
+			}
+			if msg.Channel == ourSRXChannel {
+				svc.handleSRXLevels(ctx, []byte(msg.Payload))
+				continue
 			}
 			svc.handleLevels(ctx, msg.Channel == ourSRChannel, []byte(msg.Payload))
 		}
@@ -464,6 +470,27 @@ func (svc *Service) loadInitialLevels(ctx context.Context) {
 			continue
 		}
 		svc.handleLevels(ctx, src.ourSR, b)
+	}
+	if b, err := svc.rdb.Get(ctx, ourSRXKey).Bytes(); err == nil {
+		svc.handleSRXLevels(ctx, b)
+	} else if err != goredis.Nil {
+		log.Printf("[exitwatch] read %s: %v", ourSRXKey, err)
+	}
+}
+
+// handleSRXLevels feeds each extra underlying's SR levels to its book.
+func (svc *Service) handleSRXLevels(ctx context.Context, b []byte) {
+	sets, err := parseOurSRXLevels(b)
+	if err != nil {
+		log.Printf("[exitwatch] %v", err)
+		return
+	}
+	for tok, ls := range sets {
+		select {
+		case svc.levelCh <- levelUpdate{token: tok, ourSR: true, levels: ls}:
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 

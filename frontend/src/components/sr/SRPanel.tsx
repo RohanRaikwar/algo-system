@@ -1,4 +1,4 @@
-import { useSRStore } from '../../store/useSRStore';
+import { useSelectedSRView } from '../../store/useSRStore';
 import { rejectLabel } from '../signals/SRStatusCard';
 import { KIND_LABEL, REGIME_LABEL, asOf, clock, hhmm, nearestLevels, pnlPaise, points, rupees, sourceLabel, warnLabel, watching } from './srFormat';
 import { DayPosition } from './DayPosition';
@@ -16,7 +16,7 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
 }
 
 export function SRPanel() {
-    const v = useSRStore(s => s.view);
+    const v = useSelectedSRView();
     const last = useLastNiftyPaise(v?.key);
 
     if (!v) {

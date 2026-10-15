@@ -23,7 +23,7 @@ func pruneBefore(ctx context.Context, db *sql.DB, t dayTable, cutoff int64) (int
 	var total int64
 	for {
 		res, err := db.ExecContext(ctx,
-			`DELETE FROM `+table+` WHERE rowid IN (SELECT rowid FROM `+table+` WHERE `+t.expr()+` < ? LIMIT ?)`,
+			`DELETE FROM `+table+` WHERE rowid IN (SELECT rowid FROM `+table+` WHERE `+t.cond()+` AND `+t.expr()+` < ? LIMIT ?)`,
 			cutoff, pruneChunk)
 		if err != nil {
 			return total, fmt.Errorf("prune %s: %w", table, err)

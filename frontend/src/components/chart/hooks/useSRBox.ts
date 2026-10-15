@@ -1,6 +1,6 @@
 import { useEffect, useRef, type MutableRefObject } from 'react';
 import type { ISeriesApi } from 'lightweight-charts';
-import { useSRStore } from '../../../store/useSRStore';
+import { useSRViewFor } from '../../../store/useSRStore';
 import { SRBoxPrimitive, srBox } from '../srBoxPrimitive';
 
 /** Shades SR's sideways box on the candle series while SR's index is shown and the overlay is on. */
@@ -9,7 +9,7 @@ export function useSRBox(
     selectedToken: string | null,
     enabled: boolean,
 ) {
-    const view = useSRStore(s => s.view);
+    const view = useSRViewFor(selectedToken);
     const primitive = useRef<SRBoxPrimitive | null>(null);
 
     useEffect(() => {

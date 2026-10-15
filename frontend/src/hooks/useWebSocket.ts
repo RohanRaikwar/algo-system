@@ -19,10 +19,10 @@ import type {
     SubscribeMsg, IndicatorSpecMsg,
 } from '../types/ws';
 import type { LiveOrdersPayload, SignalPayload } from '../types/signal';
-import { useSRStore, parseSRView } from '../store/useSRStore';
+import { useSRStore, parseSRView, parseSRXViews } from '../store/useSRStore';
 import { useOptionLTPStore } from '../store/useOptionLTPStore';
 import { useRefusedStore, parseRefusedView } from '../store/useRefusedStore';
-import { useStrikeSelStore, parseStrikeSelView } from '../store/useStrikeSelStore';
+import { useStrikeSelStore, parseStrikeSelView, parseStrikeSelXViews } from '../store/useStrikeSelStore';
 import { listPaneSubs } from '../services/paneSubscriptions';
 
 /**
@@ -371,6 +371,12 @@ export function useWebSocket() {
                 if (view) useSRStore.getState().setView(view);
                 return;
             }
+            // ── SR on other underlyings (pub:srx, full state by index key) ──
+            if (envelope.channel === 'pub:srx' && envelope.data) {
+                const views = parseSRXViews(envelope.data);
+                if (views) useSRStore.getState().setExtra(views);
+                return;
+            }
 
             // ── Refused entries (pub:refused channel, full state) ──
             if (envelope.channel === 'pub:refused' && envelope.data) {
@@ -383,6 +389,11 @@ export function useWebSocket() {
             if (envelope.channel === 'pub:strikesel' && envelope.data) {
                 const view = parseStrikeSelView(envelope.data);
                 if (view) useStrikeSelStore.getState().setView(view);
+                return;
+            }
+            if (envelope.channel === 'pub:strikeselx' && envelope.data) {
+                const views = parseStrikeSelXViews(envelope.data);
+                if (views) useStrikeSelStore.getState().setExtra(views);
                 return;
             }
 
@@ -631,12 +642,18 @@ export function useWebSocket() {
                     } else if (u.channel === 'pub:sr') {
                         const view = parseSRView(u.data);
                         if (view) useSRStore.getState().setView(view);
+                    } else if (u.channel === 'pub:srx') {
+                        const views = parseSRXViews(u.data);
+                        if (views) useSRStore.getState().setExtra(views);
                     } else if (u.channel === 'pub:refused') {
                         const view = parseRefusedView(u.data);
                         if (view) useRefusedStore.getState().setView(view);
                     } else if (u.channel === 'pub:strikesel') {
                         const view = parseStrikeSelView(u.data);
                         if (view) useStrikeSelStore.getState().setView(view);
+                    } else if (u.channel === 'pub:strikeselx') {
+                        const views = parseStrikeSelXViews(u.data);
+                        if (views) useStrikeSelStore.getState().setExtra(views);
                     } else if (u.channel === 'pub:pnl') {
                         // PnL is consumed by ws:message listeners.
                         window.dispatchEvent(new CustomEvent('ws:message', {

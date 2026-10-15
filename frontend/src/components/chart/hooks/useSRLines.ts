@@ -1,6 +1,6 @@
 import { useEffect, useRef, type MutableRefObject } from 'react';
 import { LineStyle, type IPriceLine, type ISeriesApi } from 'lightweight-charts';
-import { useSRStore } from '../../../store/useSRStore';
+import { useSRViewFor } from '../../../store/useSRStore';
 import type { SRView } from '../../../types/sr';
 import { nearestN, sourceLabel } from '../../sr/srFormat';
 
@@ -55,7 +55,7 @@ export function useSRLines(
     price: number | null,
     enabled: boolean,
 ) {
-    const view = useSRStore(s => s.view);
+    const view = useSRViewFor(selectedToken);
     const drawn = useRef<IPriceLine[]>([]);
     const fingerprint = useRef('');
 

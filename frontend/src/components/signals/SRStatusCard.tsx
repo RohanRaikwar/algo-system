@@ -1,5 +1,5 @@
 import { Activity } from 'lucide-react';
-import { useSRStore } from '../../store/useSRStore';
+import { useSelectedSRView } from '../../store/useSRStore';
 import type { SRView } from '../../types/sr';
 
 const pts = (v?: number) => (v && v > 0 ? (v / 100).toFixed(2) : '—');
@@ -60,7 +60,7 @@ export function topRejects(r: Record<string, number> | null, n = 5): Array<[stri
 }
 
 export function SRStatusCard() {
-    const v = useSRStore(s => s.view);
+    const v = useSelectedSRView();
     if (!v) return null;
     const levels = (v.levels ?? []).map(l => `${pts(l.price)}×${l.touches}`).join('  ');
     const stats: Array<[string, string]> = [

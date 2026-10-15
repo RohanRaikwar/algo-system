@@ -93,19 +93,24 @@ func opposite(side strategy.PositionSide) strategy.PositionSide {
 
 // oppositeConflictLocked reports whether a BUY for sig must wait: an
 // opposite-side position (open, pending or in flight) exists for the same
-// strategy, or — when the BUY is real — any real one. Caller holds oe.mu.
+// strategy, or — when the BUY is real — any real one on the same
+// underlying (a real NIFTY CALL does not block a SENSEX PUT). Caller holds
+// oe.mu.
 func (oe *OrderExecutor) oppositeConflictLocked(sig strategy.Signal, real bool) bool {
 	opp := string(opposite(sig.Side))
+	und := underlyingOfStrategy(sig.StrategyName)
 	for _, r := range oe.entryOrders {
 		if r.Leg != "" {
 			continue // paper legs are hedged baskets, not a directional side
 		}
-		if r.PositionSide == opp && (r.StrategyName == sig.StrategyName || (real && r.Real)) {
+		if r.PositionSide == opp && (r.StrategyName == sig.StrategyName ||
+			(real && r.Real && underlyingOfStrategy(r.StrategyName) == und)) {
 			return true
 		}
 	}
 	for _, b := range oe.inflight {
-		if string(b.side) == opp && (b.strategy == sig.StrategyName || (real && b.real)) {
+		if string(b.side) == opp && (b.strategy == sig.StrategyName ||
+			(real && b.real && underlyingOfStrategy(b.strategy) == und)) {
 			return true
 		}
 	}
@@ -508,7 +513,7 @@ func (oe *OrderExecutor) retryExitLocked(sig strategy.Signal, attempt int) {
 		oe.scheduleExitRetry(sig)
 		return
 	}
-	held, err := oe.brokerNetQty(rec.Token)
+	held, err := oe.brokerNetQty(rec.Symbol, rec.Token)
 	switch {
 	case err != nil:
 		log.Printf("%s ⚠️  exit retry for %s: broker positions unreadable: %v", prefix, posKey, err)
@@ -584,7 +589,7 @@ func (oe *OrderExecutor) settleStalePending(sig strategy.Signal, rec OrderRecord
 	kl := oe.keyLock(posKey)
 	kl.Lock()
 	defer kl.Unlock()
-	held, err := oe.brokerNetQty(rec.Token)
+	held, err := oe.brokerNetQty(rec.Symbol, rec.Token)
 	switch {
 	case err != nil:
 		oe.alertf("pending BUY %s from a previous day could not be checked (%v) — kept pending; verify Angel positions for %s", posKey, err, rec.Symbol)

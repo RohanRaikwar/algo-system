@@ -10,6 +10,7 @@ import (
 
 	"trading-systemv1/internal/markethours"
 	"trading-systemv1/internal/model"
+	"trading-systemv1/internal/underlying"
 )
 
 // coldMissStop ends a walk back after this many days in a row with no
@@ -81,7 +82,7 @@ func (r *ColdReader) ReadTFCandlesBefore(exchange, token string, tf int, beforeT
 	day := time.Unix(beforeTS-1, 0).In(markethours.IST)
 	misses := 0
 	for i := 0; i < r.maxDays && misses < coldMissStop && len(newestFirst) < limit; i, day = i+1, day.AddDate(0, 0, -1) {
-		path, err := r.f.fetch(ctx, "candles", day)
+		path, err := r.fetchCandles(ctx, exchange, token, day)
 		if errors.Is(err, ErrNoArchive) {
 			misses++
 			continue
@@ -141,4 +142,17 @@ func readDayCandles(path, exchange, token string, tf int, beforeTS int64, limit 
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// fetchCandles returns the day file holding exchange:token's candles: the
+// index's own file, or the combined file of days archived before candles
+// were split per index.
+func (r *ColdReader) fetchCandles(ctx context.Context, exchange, token string, day time.Time) (string, error) {
+	if p, ok := underlying.ByIndexKey(exchange + ":" + token); ok {
+		path, err := r.f.fetch(ctx, CandleSource(p.Key), day)
+		if !errors.Is(err, ErrNoArchive) {
+			return path, err
+		}
+	}
+	return r.f.fetch(ctx, legacyCandles, day)
 }

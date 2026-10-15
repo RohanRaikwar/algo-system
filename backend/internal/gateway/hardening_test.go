@@ -150,8 +150,8 @@ func TestAttachLiveStatePrefersHubLatest(t *testing.T) {
 	if snap.LiveSeqs["pub:orders"] != 2 || snap.LiveSeqs["pub:pnl"] != 0 {
 		t.Fatalf("liveSeqs: got %v", snap.LiveSeqs)
 	}
-	// orders came from the hub; pnl, sr, refused and strikesel were missing, so only they fall back.
-	if len(asked) != 4 || asked[0] != "pnl:summary" || asked[1] != "sr:state" || asked[2] != "refused:state" || asked[3] != "strikesel:state" {
+	// orders came from the hub; pnl, sr, srx, refused and strikesel were missing, so only they fall back.
+	if len(asked) != 6 || asked[0] != "pnl:summary" || asked[1] != "sr:state" || asked[2] != "srx:state" || asked[3] != "refused:state" || asked[4] != "strikesel:state" || asked[5] != "strikeselx:state" {
 		t.Fatalf("fallback should only be used for missing state, asked %v", asked)
 	}
 	if snap.SR != nil {

@@ -51,6 +51,10 @@ type Config struct {
 	// MaxDayLossPaise blocks new real entries once a strategy's daily P&L
 	// is at or below -MaxDayLossPaise. Exits are never blocked. 0 = off.
 	MaxDayLossPaise int64
+	// MaxDayLossTotalPaise blocks new real entries once the summed daily
+	// P&L of all live strategies (one shared broker account) is at or
+	// below -MaxDayLossTotalPaise. 0 = off.
+	MaxDayLossTotalPaise int64
 
 	// RequireJournal refuses real entries while no order ledger is set
 	// (SetOrderLedger), so no real order is sent without a durable record.
@@ -468,23 +472,37 @@ func (oe *OrderExecutor) realEntryQty(symbol string) (int64, error) {
 		return 0, fmt.Errorf("lot size %d for %s is not positive", lot, symbol)
 	}
 	qty := oe.cfg.LiveLots * lot
-	if qty > oe.cfg.FreezeQty {
-		return 0, fmt.Errorf("qty %d (%d lots × %d) exceeds freeze qty %d", qty, oe.cfg.LiveLots, lot, oe.cfg.FreezeQty)
+	if freeze := oe.freezeQtyFor(symbol); qty > freeze {
+		return 0, fmt.Errorf("qty %d (%d lots × %d) exceeds freeze qty %d", qty, oe.cfg.LiveLots, lot, freeze)
 	}
 	return qty, nil
 }
 
-// dayLossBlocked reports whether a strategy's daily P&L has reached the
-// max-loss limit for new real entries.
+// dayLossBlocked reports whether new real entries for a strategy are
+// blocked by the daily max-loss limits: the strategy's own P&L, or the sum
+// over all live strategies. pnl is the value that hit the limit.
 func (oe *OrderExecutor) dayLossBlocked(strategyName string) (int64, bool) {
 	oe.mu.RLock()
 	tracker := oe.pnlTracker
 	oe.mu.RUnlock()
-	if oe.cfg.MaxDayLossPaise <= 0 || tracker == nil {
+	if tracker == nil {
 		return 0, false
 	}
-	pnl := tracker.GetStrategyDailyPnL(strategyName)
-	return pnl, pnl <= -oe.cfg.MaxDayLossPaise
+	if oe.cfg.MaxDayLossPaise > 0 {
+		if pnl := tracker.GetStrategyDailyPnL(strategyName); pnl <= -oe.cfg.MaxDayLossPaise {
+			return pnl, true
+		}
+	}
+	if oe.cfg.MaxDayLossTotalPaise > 0 {
+		var total int64
+		for name := range oe.liveStrategies {
+			total += tracker.GetStrategyDailyPnL(name)
+		}
+		if total <= -oe.cfg.MaxDayLossTotalPaise {
+			return total, true
+		}
+	}
+	return 0, false
 }
 
 // GetSmartConnect returns the internal SmartConnect client (e.g. for
@@ -735,8 +753,8 @@ func (oe *OrderExecutor) ExecuteSignal(sig strategy.Signal) {
 			return
 		}
 		if pnl, blocked := oe.dayLossBlocked(sig.StrategyName); blocked {
-			oe.alertf("DAY LOSS LIMIT: %s daily P&L %d paise ≤ -%d — real BUY %s refused, exits still allowed",
-				sig.StrategyName, pnl, oe.cfg.MaxDayLossPaise, fnoSymbol)
+			oe.alertf("DAY LOSS LIMIT: %s daily P&L %d paise (strategy limit -%d, account limit -%d) — real BUY %s refused, exits still allowed",
+				sig.StrategyName, pnl, oe.cfg.MaxDayLossPaise, oe.cfg.MaxDayLossTotalPaise, fnoSymbol)
 			return
 		}
 	}
@@ -774,9 +792,10 @@ func (oe *OrderExecutor) executePaper(sig strategy.Signal, posKey, direction, fn
 	if !isRealOrderStrategy {
 		paperReason = "PAPER (strategy not enabled for real orders)"
 	}
+	qty := oe.paperQtyFor(fnoSymbol)
 	fill := oe.paperFill(direction, fnoToken, ltp)
 	log.Printf("%s 📋 %s: would %s %d lots of %s (%s) at LTP=%d (paper fill %d)",
-		prefix, paperReason, direction, oe.cfg.Qty, fnoSymbol, fnoToken, ltp, fill)
+		prefix, paperReason, direction, qty, fnoSymbol, fnoToken, ltp, fill)
 	ltp = fill
 
 	if direction == "BUY" {
@@ -788,7 +807,7 @@ func (oe *OrderExecutor) executePaper(sig strategy.Signal, posKey, direction, fn
 			Symbol:        fnoSymbol,
 			Token:         fnoToken,
 			Side:          direction,
-			Quantity:      oe.cfg.Qty,
+			Quantity:      qty,
 			Price:         ltp,
 			Timestamp:     time.Now(),
 			StrategyName:  sig.StrategyName,
@@ -798,7 +817,7 @@ func (oe *OrderExecutor) executePaper(sig strategy.Signal, posKey, direction, fn
 		}
 		oe.mu.Unlock()
 		log.Printf("%s 📝 DRY-RUN: Entry order tracked: %s → orderID=%s", prefix, posKey, dryRunOrderID)
-		oe.reportFill(sig, direction, ltp, oe.cfg.Qty, false)
+		oe.reportFill(sig, direction, ltp, qty, false)
 		return
 	}
 
@@ -807,7 +826,7 @@ func (oe *OrderExecutor) executePaper(sig strategy.Signal, posKey, direction, fn
 		log.Printf("%s 🔗 DRY-RUN: SELL order %s closes BUY order %s | Entry: ₹%.2f → Exit: ₹%.2f | P&L: ₹%.2f",
 			prefix, dryRunOrderID, entryOrder.OrderID,
 			float64(entryOrder.Price)/100, float64(ltp)/100,
-			float64(ltp-entryOrder.Price)/100*float64(oe.cfg.Qty))
+			float64(ltp-entryOrder.Price)/100*float64(entryOrder.Quantity))
 	}
 	oe.mu.Lock()
 	delete(oe.entryOrders, posKey)
@@ -1036,7 +1055,7 @@ func (oe *OrderExecutor) executeReal(sig strategy.Signal, posKey, direction, fno
 	if sellPositionFlat {
 		// "No holdings" / "net quantity" can also mean the SELL was larger
 		// than what is held. Only the broker's net position says flat.
-		held, perr := oe.brokerNetQty(fnoToken)
+		held, perr := oe.brokerNetQty(fnoSymbol, fnoToken)
 		switch {
 		case perr != nil:
 			oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitOrderID = "" })
@@ -1209,7 +1228,7 @@ func (oe *OrderExecutor) buildOrderParams(fnoSymbol, fnoToken, direction string,
 		"tradingsymbol":   fnoSymbol,
 		"symboltoken":     fnoToken,
 		"transactiontype": direction,
-		"exchange":        oe.cfg.FNOExchange,
+		"exchange":        oe.exchangeFor(fnoSymbol),
 		"ordertype":       orderType,
 		"producttype":     oe.cfg.FNOProductType,
 		"duration":        "DAY",
@@ -1279,7 +1298,7 @@ func (oe *OrderExecutor) placeTargetGTT(posKey, fnoSymbol, fnoToken string, entr
 	params := map[string]any{
 		"tradingsymbol":   fnoSymbol,
 		"symboltoken":     fnoToken,
-		"exchange":        oe.cfg.FNOExchange,
+		"exchange":        oe.exchangeFor(fnoSymbol),
 		"transactiontype": "SELL",
 		"producttype":     oe.cfg.FNOProductType,
 		"price":           targetPriceRupees,
@@ -1323,7 +1342,7 @@ func (oe *OrderExecutor) placeStopLossGTT(posKey, fnoSymbol, fnoToken string, en
 	params := map[string]any{
 		"tradingsymbol":   fnoSymbol,
 		"symboltoken":     fnoToken,
-		"exchange":        oe.cfg.FNOExchange,
+		"exchange":        oe.exchangeFor(fnoSymbol),
 		"transactiontype": "SELL",
 		"producttype":     oe.cfg.FNOProductType,
 		"price":           paiseToRupees(limitPaise),
@@ -1367,7 +1386,7 @@ func (oe *OrderExecutor) cancelPairedGTTs(posKey string) {
 			if _, err = api.GTTCancelRule(map[string]any{
 				"id":          g.id,
 				"symboltoken": entryOrder.Token,
-				"exchange":    oe.cfg.FNOExchange,
+				"exchange":    oe.exchangeFor(entryOrder.Symbol),
 			}); err == nil {
 				break
 			}

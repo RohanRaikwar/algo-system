@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"trading-systemv1/internal/underlying"
 	"trading-systemv1/pkg/smartconnect"
 )
 
@@ -39,11 +40,13 @@ type StrikeInfo struct {
 	LotSize int64  // lot size (e.g. 75 for NIFTY)
 }
 
-// StrikePicker resolves ATM CE/PE strikes for NIFTY options.
+// StrikePicker resolves ATM CE/PE strikes for one underlying's options
+// (NIFTY unless built with NewStrikePickerFor).
 type StrikePicker struct {
 	sc         *smartconnect.SmartConnect
-	exchange   string // "NFO"
-	strikeStep int64  // 50 for NIFTY
+	profile    underlying.Profile
+	exchange   string // options segment: "NFO", "BFO"
+	strikeStep int64  // 50 for NIFTY, 100 for SENSEX
 
 	mu        sync.RWMutex
 	currentCE StrikeInfo
@@ -59,15 +62,76 @@ type StrikePicker struct {
 	// listedExpiries returns real NIFTY option expiries on or after a day
 	// (instrument master); nil = InstrumentMaster().OptionExpiries. Test hook.
 	listedExpiries func(from time.Time) []time.Time
+	// master is the instrument master; nil = GetInstrumentMaster(). Test hook.
+	master *InstrumentMaster
 }
 
-// NewStrikePicker creates a new picker that uses the given SmartConnect client.
+func (sp *StrikePicker) im() *InstrumentMaster {
+	if sp.master != nil {
+		return sp.master
+	}
+	return GetInstrumentMaster()
+}
+
+// NewStrikePicker creates a NIFTY picker that uses the given SmartConnect
+// client.
 func NewStrikePicker(sc *smartconnect.SmartConnect) *StrikePicker {
+	p := underlying.Primary()
+	p.FNOExchange = "NFO" // the NIFTY picker always searched NFO
+	return NewStrikePickerFor(sc, p)
+}
+
+// NewStrikePickerFor creates a picker for underlying p's options.
+func NewStrikePickerFor(sc *smartconnect.SmartConnect, p underlying.Profile) *StrikePicker {
 	return &StrikePicker{
 		sc:         sc,
-		exchange:   "NFO",
-		strikeStep: 50,
+		profile:    p,
+		exchange:   p.FNOExchange,
+		strikeStep: p.StrikeStep,
 	}
+}
+
+// SmartConnect returns the picker's broker client (nil without a session).
+func (sp *StrikePicker) SmartConnect() *smartconnect.SmartConnect { return sp.sc }
+
+// Profile returns the underlying this picker resolves options for.
+func (sp *StrikePicker) Profile() underlying.Profile { return sp.prof() }
+
+// prof is the picker's underlying; a zero-value picker is NIFTY.
+func (sp *StrikePicker) prof() underlying.Profile {
+	if sp.profile.Key == "" {
+		return underlying.Primary()
+	}
+	return sp.profile
+}
+
+// lotFallback is the lot size used when the master has no entry. It is
+// read at call time so NIFTY_LOT_SIZE changes apply as before.
+func (sp *StrikePicker) lotFallback() int64 {
+	return int64(underlying.Get(sp.prof().Key).LotFallback)
+}
+
+// optionSymbol returns the trading symbol of one contract. The instrument
+// master is asked first, since symbol formats differ by exchange (BFO
+// weeklies read "SENSEX26N0564600CE"). Without a master entry NIFTY's
+// symbol is built ("NIFTY03NOV2621250PE"); other underlyings return "".
+func (sp *StrikePicker) optionSymbol(expiry time.Time, strike int64, optionType string) string {
+	p := sp.prof()
+	if inst := sp.im().FindOption(p.OptionName, sp.exchangeSeg(), expiry, strike, optionType); inst != nil {
+		return inst.Symbol
+	}
+	if p.Key != "NIFTY" {
+		return ""
+	}
+	return fmt.Sprintf("NIFTY%s%d%s", strings.ToUpper(expiry.In(istZone).Format("02Jan06")), strike, optionType)
+}
+
+// exchangeSeg is the options segment, NFO for a zero-value picker.
+func (sp *StrikePicker) exchangeSeg() string {
+	if sp.exchange == "" {
+		return "NFO"
+	}
+	return sp.exchange
 }
 
 // Resolved returns true if ATM strikes have been resolved for the current day.
@@ -109,8 +173,16 @@ func (sp *StrikePicker) ResolveATM(spotPrice int64) bool {
 	expiries := sp.candidateExpiries(time.Now())
 
 	for _, expiry := range expiries {
-		ceSymbol = fmt.Sprintf("NIFTY%s%dCE", expiry, atm)
-		peSymbol = fmt.Sprintf("NIFTY%s%dPE", expiry, atm)
+		exp, perr := time.ParseInLocation("02Jan06", expiry, istZone)
+		if perr != nil {
+			continue
+		}
+		ceSymbol = sp.optionSymbol(exp, atm, "CE")
+		peSymbol = sp.optionSymbol(exp, atm, "PE")
+		if ceSymbol == "" || peSymbol == "" {
+			err = fmt.Errorf("%s %d not listed in instrument master", expiry, atm)
+			continue
+		}
 
 		// Delay between expiry attempts to avoid Angel One rate limits
 		time.Sleep(2 * time.Second)
@@ -183,8 +255,27 @@ func (sp *StrikePicker) candidateExpiries(now time.Time) []string {
 	now = now.In(istZone)
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, istZone)
 
-	// Normal NIFTY expiry is Tuesday.
-	daysUntilTues := (int(time.Tuesday) - int(today.Weekday()) + 7) % 7
+	// Underlyings other than NIFTY use the master's listed expiries (never
+	// today) when available.
+	if sp.prof().Key != "NIFTY" {
+		if listed := sp.upcomingListedExpiries(now); len(listed) > 0 {
+			var out []string
+			for _, e := range listed {
+				if e.After(today) {
+					out = append(out, strings.ToUpper(e.Format("02Jan06")))
+				}
+				if len(out) == 2 {
+					break
+				}
+			}
+			if len(out) > 0 {
+				return out
+			}
+		}
+	}
+
+	// Normal expiry weekday: Tuesday for NIFTY.
+	daysUntilTues := (int(sp.prof().ExpiryWeekday) - int(today.Weekday()) + 7) % 7
 	if daysUntilTues == 0 {
 		// On Tuesday (normal expiry day) today's contract is never traded, so
 		// aim at next week. Keeping this week would leave only Wednesday and
@@ -263,7 +354,7 @@ func (sp *StrikePicker) searchTokenWithRetry(symbol string) (token string, lotSi
 
 // searchToken calls SearchScrip and returns the token and lot size for the given symbol.
 func (sp *StrikePicker) searchToken(symbol string) (token string, lotSize int64, err error) {
-	res, err := sp.sc.SearchScrip(sp.exchange, symbol)
+	res, err := sp.sc.SearchScrip(sp.exchangeSeg(), symbol)
 	if err != nil {
 		return "", 0, fmt.Errorf("SearchScrip(%s): %w", symbol, err)
 	}
@@ -295,7 +386,7 @@ func (sp *StrikePicker) searchToken(symbol string) (token string, lotSize int64,
 	if err != nil {
 		// Fallback to environment variable if instrument master lookup fails
 		log.Printf("[strikepicker] ⚠️  failed to get lot size from instrument master for %s: %v (using fallback)", symbol, err)
-		lotSize = int64(getEnvInt("NIFTY_LOT_SIZE", 65))
+		lotSize = sp.lotFallback()
 	} else {
 		log.Printf("[strikepicker] 📊 fetched lot size for %s: %d", symbol, lotSize)
 	}

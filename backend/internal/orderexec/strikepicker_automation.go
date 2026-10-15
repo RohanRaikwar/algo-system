@@ -148,7 +148,7 @@ func (sp *StrikePicker) SelectContract(input AutomationInput) (AutomationPick, e
 		step = inferStrikeStep(input.OptionChain)
 	}
 	if step <= 0 {
-		step = 50
+		step = sp.prof().StrikeStep
 	}
 	return selectContract(input, step)
 }
@@ -162,7 +162,11 @@ func (sp *StrikePicker) ResolveByAutomation(input AutomationInput) (AutomationPi
 	contract := pick.Contract
 	symbol := contract.Symbol
 	if symbol == "" {
-		symbol = buildOptionSymbol(contract.Expiry, contract.Strike, contract.OptionType)
+		symbol = sp.optionSymbol(contract.Expiry, contract.Strike, string(contract.OptionType))
+		if symbol == "" {
+			return AutomationPick{}, fmt.Errorf("%s %d%s not listed in instrument master",
+				contract.Expiry.Format("02Jan06"), contract.Strike, contract.OptionType)
+		}
 	}
 
 	token := contract.Token
@@ -828,10 +832,6 @@ func sameExpiryDay(left, right time.Time) bool {
 	return l.Equal(r)
 }
 
-func buildOptionSymbol(expiry time.Time, strike int64, optionType OptionType) string {
-	return fmt.Sprintf("NIFTY%s%d%s", strings.ToUpper(expiry.In(istZone).Format("02Jan06")), strike, optionType)
-}
-
 func contractMetricSlice(contracts []OptionContract, fn func(OptionContract) float64) []float64 {
 	out := make([]float64, 0, len(contracts))
 	for _, c := range contracts {
@@ -870,12 +870,15 @@ func (sp *StrikePicker) automationExpiries(entryTime time.Time) []time.Time {
 	return []time.Time{current, next}
 }
 
-// upcomingListedExpiries returns the listed NIFTY option expiries that are
+// upcomingListedExpiries returns the listed option expiries that are
 // not over at now (today's ends at 15:30 IST).
 func (sp *StrikePicker) upcomingListedExpiries(now time.Time) []time.Time {
 	src := sp.listedExpiries
 	if src == nil {
-		src = func(from time.Time) []time.Time { return GetInstrumentMaster().OptionExpiries("NIFTY", from) }
+		p := sp.prof()
+		seg := sp.exchangeSeg()
+		im := sp.im()
+		src = func(from time.Time) []time.Time { return im.OptionExpiriesOn(p.OptionName, seg, from) }
 	}
 	now = now.In(istZone)
 	closed := now.Hour() > 15 || (now.Hour() == 15 && now.Minute() >= 30)
@@ -894,7 +897,7 @@ func (sp *StrikePicker) upcomingListedExpiries(now time.Time) []time.Time {
 func (sp *StrikePicker) nextWeeklyExpiryDay(now time.Time) time.Time {
 	now = now.In(istZone)
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, istZone)
-	daysUntilTues := (int(time.Tuesday) - int(today.Weekday()) + 7) % 7
+	daysUntilTues := (int(sp.prof().ExpiryWeekday) - int(today.Weekday()) + 7) % 7
 	if daysUntilTues == 0 {
 		if now.Hour() > 15 || (now.Hour() == 15 && now.Minute() >= 30) {
 			daysUntilTues = 7
@@ -906,7 +909,7 @@ func (sp *StrikePicker) nextWeeklyExpiryDay(now time.Time) time.Time {
 func (sp *StrikePicker) loadOptionGreekExpiry(expiry time.Time) ([]OptionContract, error) {
 	optionGreekSpacer.wait()
 	res, err := sp.sc.OptionGreek(map[string]any{
-		"name":       "NIFTY",
+		"name":       sp.prof().OptionName,
 		"expirydate": strings.ToUpper(expiry.In(istZone).Format("02Jan2006")),
 	})
 	if err != nil {

@@ -41,11 +41,28 @@ func TestConfigValidate_StagingAllowsMissingCredentials(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_Persist1sTokensFromSubscribeTokens(t *testing.T) {
+func TestLoadConfig_Persist1sTokensAreTheIndexes(t *testing.T) {
 	t.Setenv("STAGING_MODE", "true")
-	t.Setenv("SUBSCRIBE_TOKENS", "1:99926000,1:99926009")
+	t.Setenv("INDEX_TOKEN", "")
+	t.Setenv("UNDERLYINGS", "NIFTY,SENSEX")
 	got := LoadConfig().Persist1sTokens
-	if len(got) != 2 || !got["99926000"] || !got["99926009"] {
-		t.Fatalf("Persist1sTokens = %v, want the SUBSCRIBE_TOKENS tokens", got)
+	if len(got) != 2 || !got["99926000"] || !got["99919000"] {
+		t.Fatalf("Persist1sTokens = %v, want NIFTY and SENSEX", got)
+	}
+}
+
+// Only the indexes build candles by default: no option data is stored.
+func TestLoadConfig_CandleTokensAreTheIndexes(t *testing.T) {
+	t.Setenv("STAGING_MODE", "true")
+	t.Setenv("INDEX_TOKEN", "")
+	t.Setenv("UNDERLYINGS", "NIFTY,SENSEX")
+	t.Setenv("CANDLE_TOKENS", "")
+	got := LoadConfig().CandleTokens
+	if len(got) != 2 || !got["99926000"] || !got["99919000"] {
+		t.Fatalf("CandleTokens = %v, want only NIFTY and SENSEX", got)
+	}
+	t.Setenv("CANDLE_TOKENS", "99926000")
+	if got := LoadConfig().CandleTokens; len(got) != 2 || !got["99919000"] {
+		t.Fatalf("CANDLE_TOKENS override = %v, want SENSEX added", got)
 	}
 }

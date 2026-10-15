@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"time"
+	"trading-systemv1/internal/underlying"
 
 	"trading-systemv1/internal/model"
 )
@@ -129,6 +130,7 @@ type Engine struct {
 	atr     map[string]int64      // by index token
 	books   map[string]*LevelBook // by index token
 	exch    map[string]string     // index token → exchange
+	scaled  map[string]*Model     // extra underlyings' point-scaled models, by index token
 	lastPub time.Time
 	dirty   bool
 
@@ -168,12 +170,46 @@ func (e *Engine) autoExit(strategy string) bool { return e.auto[strategy] }
 // SetModel applies reloaded tuning to every tracker and book.
 func (e *Engine) SetModel(m Model) {
 	e.model = m
+	for tok, sm := range e.scaled {
+		if p, ok := underlying.ByIndexToken(tok); ok {
+			*sm = scaleModel(m, p)
+		}
+	}
 	for _, s := range e.slots {
-		s.tr.SetModel(m)
+		s.tr.SetModel(*e.modelFor(s.tr.Position().IndexToken))
 	}
-	for _, b := range e.books {
-		b.configure(&e.model)
+	for tok, b := range e.books {
+		b.configure(e.modelFor(tok))
 	}
+}
+
+// modelFor is the model for positions on an index: NIFTY's as tuned, an
+// extra underlying's with its paise distances scaled to the index.
+func (e *Engine) modelFor(indexToken string) *Model {
+	p, ok := underlying.ByIndexToken(indexToken)
+	if !ok || p.Key == underlying.Primary().Key {
+		return &e.model
+	}
+	if e.scaled == nil {
+		e.scaled = map[string]*Model{}
+	}
+	m, ok := e.scaled[indexToken]
+	if !ok {
+		c := scaleModel(e.model, p)
+		m = &c
+		e.scaled[indexToken] = m
+	}
+	return m
+}
+
+// scaleModel converts the NIFTY-sized paise floors of m to underlying p.
+func scaleModel(m Model, p underlying.Profile) Model {
+	m.RejectMinPaise = p.Scale(m.RejectMinPaise)
+	m.LevelTolMinPaise = p.Scale(m.LevelTolMinPaise)
+	m.EarlyFailMinPaise = p.Scale(m.EarlyFailMinPaise)
+	m.EarlyFailMaxPeakPaise = p.Scale(m.EarlyFailMaxPeakPaise)
+	m.LevelMergeTolPaise = p.Scale(m.LevelMergeTolPaise)
+	return m
 }
 
 // SetExchange records the exchange of an index token for signal payloads.
@@ -183,7 +219,7 @@ func (e *Engine) SetExchange(indexToken, exchange string) { e.exch[indexToken] =
 func (e *Engine) Book(indexToken string) *LevelBook {
 	b, ok := e.books[indexToken]
 	if !ok {
-		b = NewLevelBook(&e.model)
+		b = NewLevelBook(e.modelFor(indexToken))
 		e.books[indexToken] = b
 	}
 	return b
@@ -237,7 +273,7 @@ func (e *Engine) SetPositions(ps []model.PositionContext, now time.Time) {
 		} else if ok {
 			log.Printf("[exitwatch] ghost %s replaced by a new position", k)
 		}
-		tr, err := NewTracker(p, e.model)
+		tr, err := NewTracker(p, *e.modelFor(p.IndexToken))
 		if err != nil {
 			log.Printf("[exitwatch] skip position %s: %v", k, err)
 			continue

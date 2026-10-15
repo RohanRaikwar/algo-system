@@ -37,8 +37,8 @@ func (svc *Service) posContextLoop(ctx context.Context) {
 // collectPosContexts gathers contexts from every strategy that reports them.
 func (svc *Service) collectPosContexts() []model.PositionContext {
 	var srcs []strategy.PositionContexter
-	if svc.srStrategy != nil {
-		srcs = append(srcs, svc.srStrategy)
+	for _, sr := range svc.srAll() {
+		srcs = append(srcs, sr)
 	}
 	out := []model.PositionContext{}
 	for _, s := range srcs {

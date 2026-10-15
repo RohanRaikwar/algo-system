@@ -31,7 +31,7 @@ type Config struct {
 
 	// Local retention in calendar days, counted back from the archived day.
 	// Rows older than this are deleted only once their day is in MEGA.
-	Keep1sDays       int // candles_1s: SUBSCRIBE_TOKENS (index) only; nothing reads it back
+	Keep1sDays       int // candles_1s: the indexes only; nothing reads it back
 	KeepTFDays       int // candles_tf: stratengine warmup + mdengine restore read it
 	KeepFeaturesDays int // exitwatch features_1hz
 

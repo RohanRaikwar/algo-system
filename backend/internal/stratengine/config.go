@@ -58,6 +58,9 @@ type Config struct {
 	LiveLots            int64    // lots per real entry
 	FreezeQty           int64    // exchange freeze quantity, units
 	LiveMaxDayLossPaise int64    // block real entries at this daily loss; 0 = off
+	// LiveMaxDayLossTotalPaise blocks real entries once all live strategies
+	// together (one broker account) lose this much today; 0 = off.
+	LiveMaxDayLossTotalPaise int64
 	GTTStopLossPaise    int64    // GTT stop distance below entry; 0 = no SL GTT
 	GTTTargetBps        int64    // GTT target above entry in bps; 0 = no target GTT
 	OrderJournalPath    string   // SQLite order journal; real entries need it when live
@@ -184,6 +187,7 @@ func LoadConfig() Config {
 		LiveLots:            config.GetEnvInt64("STRAT_LIVE_LOTS", 1),
 		FreezeQty:           config.GetEnvInt64("STRAT_FREEZE_QTY", 1800),
 		LiveMaxDayLossPaise: config.GetEnvInt64("STRAT_LIVE_MAX_DAY_LOSS_PAISE", 200000),
+		LiveMaxDayLossTotalPaise: config.GetEnvInt64("STRAT_LIVE_MAX_DAY_LOSS_TOTAL_PAISE", 0),
 		GTTStopLossPaise:    config.GetEnvInt64("STRAT_GTT_SL_PAISE", 1000),
 		GTTTargetBps:        config.GetEnvInt64("STRAT_GTT_TARGET_BPS", 0),
 		OrderJournalPath:    config.GetEnv("STRAT_ORDER_JOURNAL_PATH", "data/orders.db"),
@@ -251,7 +255,7 @@ func LoadConfig() Config {
 	}
 
 	// Parse token keys
-	if tokens := config.GetEnv("STRAT_SUBSCRIBE_TOKENS", config.IndexKey()); tokens != "" {
+	if tokens := config.IndexKeys(); tokens != "" {
 		for _, t := range strings.Split(tokens, ",") {
 			t = strings.TrimSpace(t)
 			if t != "" {
@@ -304,7 +308,7 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("STRAT_PICK_RANK=%q: want delta or return", c.PickRank)
 	}
 	if len(c.SubscribeTokenKeys) == 0 {
-		return fmt.Errorf("STRAT_SUBSCRIBE_TOKENS is required")
+		return fmt.Errorf("no index to subscribe (INDEX_TOKEN)")
 	}
 	return nil
 }

@@ -30,6 +30,7 @@ func (svc *Service) refreshVolumeToken(ctx context.Context, now time.Time) {
 	if len(setters) == 0 {
 		return
 	}
+	svc.refreshExtraVolumeTokens(ctx, now)
 	res := svc.futures
 	if res == nil {
 		res = orderexec.GetInstrumentMaster()

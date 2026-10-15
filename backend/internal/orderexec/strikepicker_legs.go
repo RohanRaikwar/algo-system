@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// ResolveStrike resolves one NIFTY option contract at an arbitrary strike
+// ResolveStrike resolves one option contract of the picker's underlying at an arbitrary strike
 // (index points) for the nearest weekly expiry, for multi-leg baskets. It
 // tries the offline instrument master first and falls back to SearchScrip.
 // Results are cached per symbol for the day (cleared by Reset).
@@ -22,7 +22,15 @@ func (sp *StrikePicker) ResolveStrike(now time.Time, strike int64, optionType st
 
 	var lastErr error
 	for _, expiry := range sp.candidateExpiries(now) {
-		symbol := fmt.Sprintf("NIFTY%s%d%s", expiry, strike, optionType)
+		exp, err := time.ParseInLocation("02Jan06", expiry, istZone)
+		if err != nil {
+			continue
+		}
+		symbol := sp.optionSymbol(exp, strike, optionType)
+		if symbol == "" {
+			lastErr = fmt.Errorf("%s %d%s not listed in instrument master", expiry, strike, optionType)
+			continue
+		}
 		sp.mu.RLock()
 		cached, ok := sp.legCache[symbol]
 		sp.mu.RUnlock()
@@ -84,7 +92,7 @@ func (sp *StrikePicker) lookupSymbol(symbol string) (string, int64, error) {
 	if inst, err := GetInstrumentMaster().GetInstrument(symbol); err == nil && inst.Token != "" {
 		lot, _ := strconv.ParseInt(strings.TrimSpace(inst.LotSize), 10, 64)
 		if lot <= 0 {
-			lot = int64(getEnvInt("NIFTY_LOT_SIZE", 65))
+			lot = sp.lotFallback()
 		}
 		return inst.Token, lot, nil
 	}
@@ -94,7 +102,7 @@ func (sp *StrikePicker) lookupSymbol(symbol string) (string, int64, error) {
 	return sp.searchTokenWithRetry(symbol)
 }
 
-// ResolveStrikeOn resolves one NIFTY option contract on a given expiry (a
+// ResolveStrikeOn resolves one option contract on a given expiry (a
 // strategy that skips the nearest expiry). Unlike ResolveStrike it does not
 // change CurrentExpiry. Results are cached with ResolveStrike's.
 func (sp *StrikePicker) ResolveStrikeOn(expiry time.Time, strike int64, optionType string) (StrikeInfo, error) {
@@ -105,7 +113,10 @@ func (sp *StrikePicker) ResolveStrikeOn(expiry time.Time, strike int64, optionTy
 	if strike <= 0 || strike%sp.strikeStep != 0 {
 		return StrikeInfo{}, fmt.Errorf("strike %d is not a multiple of %d", strike, sp.strikeStep)
 	}
-	symbol := fmt.Sprintf("NIFTY%s%d%s", strings.ToUpper(expiry.In(istZone).Format("02Jan06")), strike, optionType)
+	symbol := sp.optionSymbol(expiry, strike, optionType)
+	if symbol == "" {
+		return StrikeInfo{}, fmt.Errorf("resolve %d%s %s: not listed in instrument master", strike, optionType, expiry.Format("02Jan06"))
+	}
 	sp.mu.RLock()
 	cached, ok := sp.legCache[symbol]
 	sp.mu.RUnlock()
@@ -131,7 +142,10 @@ func (sp *StrikePicker) ResolveStrikeOn(expiry time.Time, strike int64, optionTy
 // allowed (the option picker's universe; SearchScrip is limited to 1/s).
 func (sp *StrikePicker) LookupOn(expiry time.Time, strike int64, optionType string) (StrikeInfo, bool) {
 	optionType = strings.ToUpper(optionType)
-	symbol := fmt.Sprintf("NIFTY%s%d%s", strings.ToUpper(expiry.In(istZone).Format("02Jan06")), strike, optionType)
+	symbol := sp.optionSymbol(expiry, strike, optionType)
+	if symbol == "" {
+		return StrikeInfo{}, false
+	}
 	sp.mu.RLock()
 	cached, ok := sp.legCache[symbol]
 	sp.mu.RUnlock()

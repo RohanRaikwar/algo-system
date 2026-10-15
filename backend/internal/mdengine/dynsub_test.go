@@ -53,3 +53,11 @@ func TestRememberDynamicTokensDedupesPerModeAndExchange(t *testing.T) {
 		t.Fatalf("tokens = %v, want deduped [40712 57710]", got)
 	}
 }
+
+// BFO option subscriptions (SENSEX) keep their exchange_type.
+func TestParseSubscribeCommand_BFO(t *testing.T) {
+	sub, ok := parseSubscribeCommand(`{"exchange_type":4,"tokens":["1163095"],"mode":3}`)
+	if !ok || len(sub.Tokens) != 1 || sub.Tokens[0].ExchangeType != 4 || sub.Tokens[0].Tokens[0] != "1163095" {
+		t.Fatalf("got %+v ok=%v", sub, ok)
+	}
+}

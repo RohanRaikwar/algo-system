@@ -22,8 +22,8 @@ type exitRequester interface {
 }
 
 func (svc *Service) exitRequesterFor(name string) exitRequester {
-	if svc.srStrategy != nil && name == svc.srStrategy.Name() {
-		return svc.srStrategy
+	if sr := svc.srByName(name); sr != nil {
+		return sr
 	}
 	return nil
 }

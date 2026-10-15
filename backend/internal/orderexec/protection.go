@@ -53,7 +53,7 @@ func (oe *OrderExecutor) placeStop(posKey string, rec OrderRecord) string {
 		"tradingsymbol":   rec.Symbol,
 		"symboltoken":     rec.Token,
 		"transactiontype": "SELL",
-		"exchange":        oe.cfg.FNOExchange,
+		"exchange":        oe.exchangeFor(rec.Symbol),
 		"ordertype":       "STOPLOSS_LIMIT",
 		"producttype":     oe.cfg.FNOProductType,
 		"duration":        "DAY",

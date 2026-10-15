@@ -24,7 +24,7 @@ type Config struct {
 	MetricsAddr   string
 
 	// Persist1sTokens are the tokens whose 1s candles go to SQLite
-	// candles_1s: the static SUBSCRIBE_TOKENS (the index). Option strikes
+	// candles_1s: the subscribed indexes (every index in INDEX_TOKEN). Option strikes
 	// subscribed at runtime are left out: ~117 of them wrote ~115 MB per
 	// trading day that nothing reads. TF candles persist for every token.
 	Persist1sTokens map[string]bool
@@ -32,7 +32,7 @@ type Config struct {
 	// ── Subscription ──
 	TokenList    []smartconnect.TokenListEntry // parsed production tokens
 	EnabledTFs   []int                         // timeframe durations in seconds
-	CandleTokens map[string]bool               // when non-empty, only these tokens get candle aggregation
+	CandleTokens map[string]bool               // only these tokens get candle aggregation (the indexes); empty = all
 
 	// CloseRefToken is the one instrument whose price the smart market-close
 	// detector watches (default NIFTY 50 index, 99926000).
@@ -66,9 +66,9 @@ func LoadConfig() Config {
 		SQLitePath:      config.GetEnv("SQLITE_PATH", "data/candles.db"),
 		MetricsAddr:     config.GetEnv("METRICS_ADDR", ":9090"),
 		SimWSURL:        config.GetEnv("SIM_WS_URL", "ws://localhost:9001/ws"),
-		CandleTokens:    parseCandleTokens(config.GetEnv("CANDLE_TOKENS", "")),
-		CloseRefToken:   config.GetEnv("CLOSE_REF_TOKEN", config.IndexToken()),
-		Persist1sTokens: subscribeTokenSet(config.GetEnv("SUBSCRIBE_TOKENS", config.IndexSubscribeTokens())),
+		CandleTokens:    candleTokenSet(),
+		CloseRefToken:   config.IndexToken(),
+		Persist1sTokens: subscribeTokenSet(config.IndexSubscribeTokens()),
 	}
 	c.FeedConnections = parseFeedConnections(config.GetEnv("FEED_CONNECTIONS", "2"))
 
@@ -120,4 +120,21 @@ func parseFeedConnections(v string) int {
 		return 2
 	}
 	return min(max(n, 1), ws.MaxFeedConns)
+}
+
+// candleTokenSet is the set of tokens whose ticks build candles: the index
+// tokens (every index in INDEX_TOKEN). Option ticks build no candles, so no
+// option data is stored (SQLite, MEGA, Redis candle streams); they are still
+// published for LTP, quotes and premium stops. CANDLE_TOKENS, when set,
+// replaces the list (staging), with the extra underlyings' indexes added.
+func candleTokenSet() map[string]bool {
+	list := config.GetEnv("CANDLE_TOKENS", "")
+	if strings.TrimSpace(list) == "" {
+		return subscribeTokenSet(config.IndexSubscribeTokens())
+	}
+	set := parseCandleTokens(list)
+	for _, t := range config.ExtraIndexTokens() {
+		set[t] = true
+	}
+	return set
 }

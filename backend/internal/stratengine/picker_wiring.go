@@ -242,6 +242,7 @@ func (svc *Service) runPicker(ctx context.Context) {
 		return
 	}
 	svc.orderExecutor.SetQuoteSource(svc.picker.Quotes())
+	svc.runExtraPickers(ctx)
 	svc.picker.Run(ctx, markethours.IsMarketOpen)
 }
 

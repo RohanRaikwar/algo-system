@@ -145,8 +145,8 @@ func (svc *Service) exitPolicyOwnerFor(name string) exitPolicyOwner {
 	if svc.exitPol.testOwners != nil {
 		return svc.exitPol.testOwners[name]
 	}
-	if svc.srStrategy != nil && name == svc.srStrategy.Name() {
-		return svc.srStrategy
+	if sr := svc.srByName(name); sr != nil {
+		return sr
 	}
 	return nil
 }

@@ -1,9 +1,8 @@
 import { Fragment, useState, type KeyboardEvent } from 'react';
-import { ClipboardList, CircleDot, BarChart3, Crosshair, Zap, ChevronDown, ChevronRight, TrendingUp, CalendarDays, User, Settings, Activity, type LucideIcon } from 'lucide-react';
+import { ClipboardList, CircleDot, BarChart3, Zap, ChevronDown, ChevronRight, TrendingUp, CalendarDays, User, Settings, Activity, type LucideIcon } from 'lucide-react';
 import { SignalRow } from '../components/signals/SignalRow';
 import { LiveOrdersTab } from '../components/signals/LiveOrdersTab';
 import { EventPriceTab } from '../components/signals/EventPriceTab';
-import { FnoInstrumentsTab } from '../components/signals/FnoInstrumentsTab';
 import { PnLSummaryTab } from '../components/signals/PnLSummaryTab';
 import { DailyAnalyticsTab } from '../components/signals/DailyAnalyticsTab';
 import { AccountTab } from '../components/signals/AccountTab';
@@ -14,17 +13,16 @@ import { formatDateKey, signalKey, useSignalsData, type SignalsData } from '../c
 import { SignalsMobile } from '../components/signals/mobile/SignalsMobile';
 import { PHONE_PORTRAIT_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
 
-type SignalTab = 'LOG' | 'LIVE' | 'EVENT_PRICE' | 'FNO' | 'DAILY' | 'PNL' | 'ACCOUNT' | 'SETTINGS' | 'SESSION';
+type SignalTab = 'LOG' | 'LIVE' | 'EVENT_PRICE' | 'DAILY' | 'PNL' | 'ACCOUNT' | 'SETTINGS' | 'SESSION';
 
-type TabGroup = 'activity' | 'market' | 'performance' | 'system';
+type TabGroup = 'activity' | 'performance' | 'system';
 
-const TAB_GROUPS: TabGroup[] = ['activity', 'market', 'performance', 'system'];
+const TAB_GROUPS: TabGroup[] = ['activity', 'performance', 'system'];
 
 const TABS: { id: SignalTab; label: string; Icon: LucideIcon; group: TabGroup }[] = [
     { id: 'LOG', label: 'Signal log', Icon: ClipboardList, group: 'activity' },
     { id: 'LIVE', label: 'Live orders', Icon: CircleDot, group: 'activity' },
     { id: 'EVENT_PRICE', label: 'Trade events', Icon: BarChart3, group: 'activity' },
-    { id: 'FNO', label: 'FNO instruments', Icon: Crosshair, group: 'market' },
     { id: 'DAILY', label: 'Today', Icon: CalendarDays, group: 'performance' },
     { id: 'PNL', label: 'P&L', Icon: TrendingUp, group: 'performance' },
     { id: 'ACCOUNT', label: 'Account', Icon: User, group: 'system' },
@@ -275,8 +273,6 @@ function SignalsDesktop({ data }: { data: SignalsData }) {
             {activeTab === 'LIVE' && <LiveOrdersTab orders={openOrders} />}
 
             {activeTab === 'EVENT_PRICE' && <EventPriceTab strategyFilter={stratFilter} />}
-
-            {activeTab === 'FNO' && <FnoInstrumentsTab />}
 
             {activeTab === 'DAILY' && <DailyAnalyticsTab />}
 

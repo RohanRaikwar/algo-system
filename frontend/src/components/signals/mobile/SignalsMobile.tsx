@@ -1,8 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Crosshair, SlidersHorizontal, TrendingUp, X, Zap, type LucideIcon } from 'lucide-react';
+import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, SlidersHorizontal, TrendingUp, X, Zap, type LucideIcon } from 'lucide-react';
 import { PageAppBar } from '../../layout/PageAppBar';
-import { FnoInstrumentsTab } from '../FnoInstrumentsTab';
 import { DailyAnalyticsTab } from '../DailyAnalyticsTab';
 import { PnLSummaryTab } from '../PnLSummaryTab';
 import { useDailyOrders } from '../EventPriceTab';
@@ -19,7 +18,7 @@ import '../signals.css';
 import styles from './signalsMobile.module.css';
 
 type Tab = 'log' | 'positions' | 'trades' | 'more';
-type MoreView = 'fno' | 'today' | 'pnl';
+type MoreView = 'today' | 'pnl';
 
 const TABS: { id: Tab; label: string }[] = [
     { id: 'log', label: 'Log' },
@@ -29,7 +28,6 @@ const TABS: { id: Tab; label: string }[] = [
 ];
 
 const MORE: { id: MoreView; label: string; hint: string; Icon: LucideIcon }[] = [
-    { id: 'fno', label: 'FNO instruments', hint: 'Strike pick, ATM, live premiums', Icon: Crosshair },
     { id: 'today', label: 'Today', hint: 'Day analytics and trades', Icon: CalendarDays },
     { id: 'pnl', label: 'P&L', hint: 'Realized P&L by strategy', Icon: TrendingUp },
 ];
@@ -90,7 +88,6 @@ export function SignalsMobile({ data }: { data: SignalsData }) {
                     <h1 className={styles.subTitle}>{item.label}</h1>
                 </header>
                 <div className={styles.subBody}>
-                    {view === 'fno' && <FnoInstrumentsTab />}
                     {view === 'today' && <DailyAnalyticsTab />}
                     {view === 'pnl' && <PnLSummaryTab />}
                 </div>

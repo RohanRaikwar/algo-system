@@ -306,10 +306,10 @@ func (s *Service) setupPipeline(ctx context.Context) {
 	}()
 
 	if sqliteCandleCh != nil {
-		log.Printf("[mdengine] 1s candles persisted to SQLite only for SUBSCRIBE_TOKENS %v", s.cfg.Persist1sTokens)
+		log.Printf("[mdengine] 1s candles persisted to SQLite only for the indexes %v", s.cfg.Persist1sTokens)
 		go s.sqlWriter.Run(ctx, sqliteCandleCh)
 	} else {
-		log.Printf("[mdengine] 1s candles not persisted to SQLite (SUBSCRIBE_TOKENS empty)")
+		log.Printf("[mdengine] 1s candles not persisted to SQLite (no index tokens)")
 	}
 	if s.redisWriter != nil && redis1sCandleCh != nil {
 		go s.redisWriter.Run(ctx, redis1sCandleCh)
@@ -389,7 +389,7 @@ func (s *Service) setupPipeline(ctx context.Context) {
 
 	// Fan-out: each tick goes to aggregator AND Redis PubSub
 	if len(s.cfg.CandleTokens) > 0 {
-		log.Printf("[mdengine] CANDLE_TOKENS filter active: only %v get candle aggregation", s.cfg.CandleTokens)
+		log.Printf("[mdengine] candles built only for %v (option ticks are published, not stored)", s.cfg.CandleTokens)
 	}
 
 	aggTickCh := make(chan model.Tick, 10000)
