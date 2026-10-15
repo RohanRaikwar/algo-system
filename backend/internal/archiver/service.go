@@ -12,6 +12,7 @@ package archiver
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -266,15 +267,16 @@ func (s *Service) archiveDaySource(ctx context.Context, man *manifest, src daySo
 }
 
 // archiveDay exports, compresses and uploads one day of src. A day with no
-// rows is skipped without a manifest entry. A day is exported once: rows
-// written into it after the export (only staging writes after the close)
-// are not archived before pruning.
+// rows is skipped without a manifest entry. An archived day is uploaded
+// again only when it later gains rows (rearchiveIfGrown).
 func (s *Service) archiveDay(ctx context.Context, man *manifest, db *sql.DB, src daySource, day time.Time) error {
 	key := dayKey(day)
-	if done, err := man.has(ctx, src.name, key); err != nil || done {
-		return err
-	}
 	start, end := dayBounds(day)
+	if done, err := man.has(ctx, src.name, key); err != nil {
+		return err
+	} else if done {
+		return s.rearchiveDirty(ctx, man, db, src, day)
+	}
 	raw := filepath.Join(s.cfg.TmpDir, fmt.Sprintf("%s-%s.db", src.name, key))
 	defer os.Remove(raw)
 	rows, err := exportDay(ctx, db, src.tables, start, end, raw)
@@ -282,9 +284,12 @@ func (s *Service) archiveDay(ctx context.Context, man *manifest, db *sql.DB, src
 		return err
 	}
 	if rows == 0 {
-		return nil
+		return clearDirty(ctx, db, key)
 	}
-	return s.uploadAndRecord(ctx, man, src.name, day, raw, rows)
+	if err := s.uploadAndRecord(ctx, man, src.name, day, raw, rows); err != nil {
+		return err
+	}
+	return clearDirty(ctx, db, key)
 }
 
 // uploadAndRecord gzips raw, uploads it to <root>/YYYY/MM/DD/, checks the
@@ -340,3 +345,49 @@ func fileSize(path string) int64 {
 }
 
 func mb(n int64) string { return fmt.Sprintf("%.1f MB", float64(n)/(1<<20)) }
+
+// rearchiveDirty uploads an archived day again when rows were written into
+// it after it was archived and the writer marked it in DirtyTable (the
+// candle backfill does, for a newly added index's history). The uploaded
+// file is the base and local rows are merged in, so tables already pruned
+// locally (1s candles) are kept.
+func (s *Service) rearchiveDirty(ctx context.Context, man *manifest, db *sql.DB, src daySource, day time.Time) error {
+	key := dayKey(day)
+	if s.store == nil || !isDirty(ctx, db, key) {
+		return nil
+	}
+	f := newDayFetcher(s.store, s.cfg.MegaRootDir, filepath.Join(s.cfg.TmpDir, "remote"), 0)
+	remote, err := f.fetch(ctx, src.name, day)
+	if errors.Is(err, ErrNoArchive) {
+		return clearDirty(ctx, db, key) // listed in the manifest but gone: the next run cannot do better
+	}
+	if err != nil {
+		return err
+	}
+	before, err := fileTableCounts(remote)
+	if err != nil {
+		return err
+	}
+	start, end := dayBounds(day)
+	if err := mergeIntoFile(ctx, db, remote, src.tables, start, end); err != nil {
+		return err
+	}
+	after, err := fileTableCounts(remote)
+	if err != nil {
+		return err
+	}
+	var rowsBefore, rows int64
+	for _, n := range before {
+		rowsBefore += n
+	}
+	for _, n := range after {
+		rows += n
+	}
+	if rows > rowsBefore {
+		log.Printf("[archiver] %s %s: %d late rows merged; uploading again", src.name, key, rows-rowsBefore)
+		if err := s.uploadAndRecord(ctx, man, src.name, day, remote, rows); err != nil {
+			return err
+		}
+	}
+	return clearDirty(ctx, db, key)
+}

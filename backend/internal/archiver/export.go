@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"trading-systemv1/internal/markethours"
@@ -106,6 +107,130 @@ func exportDay(ctx context.Context, db *sql.DB, tables []dayTable, start, end in
 		total += n
 	}
 	return total, nil
+}
+
+// DirtyTable lists IST days ("2006-01-02") that received rows after they
+// may have been archived. Writers of late rows (the candle backfill) mark
+// days here; the archiver merges them into the uploaded file and clears
+// them.
+const DirtyTable = "archive_dirty"
+
+// MarkDirty records day in db's DirtyTable.
+func MarkDirty(ctx context.Context, db *sql.DB, day string) error {
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS `+DirtyTable+` (day TEXT PRIMARY KEY)`); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO `+DirtyTable+` (day) VALUES (?)`, day)
+	return err
+}
+
+func isDirty(ctx context.Context, db *sql.DB, day string) bool {
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+DirtyTable+` WHERE day = ?`, day).Scan(&n); err != nil {
+		return false // no table: nothing marked
+	}
+	return n > 0
+}
+
+func clearDirty(ctx context.Context, db *sql.DB, day string) error {
+	if ok, err := tableExists(ctx, db, DirtyTable); err != nil || !ok {
+		return err
+	}
+	_, err := db.ExecContext(ctx, `DELETE FROM `+DirtyTable+` WHERE day = ?`, day)
+	return err
+}
+
+// fileTableCounts counts the rows of every table in a SQLite file.
+func fileTableCounts(path string) (map[string]int64, error) {
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		names = append(names, n)
+	}
+	rows.Close()
+	out := make(map[string]int64, len(names))
+	for _, n := range names {
+		var c int64
+		if err := db.QueryRow(`SELECT COUNT(*) FROM "` + n + `"`).Scan(&c); err != nil {
+			return nil, err
+		}
+		out[n] = c
+	}
+	return out, nil
+}
+
+// mergeIntoFile copies one day of the live tables into the SQLite file at
+// path (a downloaded day file). Rows already in the file are kept; a table
+// the file lacks is created with the live CREATE statement.
+func mergeIntoFile(ctx context.Context, db *sql.DB, path string, tables []dayTable, start, end int64) error {
+	var missing []string
+	for _, t := range tables {
+		ddl, err := tableDDL(ctx, db, t.name)
+		if err != nil {
+			return err
+		}
+		if ddl == "" {
+			continue
+		}
+		have, err := fileHasTable(path, t.name)
+		if err != nil {
+			return err
+		}
+		if !have {
+			missing = append(missing, ddl)
+		}
+	}
+	if err := createTables(path, missing); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `ATTACH DATABASE ? AS a`, path); err != nil {
+		return fmt.Errorf("attach %s: %w", path, err)
+	}
+	defer db.ExecContext(context.Background(), `DETACH DATABASE a`)
+	for _, t := range tables {
+		exists, err := tableExists(ctx, db, t.name)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			continue
+		}
+		cols, err := tableColumns(ctx, db, "a", t.name)
+		if err != nil {
+			return err
+		}
+		list := `"` + strings.Join(cols, `","`) + `"`
+		if _, err := db.ExecContext(ctx,
+			`INSERT OR IGNORE INTO a.`+t.name+` (`+list+`) SELECT `+list+` FROM main.`+t.name+
+				` WHERE `+t.expr()+` >= ? AND `+t.expr()+` < ?`, start, end); err != nil {
+			return fmt.Errorf("merge %s: %w", t.name, err)
+		}
+	}
+	return nil
+}
+
+func fileHasTable(path, table string) (bool, error) {
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		return false, err
+	}
+	defer db.Close()
+	var n int
+	err = db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&n)
+	return n > 0, err
 }
 
 // tableDDL returns the CREATE TABLE statement of table, or "" when it does

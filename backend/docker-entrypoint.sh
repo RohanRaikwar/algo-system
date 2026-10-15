@@ -31,6 +31,9 @@ trap 'shutdown; exit 0' TERM INT
 # before anything opens the databases. No-op when local data exists;
 # never blocks startup for long or on failure.
 timeout 300 /app/bin/archiver -restore || echo "[entrypoint] restore did not finish; continuing"
+# Fill missing 1m index candles (BACKFILL_DAYS, every UNDERLYINGS index)
+# from Angel before stratengine warms up; never blocks startup for long.
+timeout 180 /app/bin/backfill || echo "[entrypoint] backfill did not finish; continuing"
 
 start mdengine
 sleep 2

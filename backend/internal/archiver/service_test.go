@@ -147,7 +147,7 @@ func newTestService(t *testing.T, up *fakeUploader) *Service {
 		JournalPaths: []string{journal},
 		Keep1sDays:   0, KeepTFDays: 10, KeepFeaturesDays: 3, WarmupDays: 5,
 	}
-	return &Service{cfg: cfg, uploader: up, now: func() time.Time { return testNow }}
+	return &Service{cfg: cfg, uploader: up, store: up, now: func() time.Time { return testNow }}
 }
 
 func TestRunOnce_UploadsThenPrunes(t *testing.T) {
@@ -419,5 +419,54 @@ func TestValidate(t *testing.T) {
 	}
 	if (Config{}).Validate() != nil {
 		t.Errorf("disabled config should always validate")
+	}
+}
+
+// A day archived before rows were backfilled into it is uploaded again with
+// the new rows; an unchanged day is not.
+func TestRunOnce_ReuploadsGrownDay(t *testing.T) {
+	up := &fakeUploader{dir: t.TempDir()}
+	s := newTestService(t, up)
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	db, _ := sql.Open("sqlite3", s.cfg.CandlesPath)
+	mustExec(t, db, `INSERT INTO candles_tf VALUES ('99919000', 'BSE', 60, ?, 8400000, 8400000, 8400000, 8400000, 0, 60)`, istTS(5, 11))
+	// A late row on Oct 6 that nobody marked stays out (rows only re-upload when marked).
+	mustExec(t, db, `INSERT INTO candles_tf VALUES ('99919000', 'BSE', 60, ?, 8400000, 8400000, 8400000, 8400000, 0, 60)`, istTS(6, 11))
+	if err := MarkDirty(context.Background(), db, "2026-10-05"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	up.names = nil
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(up.names, ",") != "algo-archive/2026/10/05/candles-2026-10-05.db.gz" {
+		t.Fatalf("re-uploads = %v, want only Oct 5 candles", up.names)
+	}
+	raw := unpack(t, filepath.Join(up.dir, "algo-archive/2026/10/05/candles-2026-10-05.db.gz"))
+	if n := count(t, raw, `SELECT COUNT(*) FROM candles_tf WHERE token='99919000'`); n != 1 {
+		t.Fatalf("SENSEX row not in re-uploaded day file")
+	}
+	// The 1s candles already pruned locally are still in the new file.
+	if n := count(t, raw, `SELECT COUNT(*) FROM candles_1s`); n != 5 {
+		t.Fatalf("1s rows in re-uploaded file = %d, want 5 kept from the original", n)
+	}
+	if n := count(t, s.cfg.ManifestPath, `SELECT rows FROM archived WHERE source='candles' AND day='2026-10-05'`); n != 11 {
+		t.Fatalf("manifest rows = %d, want 11", n)
+	}
+	if n := count(t, s.cfg.CandlesPath, `SELECT COUNT(*) FROM archive_dirty`); n != 0 {
+		t.Fatalf("dirty mark not cleared")
+	}
+
+	// Nothing new: no upload.
+	up.names = nil
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(up.names) != 0 {
+		t.Fatalf("unchanged day uploaded again: %v", up.names)
 	}
 }
