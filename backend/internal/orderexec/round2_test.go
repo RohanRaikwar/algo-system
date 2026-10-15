@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"trading-systemv1/internal/strategy"
+	"trading-systemv1/internal/model"
 )
 
 // Partial fill then cancel: the filled part is a live position.
@@ -24,8 +24,8 @@ func TestFillResult_CancelledWithFillsIsNotRejected(t *testing.T) {
 func TestRealBuy_PartialFillThenCancel_TracksFilledQty(t *testing.T) {
 	f := &fakeAPI{autoStatus: "cancelled", autoAvg: 100.0, autoFilled: "25"}
 	oe := liveExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
-	e, ok := entryFor(oe, realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
+	e, ok := entryFor(oe, realSig(model.ActionBuy))
 	if !ok || e.Quantity != 25 {
 		t.Fatalf("want entry of 25 filled, got %+v ok=%v", e, ok)
 	}
@@ -76,11 +76,11 @@ func TestAlerts_ReachAlerter(t *testing.T) {
 	var got []string
 	var mu sync.Mutex
 	oe.SetAlerter(func(msg string) { mu.Lock(); got = append(got, msg); mu.Unlock() })
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	oe.mu.Lock()
 	oe.sessionOK = false
 	oe.mu.Unlock()
-	oe.ExecuteSignal(realSig(strategy.ActionExit)) // real position, no session → alert
+	oe.ExecuteSignal(realSig(model.ActionExit)) // real position, no session → alert
 	mu.Lock()
 	defer mu.Unlock()
 	if len(got) == 0 || !strings.Contains(strings.Join(got, "\n"), "close manually") {

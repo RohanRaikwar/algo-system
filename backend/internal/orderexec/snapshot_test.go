@@ -3,12 +3,12 @@ package orderexec
 import (
 	"testing"
 
-	"trading-systemv1/internal/strategy"
+	"trading-systemv1/internal/model"
 )
 
 func TestSnapshotRestore_ExitAfterRestartUsesEntryContract(t *testing.T) {
 	oe := exitTestExecutor(10)
-	s := sig(strategy.ActionBuy)
+	s := sig(model.ActionBuy)
 	oe.ExecuteSignal(s) // dry-run BUY locks NIFTY_CE / 12345
 	oe.mu.Lock()
 	rec := oe.entryOrders[oe.positionKey(s)]
@@ -31,11 +31,11 @@ func TestSnapshotRestore_ExitAfterRestartUsesEntryContract(t *testing.T) {
 	if !inCall(restarted) {
 		t.Fatal("CALL position flag lost across restart")
 	}
-	token, symbol, err := restarted.resolveInstrument(sig(strategy.ActionExit), "SELL")
+	token, symbol, err := restarted.resolveInstrument(sig(model.ActionExit), "SELL")
 	if err != nil || token != "12345" || symbol != "NIFTY_CE" {
 		t.Fatalf("exit must target entry contract 12345/NIFTY_CE, got %s/%s err=%v", token, symbol, err)
 	}
-	got, ok := restarted.GetEntryOrder("test_strategy", strategy.SideCall)
+	got, ok := restarted.GetEntryOrder("test_strategy", model.SideCall)
 	if !ok || got.GttRuleID != "GTT-T" || got.GttSLRuleID != "GTT-SL" {
 		t.Fatalf("GTT rule IDs lost across restart: %+v ok=%v", got, ok)
 	}

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"trading-systemv1/internal/strategy"
+	"trading-systemv1/internal/model"
 )
 
 func stopExecutor(t *testing.T, f *fakeAPI) *OrderExecutor {
@@ -40,8 +40,8 @@ func (f *fakeAPI) rowFor(id string) map[string]any {
 func TestStop_PlacedOnFillInsteadOfGTT(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.03}
 	oe := stopExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
-	e, ok := entryFor(oe, realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
+	e, ok := entryFor(oe, realSig(model.ActionBuy))
 	if !ok || e.SLOrderID == "" || e.GttRuleID != "" || e.GttSLRuleID != "" {
 		t.Fatalf("entry %+v, want a stop order and no GTT", e)
 	}
@@ -67,14 +67,14 @@ func TestStop_PlacedOnFillInsteadOfGTT(t *testing.T) {
 func TestStop_ExitCancelsStopBeforeSelling(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := stopExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
-	e, _ := entryFor(oe, realSig(strategy.ActionBuy))
-	oe.ExecuteSignal(realSig(strategy.ActionExit))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
+	e, _ := entryFor(oe, realSig(model.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionExit))
 	want := []string{"place:NORMAL:BUY", "place:STOPLOSS:SELL", "cancel:" + e.SLOrderID, "place:NORMAL:SELL"}
 	if got := f.calls(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("broker calls %v, want %v", got, want)
 	}
-	if _, ok := entryFor(oe, realSig(strategy.ActionBuy)); ok {
+	if _, ok := entryFor(oe, realSig(model.ActionBuy)); ok {
 		t.Fatal("position still open after exit")
 	}
 }
@@ -85,16 +85,16 @@ func TestStop_AlreadyFilled_NoSell(t *testing.T) {
 	oe := stopExecutor(t, f)
 	var fills []FillReport
 	oe.SetFillListener(func(r FillReport) { fills = append(fills, r) })
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
-	e, _ := entryFor(oe, realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
+	e, _ := entryFor(oe, realSig(model.ActionBuy))
 	f.setRow(map[string]any{"orderid": e.SLOrderID, "orderstatus": "complete", "averageprice": 89.80, "filledshares": "75"})
-	oe.ExecuteSignal(realSig(strategy.ActionExit))
+	oe.ExecuteSignal(realSig(model.ActionExit))
 	for _, c := range f.calls() {
 		if c == "place:NORMAL:SELL" {
 			t.Fatalf("SELL sent after the stop filled: %v", f.calls())
 		}
 	}
-	if _, ok := entryFor(oe, realSig(strategy.ActionBuy)); ok {
+	if _, ok := entryFor(oe, realSig(model.ActionBuy)); ok {
 		t.Fatal("position not closed after stop fill")
 	}
 	if last := fills[len(fills)-1]; last.Direction != "SELL" || last.FillPricePaise != 8980 || last.Qty != 75 {
@@ -108,14 +108,14 @@ func TestStop_CancelUnconfirmed_HoldsExit(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0, cancelLeavesOpen: true}
 	oe := stopExecutor(t, f)
 	alerts := alertSink(oe)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
-	oe.ExecuteSignal(realSig(strategy.ActionExit))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionExit))
 	for _, c := range f.calls() {
 		if c == "place:NORMAL:SELL" {
 			t.Fatalf("SELL sent with the stop still live: %v", f.calls())
 		}
 	}
-	e, ok := entryFor(oe, realSig(strategy.ActionBuy))
+	e, ok := entryFor(oe, realSig(model.ActionBuy))
 	if !ok || e.SLOrderID == "" {
 		t.Fatalf("entry %+v ok=%v, want position and stop kept", e, ok)
 	}
@@ -128,10 +128,10 @@ func TestStop_CancelUnconfirmed_HoldsExit(t *testing.T) {
 func TestStop_PartialStopFill_SellsRest(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := stopExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
-	e, _ := entryFor(oe, realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
+	e, _ := entryFor(oe, realSig(model.ActionBuy))
 	f.setRow(map[string]any{"orderid": e.SLOrderID, "orderstatus": "open", "filledshares": "25", "averageprice": 89.9})
-	oe.ExecuteSignal(realSig(strategy.ActionExit))
+	oe.ExecuteSignal(realSig(model.ActionExit))
 	n := f.placedCount()
 	if q := f.placedAt(n - 1); q["variety"] != "NORMAL" || q["quantity"] != "50" {
 		t.Fatalf("last order %v, want SELL 50", q)
@@ -142,12 +142,12 @@ func TestStop_PartialStopFill_SellsRest(t *testing.T) {
 func TestStop_RejectedExitRearmsStop(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := stopExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	f.mu.Lock()
 	f.autoStatus = "rejected"
 	f.mu.Unlock()
-	oe.ExecuteSignal(realSig(strategy.ActionExit))
-	e, ok := entryFor(oe, realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionExit))
+	e, ok := entryFor(oe, realSig(model.ActionBuy))
 	if !ok || e.SLOrderID == "" {
 		t.Fatalf("entry %+v ok=%v, want open with a new stop", e, ok)
 	}
@@ -159,11 +159,11 @@ func TestStop_RejectedExitRearmsStop(t *testing.T) {
 func TestSweep_StopFilledClosesPosition(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := stopExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
-	e, _ := entryFor(oe, realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
+	e, _ := entryFor(oe, realSig(model.ActionBuy))
 	f.setRow(map[string]any{"orderid": e.SLOrderID, "orderstatus": "complete", "averageprice": 89.5, "filledshares": "75"})
 	oe.SweepProtection()
-	if _, ok := entryFor(oe, realSig(strategy.ActionBuy)); ok {
+	if _, ok := entryFor(oe, realSig(model.ActionBuy)); ok {
 		t.Fatal("position open after its stop filled")
 	}
 }
@@ -171,13 +171,13 @@ func TestSweep_StopFilledClosesPosition(t *testing.T) {
 func TestSweep_RearmsMissingAndExpiredStop(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := stopExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
-	key := oe.positionKey(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
+	key := oe.positionKey(realSig(model.ActionBuy))
 
 	// Missing: e.g. the stop placement failed at fill time.
 	oe.updateEntry(key, func(r *OrderRecord) { r.SLOrderID = "" })
 	oe.SweepProtection()
-	e, _ := entryFor(oe, realSig(strategy.ActionBuy))
+	e, _ := entryFor(oe, realSig(model.ActionBuy))
 	if e.SLOrderID == "" || len(f.placedStops()) != 2 {
 		t.Fatalf("missing stop not re-armed: %+v", e)
 	}
@@ -185,7 +185,7 @@ func TestSweep_RearmsMissingAndExpiredStop(t *testing.T) {
 	// Expired: yesterday's DAY stop is not in today's book.
 	oe.updateEntry(key, func(r *OrderRecord) { r.SLOrderID, r.SLPlacedAt = "OLD-STOP", time.Now().Add(-36*time.Hour) })
 	oe.SweepProtection()
-	e, _ = entryFor(oe, realSig(strategy.ActionBuy))
+	e, _ = entryFor(oe, realSig(model.ActionBuy))
 	if e.SLOrderID == "OLD-STOP" || len(f.placedStops()) != 3 {
 		t.Fatalf("expired stop not replaced: %+v", e)
 	}
@@ -193,7 +193,7 @@ func TestSweep_RearmsMissingAndExpiredStop(t *testing.T) {
 	// A stop placed today but not yet visible in the book is left alone.
 	oe.updateEntry(key, func(r *OrderRecord) { r.SLOrderID, r.SLPlacedAt = "LAGGING", time.Now() })
 	oe.SweepProtection()
-	if e, _ = entryFor(oe, realSig(strategy.ActionBuy)); e.SLOrderID != "LAGGING" {
+	if e, _ = entryFor(oe, realSig(model.ActionBuy)); e.SLOrderID != "LAGGING" {
 		t.Fatalf("fresh stop replaced: %+v", e)
 	}
 }
@@ -201,7 +201,7 @@ func TestSweep_RearmsMissingAndExpiredStop(t *testing.T) {
 func TestSweep_GTTModeIsNoop(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := liveExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	before := f.placedCount()
 	oe.SweepProtection()
 	if f.placedCount() != before {

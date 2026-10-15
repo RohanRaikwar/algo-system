@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"trading-systemv1/internal/strategy"
+	"trading-systemv1/internal/model"
 )
 
 // executeLegPaper runs one leg of a multi-leg (basket) signal. Legs are
@@ -16,16 +16,16 @@ import (
 // A long leg opens with BUY and closes with SELL. A short leg (sig.Short)
 // opens with SELL and closes with BUY. Each leg is its own position under
 // strategy|side|leg, so legs of one basket never collide.
-func (oe *OrderExecutor) executeLegPaper(sig strategy.Signal) {
+func (oe *OrderExecutor) executeLegPaper(sig model.Signal) {
 	prefix := oe.logPrefix()
-	if sig.Side != strategy.SideCall && sig.Side != strategy.SidePut {
+	if sig.Side != model.SideCall && sig.Side != model.SidePut {
 		log.Printf("%s leg %s: side %q — cannot determine CALL/PUT", prefix, sig.Leg, sig.Side)
 		return
 	}
 	var isExit bool
 	switch sig.Action {
-	case strategy.ActionBuy:
-	case strategy.ActionExit, strategy.ActionSell:
+	case model.ActionBuy:
+	case model.ActionExit, model.ActionSell:
 		isExit = true
 	default:
 		log.Printf("%s leg %s: unknown action %q", prefix, sig.Leg, sig.Action)

@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"trading-systemv1/internal/circuitbreaker"
-	"trading-systemv1/internal/strategy"
+	"trading-systemv1/internal/model"
 )
 
 func TestOrderExecutor_DryRun_CircuitBreakerInitialized(t *testing.T) {
@@ -38,44 +38,44 @@ func TestOrderExecutor_DryRun_ExecuteSignal(t *testing.T) {
 	})
 
 	// BUY CALL should succeed in dry-run
-	oe.ExecuteSignal(strategy.Signal{
+	oe.ExecuteSignal(model.Signal{
 		StrategyName: "test_strategy",
-		Action:       strategy.ActionBuy,
-		Side:         strategy.SideCall,
+		Action:       model.ActionBuy,
+		Side:         model.SideCall,
 		Token:        "99926000",
 		Reason:       "test",
 	})
 
 	// Should be in CALL position now
-	inCall := oe.sideOpen(strategy.SideCall)
+	inCall := oe.sideOpen(model.SideCall)
 	if !inCall {
 		t.Error("expected to be in CALL position after BUY")
 	}
 
 	// BUY PUT should be blocked (mutual exclusion)
-	oe.ExecuteSignal(strategy.Signal{
+	oe.ExecuteSignal(model.Signal{
 		StrategyName: "test_strategy",
-		Action:       strategy.ActionBuy,
-		Side:         strategy.SidePut,
+		Action:       model.ActionBuy,
+		Side:         model.SidePut,
 		Token:        "99926000",
 		Reason:       "test",
 	})
 
-	inPut := oe.sideOpen(strategy.SidePut)
+	inPut := oe.sideOpen(model.SidePut)
 	if inPut {
 		t.Error("expected PUT to be blocked while CALL is active")
 	}
 
 	// EXIT CALL should succeed and unblock
-	oe.ExecuteSignal(strategy.Signal{
+	oe.ExecuteSignal(model.Signal{
 		StrategyName: "test_strategy",
-		Action:       strategy.ActionExit,
-		Side:         strategy.SideCall,
+		Action:       model.ActionExit,
+		Side:         model.SideCall,
 		Token:        "99926000",
 		Reason:       "test exit",
 	})
 
-	inCall = oe.sideOpen(strategy.SideCall)
+	inCall = oe.sideOpen(model.SideCall)
 	if inCall {
 		t.Error("expected CALL position to be closed after EXIT")
 	}
@@ -97,18 +97,18 @@ func TestOrderExecutor_RateLimiterBlocks(t *testing.T) {
 
 	// Place 3 orders (should all succeed in dry-run)
 	for i := 0; i < 3; i++ {
-		oe.ExecuteSignal(strategy.Signal{
+		oe.ExecuteSignal(model.Signal{
 			StrategyName: "test_strategy",
-			Action:       strategy.ActionBuy,
-			Side:         strategy.SideCall,
+			Action:       model.ActionBuy,
+			Side:         model.SideCall,
 			Token:        "99926000",
 			Reason:       "test",
 		})
 		// Exit to allow next BUY
-		oe.ExecuteSignal(strategy.Signal{
+		oe.ExecuteSignal(model.Signal{
 			StrategyName: "test_strategy",
-			Action:       strategy.ActionExit,
-			Side:         strategy.SideCall,
+			Action:       model.ActionExit,
+			Side:         model.SideCall,
 			Token:        "99926000",
 			Reason:       "exit",
 		})
@@ -171,10 +171,10 @@ func TestRateLimiter_Count(t *testing.T) {
 }
 
 func TestIdempotencyKey_Unique(t *testing.T) {
-	sig := strategy.Signal{
+	sig := model.Signal{
 		StrategyName: "test",
-		Action:       strategy.ActionBuy,
-		Side:         strategy.SideCall,
+		Action:       model.ActionBuy,
+		Side:         model.SideCall,
 	}
 
 	key1 := generateIdempotencyKey(sig)
@@ -220,9 +220,9 @@ func TestOrderExecutor_ResolveInstrument_UsesLockedEntryOnSell(t *testing.T) {
 		LogPrefix:     "[test]",
 	})
 
-	sig := strategy.Signal{
+	sig := model.Signal{
 		StrategyName: "nifty",
-		Side:         strategy.SideCall,
+		Side:         model.SideCall,
 	}
 	oe.setPositionInstrument(sig, "entry_call_token", "ENTRY_CALL")
 
@@ -251,10 +251,10 @@ func TestOrderExecutor_DryRun_TracksAndClearsPositionInstrument(t *testing.T) {
 		LogPrefix:     "[test]",
 	})
 
-	buySig := strategy.Signal{
+	buySig := model.Signal{
 		StrategyName: "test_strategy",
-		Action:       strategy.ActionBuy,
-		Side:         strategy.SideCall,
+		Action:       model.ActionBuy,
+		Side:         model.SideCall,
 		Token:        "99926000",
 		Reason:       "entry",
 	}
@@ -268,10 +268,10 @@ func TestOrderExecutor_DryRun_TracksAndClearsPositionInstrument(t *testing.T) {
 		t.Fatalf("unexpected tracked instrument: %+v", inst)
 	}
 
-	exitSig := strategy.Signal{
+	exitSig := model.Signal{
 		StrategyName: "test_strategy",
-		Action:       strategy.ActionExit,
-		Side:         strategy.SideCall,
+		Action:       model.ActionExit,
+		Side:         model.SideCall,
 		Token:        "99926000",
 		Reason:       "exit",
 	}
@@ -291,10 +291,10 @@ func TestOrderExecutor_NoStrikeResolved_EntrySkippedExitStillCloses(t *testing.T
 		LogPrefix:   "[test]",
 	})
 
-	buySig := strategy.Signal{
+	buySig := model.Signal{
 		StrategyName: "test_strategy",
-		Action:       strategy.ActionBuy,
-		Side:         strategy.SideCall,
+		Action:       model.ActionBuy,
+		Side:         model.SideCall,
 		Token:        "99926000",
 		Reason:       "entry",
 	}
@@ -313,7 +313,7 @@ func TestOrderExecutor_NoStrikeResolved_EntrySkippedExitStillCloses(t *testing.T
 	// strike, even though nothing is resolved now.
 	oe.setPositionInstrument(buySig, "40742", "NIFTY_CE_PICKED")
 	exitSig := buySig
-	exitSig.Action = strategy.ActionExit
+	exitSig.Action = model.ActionExit
 	token, symbol, err := oe.resolveInstrument(exitSig, "SELL")
 	if err != nil {
 		t.Fatalf("exit with a locked instrument must not fail: %v", err)

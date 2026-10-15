@@ -4,14 +4,14 @@ import (
 	"strings"
 	"testing"
 
-	"trading-systemv1/internal/strategy"
+	"trading-systemv1/internal/model"
 )
 
 const sensexSym, sensexTok = "SENSEX26N0564600CE", "1163095"
 
 // sensexSig is a SENSEX_SR entry on a resolved BFO contract.
-func sensexSig(action strategy.Action, side strategy.PositionSide) strategy.Signal {
-	return strategy.Signal{StrategyName: "SENSEX_SR", Action: action, Side: side,
+func sensexSig(action model.Action, side model.PositionSide) model.Signal {
+	return model.Signal{StrategyName: "SENSEX_SR", Action: action, Side: side,
 		Token: "99919000", Exchange: "BSE", FNOToken: sensexTok, FNOSymbol: sensexSym}
 }
 
@@ -36,7 +36,7 @@ func TestSensex_RealEntryAndStopOnBFO(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 300.0}
 	oe := sensexLive(t, f, "SENSEX_SR")
 	oe.cfg.ProtectionMode = ProtectionStop
-	oe.ExecuteSignal(sensexSig(strategy.ActionBuy, strategy.SideCall))
+	oe.ExecuteSignal(sensexSig(model.ActionBuy, model.SideCall))
 	if n := f.placedCount(); n < 1 {
 		t.Fatalf("no real BUY placed")
 	}
@@ -54,7 +54,7 @@ func TestSensex_RealEntryAndStopOnBFO(t *testing.T) {
 func TestSensex_NiftyOrdersUnchanged(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := sensexLive(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	if n := f.placedCount(); n < 1 {
 		t.Fatalf("no NIFTY BUY")
 	}
@@ -67,7 +67,7 @@ func TestSensex_NiftyOrdersUnchanged(t *testing.T) {
 func TestSensex_PaperWhenNotAllowlisted(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 300.0}
 	oe := sensexLive(t, f)
-	s := sensexSig(strategy.ActionBuy, strategy.SideCall)
+	s := sensexSig(model.ActionBuy, model.SideCall)
 	oe.ExecuteSignal(s)
 	if n := f.placedCount(); n != 0 {
 		t.Fatalf("placed %d real orders for paper SENSEX_SR", n)
@@ -83,7 +83,7 @@ func TestSensex_FreezeQty(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 300.0}
 	oe := sensexLive(t, f, "SENSEX_SR")
 	oe.cfg.LiveLots = 60 // 60 × 20 = 1200 > SENSEX freeze 1000 (< NIFTY's 1800)
-	oe.ExecuteSignal(sensexSig(strategy.ActionBuy, strategy.SideCall))
+	oe.ExecuteSignal(sensexSig(model.ActionBuy, model.SideCall))
 	if n := f.placedCount(); n != 0 {
 		t.Fatalf("placed %d above SENSEX freeze qty", n)
 	}
@@ -93,9 +93,9 @@ func TestSensex_FreezeQty(t *testing.T) {
 func TestSensex_OppositeGuardPerUnderlying(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := sensexLive(t, f, "SENSEX_SR")
-	oe.ExecuteSignal(realSig(strategy.ActionBuy)) // NIFTY50_FNO CALL
+	oe.ExecuteSignal(realSig(model.ActionBuy)) // NIFTY50_FNO CALL
 	before := f.placedCount()
-	oe.ExecuteSignal(sensexSig(strategy.ActionBuy, strategy.SidePut))
+	oe.ExecuteSignal(sensexSig(model.ActionBuy, model.SidePut))
 	waitFor(t, "SENSEX PUT", func() bool {
 		for i := before; i < f.placedCount(); i++ {
 			if p := f.placedAt(i); p["exchange"] == "BFO" && p["transactiontype"] == "BUY" {
@@ -116,7 +116,7 @@ func TestDayLossTotal_SumsLiveStrategies(t *testing.T) {
 	pnl.SetStrategyPnL("SENSEX_SR", -40000)
 	oe.SetPnLTracker(pnl)
 	alerts := alertSink(oe)
-	oe.ExecuteSignal(sensexSig(strategy.ActionBuy, strategy.SideCall))
+	oe.ExecuteSignal(sensexSig(model.ActionBuy, model.SideCall))
 	if n := f.placedCount(); n != 0 {
 		t.Fatalf("placed %d with account loss -110000 over -100000", n)
 	}
@@ -129,9 +129,9 @@ func TestDayLossTotal_SumsLiveStrategies(t *testing.T) {
 func TestSensex_ReconcileMixedSegments(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 300.0}
 	oe := sensexLive(t, f, "SENSEX_SR")
-	oe.ExecuteSignal(sensexSig(strategy.ActionBuy, strategy.SideCall))
+	oe.ExecuteSignal(sensexSig(model.ActionBuy, model.SideCall))
 	waitFor(t, "entry settled", func() bool {
-		e, ok := entryFor(oe, sensexSig(strategy.ActionBuy, strategy.SideCall))
+		e, ok := entryFor(oe, sensexSig(model.ActionBuy, model.SideCall))
 		return ok && e.Real && !e.Pending
 	})
 	f.mu.Lock()

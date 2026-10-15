@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"trading-systemv1/internal/strategy"
+	"trading-systemv1/internal/model"
 	"trading-systemv1/pkg/smartconnect"
 )
 
@@ -22,11 +22,11 @@ func alertSink(oe *OrderExecutor) func() string {
 func TestRealExit_SellsTrackedQuantityAfterPartialBuy(t *testing.T) {
 	f := &fakeAPI{autoStatus: "cancelled", autoAvg: 100.0, autoFilled: "25"}
 	oe := liveExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	f.mu.Lock()
 	f.autoStatus, f.autoFilled = "complete", ""
 	f.mu.Unlock()
-	oe.ExecuteSignal(realSig(strategy.ActionExit))
+	oe.ExecuteSignal(realSig(model.ActionExit))
 	if n := f.placedCount(); n != 2 {
 		t.Fatalf("placed %d, want BUY+SELL", n)
 	}
@@ -41,13 +41,13 @@ func TestRealExit_FlatRejectionButBrokerStillHolds_KeepsOpen(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := liveExecutor(t, f)
 	alerts := alertSink(oe)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	f.mu.Lock()
 	f.placeErr = []error{nil, errors.New("AB1014: Order Quantity Cannot Be More Than Net Quantity")}
 	f.positions = []map[string]any{{"symboltoken": "111", "tradingsymbol": "NIFTY_CE", "netqty": "75"}}
 	f.mu.Unlock()
-	oe.ExecuteSignal(realSig(strategy.ActionExit))
-	if _, ok := entryFor(oe, realSig(strategy.ActionExit)); !ok {
+	oe.ExecuteSignal(realSig(model.ActionExit))
+	if _, ok := entryFor(oe, realSig(model.ActionExit)); !ok {
 		t.Fatal("position closed on a flat-rejection while broker still holds 75")
 	}
 	if len(f.cancelled()) != 0 {
@@ -61,12 +61,12 @@ func TestRealExit_FlatRejectionButBrokerStillHolds_KeepsOpen(t *testing.T) {
 func TestRealExit_FlatRejectionAndBrokerFlat_Closes(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := liveExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	f.mu.Lock()
 	f.placeErr = []error{nil, errors.New("AB1018: No Holdings Available")}
 	f.mu.Unlock()
-	oe.ExecuteSignal(realSig(strategy.ActionExit))
-	if _, ok := entryFor(oe, realSig(strategy.ActionExit)); ok {
+	oe.ExecuteSignal(realSig(model.ActionExit))
+	if _, ok := entryFor(oe, realSig(model.ActionExit)); ok {
 		t.Fatal("broker flat: position should be closed")
 	}
 }
@@ -76,11 +76,11 @@ func TestRealBuy_TimeoutAndBookStatusFalse_NoResend(t *testing.T) {
 	unknown := fmt.Errorf("%w: timeout", smartconnect.ErrOutcomeUnknown)
 	f := &fakeAPI{placeErr: []error{unknown}, bookStatusFalse: true}
 	oe := liveExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	if n := f.placedCount(); n != 1 {
 		t.Fatalf("placed %d — resent although the order book was unreadable", n)
 	}
-	if e, ok := entryFor(oe, realSig(strategy.ActionBuy)); !ok || !e.Pending {
+	if e, ok := entryFor(oe, realSig(model.ActionBuy)); !ok || !e.Pending {
 		t.Fatalf("want provisional pending entry, got %+v ok=%v", e, ok)
 	}
 }
@@ -101,7 +101,7 @@ func TestRealBuy_NoPrice_AlertsNoProtection(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 0}
 	oe := liveExecutor(t, f)
 	alerts := alertSink(oe)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy)) // ltp unknown (0), avg unreadable
+	oe.ExecuteSignal(realSig(model.ActionBuy)) // ltp unknown (0), avg unreadable
 	if !strings.Contains(alerts(), "no exchange-side") && !strings.Contains(alerts(), "NO exchange-side") {
 		t.Fatalf("want no-protection alert, got %q", alerts())
 	}
@@ -112,14 +112,14 @@ func TestRealBuy_NoPrice_AlertsNoProtection(t *testing.T) {
 func TestRealBuy_Unconfirmed_PendingUntilFilledThenProtected(t *testing.T) {
 	f := &fakeAPI{autoStatus: "open", autoAvg: 0}
 	oe := liveExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
-	e, ok := entryFor(oe, realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
+	e, ok := entryFor(oe, realSig(model.ActionBuy))
 	if !ok || !e.Pending || e.GttRuleID != "" {
 		t.Fatalf("want pending entry without GTTs, got %+v", e)
 	}
 	f.setRow(map[string]any{"orderid": "OID-1", "orderstatus": "complete", "averageprice": 100.0})
 	waitFor(t, "adopted with GTTs", func() bool {
-		e, _ := entryFor(oe, realSig(strategy.ActionBuy))
+		e, _ := entryFor(oe, realSig(model.ActionBuy))
 		return !e.Pending && e.GttRuleID != "" && e.GttSLRuleID != ""
 	})
 }
@@ -127,8 +127,8 @@ func TestRealBuy_Unconfirmed_PendingUntilFilledThenProtected(t *testing.T) {
 func TestRealBuy_Filled_GTTIDsRecordedSynchronously(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := liveExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
-	e, _ := entryFor(oe, realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
+	e, _ := entryFor(oe, realSig(model.ActionBuy))
 	if e.GttRuleID == "" || e.GttSLRuleID == "" {
 		t.Fatalf("GTT IDs must be recorded before ExecuteSignal returns, got %+v", e)
 	}
@@ -138,8 +138,8 @@ func TestRealBuy_Filled_GTTIDsRecordedSynchronously(t *testing.T) {
 func TestRealExit_DuringPendingBuy_DeferredThenSent(t *testing.T) {
 	f := &fakeAPI{autoStatus: "open", autoAvg: 0}
 	oe := liveExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
-	oe.ExecuteSignal(realSig(strategy.ActionExit))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionExit))
 	if n := f.placedCount(); n != 1 {
 		t.Fatalf("SELL sent against an unfilled BUY (placed %d)", n)
 	}
@@ -149,7 +149,7 @@ func TestRealExit_DuringPendingBuy_DeferredThenSent(t *testing.T) {
 	f.mu.Unlock()
 	f.setRow(map[string]any{"orderid": "OID-1", "orderstatus": "complete", "averageprice": 100.0})
 	waitFor(t, "deferred exit sent and closed", func() bool {
-		_, open := entryFor(oe, realSig(strategy.ActionExit))
+		_, open := entryFor(oe, realSig(model.ActionExit))
 		return f.placedCount() == 2 && !open
 	})
 	if f.placedAt(1)["transactiontype"] != "SELL" {

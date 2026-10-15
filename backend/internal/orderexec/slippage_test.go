@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"trading-systemv1/internal/strategy"
+	"trading-systemv1/internal/model"
 )
 
 func TestPaperSlippage(t *testing.T) {
@@ -38,9 +38,9 @@ func TestPaperSlippageAppliedToFills(t *testing.T) {
 		CallFNOToken: "111", CallFNOSymbol: "CE"})
 	fills := captureFills(oe)
 	setLTP(oe, "111", 10000)
-	oe.ExecuteSignal(strategy.Signal{StrategyName: "PAPER_OTHER", Action: strategy.ActionBuy, Side: strategy.SideCall, Token: "99926000", Exchange: "NSE"})
-	oe.ExecuteSignal(strategy.Signal{StrategyName: "PAPER_OTHER", Action: strategy.ActionExit, Side: strategy.SideCall, Token: "99926000", Exchange: "NSE"})
-	short := legSig(strategy.ActionBuy, "SHORT_CE", "302", strategy.SideCall, true)
+	oe.ExecuteSignal(model.Signal{StrategyName: "PAPER_OTHER", Action: model.ActionBuy, Side: model.SideCall, Token: "99926000", Exchange: "NSE"})
+	oe.ExecuteSignal(model.Signal{StrategyName: "PAPER_OTHER", Action: model.ActionExit, Side: model.SideCall, Token: "99926000", Exchange: "NSE"})
+	short := legSig(model.ActionBuy, "SHORT_CE", "302", model.SideCall, true)
 	setLTP(oe, "302", 10000)
 	oe.ExecuteSignal(short)
 	got := fills.get()

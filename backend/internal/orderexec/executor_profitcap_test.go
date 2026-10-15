@@ -2,7 +2,8 @@ package orderexec
 
 import (
 	"testing"
-	"trading-systemv1/internal/strategy"
+
+	"trading-systemv1/internal/model"
 )
 
 // MockPnLTracker implements PnLTracker interface for testing
@@ -87,10 +88,10 @@ func TestOrderExecutor_NoProfitCap(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mockTracker.SetStrategyPnL(tt.strategyName, tt.dailyPnL)
 
-			sig := strategy.Signal{
+			sig := model.Signal{
 				StrategyName: tt.strategyName,
-				Action:       strategy.ActionBuy,
-				Side:         strategy.SideCall,
+				Action:       model.ActionBuy,
+				Side:         model.SideCall,
 				Token:        "99926000",
 				Exchange:     "NSE",
 				Qty:          65,
@@ -129,10 +130,10 @@ func TestOrderExecutor_NoPnLTracker(t *testing.T) {
 			}
 		}()
 
-		sig := strategy.Signal{
+		sig := model.Signal{
 			StrategyName: "NIFTY50_FNO",
-			Action:       strategy.ActionBuy,
-			Side:         strategy.SideCall,
+			Action:       model.ActionBuy,
+			Side:         model.SideCall,
 			Token:        "99926000",
 			Exchange:     "NSE",
 			Qty:          65,
@@ -169,10 +170,10 @@ func TestOrderExecutor_StrategyFiltering(t *testing.T) {
 
 	for _, stratName := range strategies {
 		t.Run(stratName, func(t *testing.T) {
-			sig := strategy.Signal{
+			sig := model.Signal{
 				StrategyName: stratName,
-				Action:       strategy.ActionBuy,
-				Side:         strategy.SideCall,
+				Action:       model.ActionBuy,
+				Side:         model.SideCall,
 				Token:        "99926000",
 				Exchange:     "NSE",
 				Qty:          65,

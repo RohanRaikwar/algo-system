@@ -6,14 +6,14 @@ import (
 	"testing"
 	"time"
 
-	"trading-systemv1/internal/strategy"
+	"trading-systemv1/internal/model"
 )
 
-func paperSig(name string, action strategy.Action, side strategy.PositionSide) strategy.Signal {
-	return strategy.Signal{StrategyName: name, Action: action, Side: side, Token: "99926000", Exchange: "NSE", Qty: 75}
+func paperSig(name string, action model.Action, side model.PositionSide) model.Signal {
+	return model.Signal{StrategyName: name, Action: action, Side: side, Token: "99926000", Exchange: "NSE", Qty: 75}
 }
 
-func realSide(action strategy.Action, side strategy.PositionSide) strategy.Signal {
+func realSide(action model.Action, side model.PositionSide) model.Signal {
 	s := realSig(action)
 	s.Side = side
 	return s
@@ -23,10 +23,10 @@ func realSide(action strategy.Action, side strategy.PositionSide) strategy.Signa
 func TestPaperExit_DoesNotUnblockRealOppositeBuy(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := liveExecutor(t, f)
-	oe.ExecuteSignal(realSide(strategy.ActionBuy, strategy.SideCall)) // real CALL open
-	oe.ExecuteSignal(paperSig("PAPER_S", strategy.ActionBuy, strategy.SideCall))
-	oe.ExecuteSignal(paperSig("PAPER_S", strategy.ActionExit, strategy.SideCall))
-	oe.ExecuteSignal(realSide(strategy.ActionBuy, strategy.SidePut))
+	oe.ExecuteSignal(realSide(model.ActionBuy, model.SideCall)) // real CALL open
+	oe.ExecuteSignal(paperSig("PAPER_S", model.ActionBuy, model.SideCall))
+	oe.ExecuteSignal(paperSig("PAPER_S", model.ActionExit, model.SideCall))
+	oe.ExecuteSignal(realSide(model.ActionBuy, model.SidePut))
 	if n := f.placedCount(); n != 1 {
 		t.Fatalf("real PUT BUY sent while real CALL open (placed %d)", n)
 	}
@@ -36,8 +36,8 @@ func TestPaperExit_DoesNotUnblockRealOppositeBuy(t *testing.T) {
 func TestPaperPosition_DoesNotBlockRealEntry(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := liveExecutor(t, f)
-	oe.ExecuteSignal(paperSig("PAPER_S", strategy.ActionBuy, strategy.SideCall))
-	oe.ExecuteSignal(realSide(strategy.ActionBuy, strategy.SidePut))
+	oe.ExecuteSignal(paperSig("PAPER_S", model.ActionBuy, model.SideCall))
+	oe.ExecuteSignal(realSide(model.ActionBuy, model.SidePut))
 	if n := f.placedCount(); n != 1 {
 		t.Fatalf("real PUT BUY blocked by a paper CALL (placed %d)", n)
 	}
@@ -46,9 +46,9 @@ func TestPaperPosition_DoesNotBlockRealEntry(t *testing.T) {
 // One strategy still cannot hold CALL and PUT at once.
 func TestSameStrategy_OppositeSideBlocked(t *testing.T) {
 	oe := exitTestExecutor(10)
-	oe.ExecuteSignal(paperSig("PAPER_S", strategy.ActionBuy, strategy.SideCall))
-	oe.ExecuteSignal(paperSig("PAPER_S", strategy.ActionBuy, strategy.SidePut))
-	if _, ok := entryFor(oe, paperSig("PAPER_S", strategy.ActionBuy, strategy.SidePut)); ok {
+	oe.ExecuteSignal(paperSig("PAPER_S", model.ActionBuy, model.SideCall))
+	oe.ExecuteSignal(paperSig("PAPER_S", model.ActionBuy, model.SidePut))
+	if _, ok := entryFor(oe, paperSig("PAPER_S", model.ActionBuy, model.SidePut)); ok {
 		t.Fatal("same strategy opened PUT while holding CALL")
 	}
 }
@@ -59,9 +59,9 @@ func TestPaperSignals_DoNotConsumeRateLimit(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := liveExecutor(t, f)
 	oe.rl = NewRateLimiter(1, time.Minute)
-	oe.ExecuteSignal(paperSig("PAPER_S", strategy.ActionBuy, strategy.SideCall))
-	oe.ExecuteSignal(paperSig("PAPER_S", strategy.ActionExit, strategy.SideCall))
-	oe.ExecuteSignal(realSide(strategy.ActionBuy, strategy.SideCall))
+	oe.ExecuteSignal(paperSig("PAPER_S", model.ActionBuy, model.SideCall))
+	oe.ExecuteSignal(paperSig("PAPER_S", model.ActionExit, model.SideCall))
+	oe.ExecuteSignal(realSide(model.ActionBuy, model.SideCall))
 	if n := f.placedCount(); n != 1 {
 		t.Fatalf("real BUY rate-limited by paper signals (placed %d)", n)
 	}
@@ -92,7 +92,7 @@ func TestResume_StalePendingBuy_HeldAtBroker_KeptAndAlerted(t *testing.T) {
 	f := &fakeAPI{positions: []map[string]any{{"symboltoken": "111", "tradingsymbol": "NIFTY_CE", "netqty": "75"}}}
 	oe := liveExecutor(t, f)
 	alerts := alertSink(oe)
-	s := realSig(strategy.ActionBuy)
+	s := realSig(model.ActionBuy)
 	oe.storeEntry(s, OrderRecord{ClientOrderID: "k1", Symbol: "NIFTY_CE", Token: "111", Quantity: 75, Real: true, Pending: true,
 		Timestamp: time.Now().Add(-26 * time.Hour), StrategyName: s.StrategyName, PositionSide: string(s.Side)})
 	oe.ResumeSettlement()
@@ -108,7 +108,7 @@ func TestResume_StalePendingBuy_HeldAtBroker_KeptAndAlerted(t *testing.T) {
 func TestResume_StalePendingBuy_NotHeld_Dropped(t *testing.T) {
 	f := &fakeAPI{}
 	oe := liveExecutor(t, f)
-	s := realSig(strategy.ActionBuy)
+	s := realSig(model.ActionBuy)
 	oe.storeEntry(s, OrderRecord{ClientOrderID: "k1", Symbol: "NIFTY_CE", Token: "111", Quantity: 75, Real: true, Pending: true,
 		Timestamp: time.Now().Add(-26 * time.Hour), StrategyName: s.StrategyName, PositionSide: string(s.Side)})
 	oe.ResumeSettlement()

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"trading-systemv1/internal/model"
-	"trading-systemv1/internal/strategy"
 )
 
 // risingQuotes is an ask that moves up one tick per read.
@@ -41,7 +40,7 @@ func chaseExecutor(t *testing.T, f *fakeAPI) *OrderExecutor {
 func TestChase_EntryIsMarketableLimit(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.10}
 	oe := chaseExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	p := f.placedAt(0)
 	if p["ordertype"] != "LIMIT" || p["price"] != "100.10" { // LTP 10000 + 2 ticks
 		t.Fatalf("entry %v, want LIMIT @ 100.10", p)
@@ -55,12 +54,12 @@ func TestChase_ReplacesUntilFilled(t *testing.T) {
 	f := &fakeAPI{autoStatus: "open", fillAfterModifies: 2}
 	oe := chaseExecutor(t, f)
 	oe.SetQuoteSource(&risingQuotes{bid: 9990, ask: 10000})
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	m := f.modifies()
 	if len(m) != 2 {
 		t.Fatalf("re-priced %d times, want 2", len(m))
 	}
-	e, ok := entryFor(oe, realSig(strategy.ActionBuy))
+	e, ok := entryFor(oe, realSig(model.ActionBuy))
 	if !ok || e.Pending || e.Quantity != 75 {
 		t.Fatalf("entry %+v ok=%v, want filled 75", e, ok)
 	}
@@ -73,14 +72,14 @@ func TestChase_UnfilledEntryCancelled(t *testing.T) {
 	f := &fakeAPI{autoStatus: "open"}
 	oe := chaseExecutor(t, f)
 	oe.SetQuoteSource(&risingQuotes{bid: 9990, ask: 10000})
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	if n := len(f.modifies()); n != 3 {
 		t.Fatalf("re-priced %d times, want ChaseReprices=3", n)
 	}
 	if !strings.Contains(strings.Join(f.calls(), ","), "cancel:OID-1") {
 		t.Fatalf("entry not cancelled: %v", f.calls())
 	}
-	if _, ok := entryFor(oe, realSig(strategy.ActionBuy)); ok {
+	if _, ok := entryFor(oe, realSig(model.ActionBuy)); ok {
 		t.Fatal("cancelled unfilled entry left a position")
 	}
 }
@@ -88,8 +87,8 @@ func TestChase_UnfilledEntryCancelled(t *testing.T) {
 func TestChase_PartialEntryKept(t *testing.T) {
 	f := &fakeAPI{autoStatus: "open", autoFilled: "25", autoAvg: 100.10}
 	oe := chaseExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
-	e, ok := entryFor(oe, realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
+	e, ok := entryFor(oe, realSig(model.ActionBuy))
 	if !ok || e.Quantity != 25 {
 		t.Fatalf("entry %+v ok=%v, want the 25 that filled", e, ok)
 	}
@@ -101,11 +100,11 @@ func TestChase_EntryCapStopsChasing(t *testing.T) {
 	oe := chaseExecutor(t, f)
 	oe.cfg.ChaseMaxBps = 10 // 0.1% of ~100 = 10 paise: second re-price is over
 	oe.SetQuoteSource(&risingQuotes{bid: 9990, ask: 10000})
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	if n := len(f.modifies()); n != 2 {
 		t.Fatalf("re-priced %d times, want 2 before the cap", n)
 	}
-	if _, ok := entryFor(oe, realSig(strategy.ActionBuy)); ok {
+	if _, ok := entryFor(oe, realSig(model.ActionBuy)); ok {
 		t.Fatal("capped entry left a position")
 	}
 }
@@ -114,16 +113,16 @@ func TestChase_EntryCapStopsChasing(t *testing.T) {
 func TestChase_ExitEndsAsMarket(t *testing.T) {
 	f := &fakeAPI{autoStatus: "complete", autoAvg: 100.0}
 	oe := chaseExecutor(t, f)
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	f.mu.Lock()
 	f.autoStatus = "open"
 	f.mu.Unlock()
-	oe.ExecuteSignal(realSig(strategy.ActionExit))
+	oe.ExecuteSignal(realSig(model.ActionExit))
 	m := f.modifies()
 	if len(m) == 0 || m[len(m)-1]["ordertype"] != "MARKET" {
 		t.Fatalf("modifies %v, want last one MARKET", m)
 	}
-	if _, ok := entryFor(oe, realSig(strategy.ActionBuy)); ok {
+	if _, ok := entryFor(oe, realSig(model.ActionBuy)); ok {
 		t.Fatal("position open after MARKET exit filled")
 	}
 }
@@ -134,15 +133,15 @@ func TestChase_NoPrice(t *testing.T) {
 	oe.mu.Lock()
 	delete(oe.ltp, "111")
 	oe.mu.Unlock()
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	if f.placedCount() != 0 {
 		t.Fatal("BUY sent with no price")
 	}
 	// An exit with no price still goes out, as MARKET.
 	oe.cfg.ExecMode = ExecMarket
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
 	oe.cfg.ExecMode = ExecChase
-	oe.ExecuteSignal(realSig(strategy.ActionExit))
+	oe.ExecuteSignal(realSig(model.ActionExit))
 	if p := f.placedAt(f.placedCount() - 1); p["transactiontype"] != "SELL" || p["ordertype"] != "MARKET" {
 		t.Fatalf("exit %v, want MARKET SELL", p)
 	}
@@ -158,8 +157,8 @@ func TestChase_WithStop(t *testing.T) {
 	chasePollDelays = []time.Duration{0}
 	t.Cleanup(func() { chasePollDelays = old })
 	oe.UpdateLTP(model.Tick{Token: "111", Price: 10000})
-	oe.ExecuteSignal(realSig(strategy.ActionBuy))
-	oe.ExecuteSignal(realSig(strategy.ActionExit))
+	oe.ExecuteSignal(realSig(model.ActionBuy))
+	oe.ExecuteSignal(realSig(model.ActionExit))
 	got := strings.Join(f.calls(), ",")
 	if !strings.Contains(got, "place:NORMAL:BUY,place:STOPLOSS:SELL,cancel:OID-2,place:NORMAL:SELL") {
 		t.Fatalf("calls %s", got)
