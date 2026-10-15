@@ -191,11 +191,8 @@ func (im *InstrumentMaster) startDailyScheduler() {
 				// Time to refresh!
 				log.Printf("[instrumentmaster] ⏰ Daily scheduled refresh starting at %s IST...", 
 					im.refreshTime.Format("15:04"))
-				if err := im.Load(); err != nil {
-					log.Printf("[instrumentmaster] ❌ Daily scheduled refresh failed: %v", err)
-				} else {
-					log.Println("[instrumentmaster] ✅ Daily scheduled refresh completed successfully")
-				}
+				im.loadWithRetry(loadRetryBase, loadRetryMax)
+				log.Println("[instrumentmaster] ✅ Daily scheduled refresh completed")
 			case <-im.schedulerStop:
 				timer.Stop()
 				log.Println("[instrumentmaster] 🛑 Daily scheduler stopped during wait")
