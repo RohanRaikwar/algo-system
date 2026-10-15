@@ -44,7 +44,7 @@ type Service struct {
 
 	tfEngine   *strategy.TFEngine
 	srStrategy *strategy.Nifty50SR
-	srExtras   []*srExtra // SR on underlyings beyond NIFTY (UNDERLYINGS)
+	srExtras   []*srExtra // SR on underlyings beyond NIFTY (INDEX_TOKEN list)
 
 	redisReader   *redisstore.Reader
 	redisWriter   *redisstore.Writer

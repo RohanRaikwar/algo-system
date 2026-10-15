@@ -1,5 +1,5 @@
 // Command sensexcheck verifies an extra underlying (SENSEX by default) can
-// be traded before UNDERLYINGS enables it. Read-only: it never orders.
+// be traded before INDEX_TOKEN lists it. Read-only: it never orders.
 //
 // Without credentials it checks the instrument master only (lot size,
 // strike step, listed expiries, nearest future, an ATM contract). With
@@ -120,4 +120,3 @@ func login() *smartconnect.SmartConnect {
 	}
 	return sc
 }
-

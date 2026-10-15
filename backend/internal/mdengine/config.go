@@ -24,7 +24,7 @@ type Config struct {
 	MetricsAddr   string
 
 	// Persist1sTokens are the tokens whose 1s candles go to SQLite
-	// candles_1s: the subscribed indexes (INDEX_TOKEN + UNDERLYINGS). Option strikes
+	// candles_1s: the subscribed indexes (every index in INDEX_TOKEN). Option strikes
 	// subscribed at runtime are left out: ~117 of them wrote ~115 MB per
 	// trading day that nothing reads. TF candles persist for every token.
 	Persist1sTokens map[string]bool
@@ -123,7 +123,7 @@ func parseFeedConnections(v string) int {
 }
 
 // candleTokenSet is the set of tokens whose ticks build candles: the index
-// tokens (INDEX_TOKEN + UNDERLYINGS). Option ticks build no candles, so no
+// tokens (every index in INDEX_TOKEN). Option ticks build no candles, so no
 // option data is stored (SQLite, MEGA, Redis candle streams); they are still
 // published for LTP, quotes and premium stops. CANDLE_TOKENS, when set,
 // replaces the list (staging), with the extra underlyings' indexes added.

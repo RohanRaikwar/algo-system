@@ -20,7 +20,7 @@ import (
 )
 
 // ════════════════════════════════════════════════════════════════════
-//  SR on underlyings beyond NIFTY (UNDERLYINGS=NIFTY,SENSEX).
+//  SR on underlyings beyond NIFTY (INDEX_TOKEN=NSE:99926000,BSE:99919000).
 //
 //  NIFTY keeps every existing path (svc.srStrategy, the ATM picker, the
 //  NIFTY option picker, the shared chain cache). Each extra underlying gets

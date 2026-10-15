@@ -61,11 +61,17 @@ var angelExchangeType = map[string]int{
 	"NSE": 1, "NFO": 2, "BSE": 3, "BFO": 4, "MCX": 5, "NCX": 7, "CDE": 13,
 }
 
-// indexInstrument parses INDEX_TOKEN: "EXCH:TOKEN" (e.g. "BSE:99919000")
-// or a bare token, which means NSE. Default NIFTY 50, "NSE:99926000". An
-// unknown exchange falls back to NSE so the services still start.
+// indexInstrument parses the first entry of INDEX_TOKEN, the primary
+// index: "EXCH:TOKEN" (e.g. "NSE:99926000") or a bare token, which means
+// NSE. Default NIFTY 50. Further entries ("NSE:99926000,BSE:99919000") are
+// extra underlyings (underlying.All). An unknown exchange falls back to NSE
+// so the services still start.
 func indexInstrument() (exchange, token string) {
-	v := strings.TrimSpace(GetEnv("INDEX_TOKEN", "NSE:99926000"))
+	first, _, _ := strings.Cut(GetEnv("INDEX_TOKEN", "NSE:99926000"), ",")
+	v := strings.TrimSpace(first)
+	if v == "" {
+		v = "NSE:99926000"
+	}
 	exchange, token = "NSE", v
 	if ex, tok, ok := strings.Cut(v, ":"); ok {
 		ex = strings.ToUpper(strings.TrimSpace(ex))
@@ -79,7 +85,7 @@ func indexInstrument() (exchange, token string) {
 
 // IndexToken is the instrument token of the primary index (INDEX_TOKEN,
 // NIFTY 50 by default). It drives the market-close detector and warmup;
-// with UNDERLYINGS it and the extra indexes make up every service's
+// it and the extra indexes in the INDEX_TOKEN list make up every service's
 // subscribe list (IndexSubscribeTokens, IndexKeys).
 func IndexToken() string { _, t := indexInstrument(); return t }
 
@@ -88,7 +94,7 @@ func IndexExchange() string { e, _ := indexInstrument(); return e }
 
 // IndexSubscribeTokens is what mdengine subscribes, in Angel's
 // "<exchange_type>:<token>" form, e.g. "1:99926000" or "3:99919000". It
-// lists INDEX_TOKEN first, then every extra underlying in UNDERLYINGS.
+// lists the main index first, then every extra underlying.
 func IndexSubscribeTokens() string {
 	e, t := indexInstrument()
 	out := []string{strconv.Itoa(angelExchangeType[e]) + ":" + t}
@@ -102,7 +108,7 @@ func IndexSubscribeTokens() string {
 func IndexKey() string { e, t := indexInstrument(); return e + ":" + t }
 
 // IndexKeys is the "<EXCH>:<token>" list default: INDEX_TOKEN, then every
-// extra underlying in UNDERLYINGS.
+// extra underlying.
 func IndexKeys() string {
 	out := []string{IndexKey()}
 	for _, p := range extraUnderlyings() {
@@ -143,7 +149,7 @@ func appendMissing(list, item string) string {
 	return list + "," + item
 }
 
-// extraUnderlyings are the underlyings UNDERLYINGS adds beyond NIFTY (the
+// extraUnderlyings are the underlyings added beyond NIFTY (the
 // primary, which INDEX_TOKEN names), minus any equal to INDEX_TOKEN.
 func extraUnderlyings() []underlying.Profile {
 	primary := IndexKey()

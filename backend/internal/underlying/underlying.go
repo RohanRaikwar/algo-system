@@ -78,20 +78,52 @@ var builtin = map[string]Profile{
 	},
 }
 
-// All returns the configured underlyings, NIFTY first. UNDERLYINGS lists
-// keys (default "NIFTY"); unknown keys are skipped.
+// All returns the configured underlyings, NIFTY first: every index listed
+// in INDEX_TOKEN after the first ("NSE:99926000,BSE:99919000" adds SENSEX)
+// plus the keys in UNDERLYINGS (older form, "NIFTY,SENSEX"). Unknown
+// entries are skipped.
 func All() []Profile {
 	out := []Profile{Get("NIFTY")}
-	for _, k := range strings.Split(os.Getenv("UNDERLYINGS"), ",") {
-		k = strings.ToUpper(strings.TrimSpace(k))
-		if k == "" || k == "NIFTY" {
-			continue
-		}
-		if _, ok := builtin[k]; ok {
-			out = append(out, Get(k))
+	seen := map[string]bool{"NIFTY": true}
+	add := func(key string) {
+		if _, ok := builtin[key]; ok && !seen[key] {
+			seen[key] = true
+			out = append(out, Get(key))
 		}
 	}
+	entries := strings.Split(os.Getenv("INDEX_TOKEN"), ",")
+	for i, e := range entries {
+		if i == 0 {
+			continue // the primary index
+		}
+		if key, ok := keyOfIndex(e); ok {
+			add(key)
+		}
+	}
+	for _, k := range strings.Split(os.Getenv("UNDERLYINGS"), ",") {
+		add(strings.ToUpper(strings.TrimSpace(k)))
+	}
 	return out
+}
+
+// keyOfIndex finds the built-in profile of an "EXCH:TOKEN" entry (a bare
+// token means NSE).
+func keyOfIndex(entry string) (string, bool) {
+	entry = strings.TrimSpace(entry)
+	if entry == "" {
+		return "", false
+	}
+	ex, tok, ok := strings.Cut(entry, ":")
+	if !ok {
+		ex, tok = "NSE", entry
+	}
+	ex, tok = strings.ToUpper(strings.TrimSpace(ex)), strings.TrimSpace(tok)
+	for key, p := range builtin {
+		if p.IndexExchange == ex && p.IndexToken == tok {
+			return key, true
+		}
+	}
+	return "", false
 }
 
 // Primary is the NIFTY profile.

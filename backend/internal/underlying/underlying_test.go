@@ -7,6 +7,7 @@ import (
 
 func TestAll_DefaultIsNIFTYOnly(t *testing.T) {
 	t.Setenv("UNDERLYINGS", "")
+	t.Setenv("INDEX_TOKEN", "")
 	all := All()
 	if len(all) != 1 || all[0].Key != "NIFTY" {
 		t.Fatalf("All() = %v, want NIFTY only", all)
@@ -74,5 +75,23 @@ func TestSENSEXNotConfiguredIsNotFound(t *testing.T) {
 	t.Setenv("UNDERLYINGS", "")
 	if _, ok := ByStrategy("SENSEX_SR"); ok {
 		t.Fatalf("SENSEX found without UNDERLYINGS")
+	}
+}
+
+// SENSEX is added by listing its index in INDEX_TOKEN.
+func TestAll_FromIndexTokenList(t *testing.T) {
+	t.Setenv("UNDERLYINGS", "")
+	t.Setenv("INDEX_TOKEN", "NSE:99926000, bse:99919000 ,NSE:12345")
+	all := All()
+	if len(all) != 2 || all[0].Key != "NIFTY" || all[1].Key != "SENSEX" {
+		t.Fatalf("All() = %v, want NIFTY, SENSEX", all)
+	}
+	// Both forms together: no duplicate.
+	t.Setenv("UNDERLYINGS", "NIFTY,SENSEX")
+	if n := len(All()); n != 2 {
+		t.Fatalf("duplicate profiles: %d", n)
+	}
+	if _, ok := ByStrategy("SENSEX_SR"); !ok {
+		t.Fatal("SENSEX_SR not found")
 	}
 }

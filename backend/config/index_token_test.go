@@ -60,3 +60,18 @@ func TestIndexKeysEnv(t *testing.T) {
 		t.Errorf("IndexKeysEnv = %q", got)
 	}
 }
+
+// INDEX_TOKEN as a list: first is the primary, the rest are extra indexes.
+func TestIndexTokenList(t *testing.T) {
+	t.Setenv("UNDERLYINGS", "")
+	t.Setenv("INDEX_TOKEN", "NSE:99926000,BSE:99919000")
+	if IndexKey() != "NSE:99926000" || IndexToken() != "99926000" || IndexExchange() != "NSE" {
+		t.Errorf("primary = %s", IndexKey())
+	}
+	if got := IndexSubscribeTokens(); got != "1:99926000,3:99919000" {
+		t.Errorf("IndexSubscribeTokens = %q", got)
+	}
+	if got := IndexKeys(); got != "NSE:99926000,BSE:99919000" {
+		t.Errorf("IndexKeys = %q", got)
+	}
+}
