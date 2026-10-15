@@ -44,6 +44,7 @@ type Service struct {
 
 	tfEngine   *strategy.TFEngine
 	srStrategy *strategy.Nifty50SR
+	srExtras   []*srExtra // SR on underlyings beyond NIFTY (UNDERLYINGS)
 
 	redisReader   *redisstore.Reader
 	redisWriter   *redisstore.Writer
@@ -238,6 +239,11 @@ func New(cfg Config) (*Service, error) {
 		svc.tfEngine.Register(svc.srStrategy)
 		registered++
 		log.Println("[stratengine] 🟢 registered NIFTY50_SR (S/R fade + breakout-retest + trend pullback, greeks strike, paper)")
+		for _, ex := range svc.buildSRExtras(srCfg) {
+			svc.tfEngine.Register(ex.strat)
+			registered++
+			log.Printf("[stratengine] 🟢 registered %s on %s (options %s, %s)", ex.strat.Name(), ex.prof.IndexKey(), ex.prof.FNOExchange, ex.prof)
+		}
 	}
 	if registered == 0 {
 		log.Println("[stratengine] ⚪ No strategies registered — all detached from engine")
@@ -476,6 +482,9 @@ func (svc *Service) tickRouterLoop(ctx context.Context, tfTickCh chan<- model.Ti
 			if tick.Token == niftyToken && svc.cfg.SREnabled {
 				svc.refreshStrikeLadder(ctx, tick.Price)
 			}
+			if svc.cfg.SREnabled {
+				svc.extraIndexTick(ctx, tick)
+			}
 
 			// Dynamic strike resolution: retry on every NIFTY tick until successful.
 			// Uses atomic flags to prevent concurrent goroutines and track success.
@@ -680,6 +689,12 @@ func (svc *Service) signalLoop(ctx context.Context) {
 				if sig.Action == strategy.ActionBuy && sig.FNOToken != "" {
 					fnoToken = sig.FNOToken
 				}
+				// Another underlying's entry buys only its own resolved
+				// contract, never the NIFTY ATM pair above.
+				if sig.Action == strategy.ActionBuy && sig.FNOToken == "" && svc.srExtraFor(sig.StrategyName) != nil {
+					svc.cancelStrategyEntry(ctx, sig, "no contract resolved for "+sig.StrategyName, now)
+					continue
+				}
 
 				// No strike picked yet and no static token: nothing to buy.
 				// Exits still go through so an open position can always close.
@@ -731,7 +746,7 @@ func (svc *Service) signalLoop(ctx context.Context) {
 					entryMarketStates[posKey] = marketState
 					entryInstruments[posKey] = trackedInstrument{token: sig.Token, exchange: sig.Exchange}
 					if ps := svc.positionTokenSetterFor(sig.StrategyName); ps != nil && sig.FNOToken != "" {
-						ps.SetPositionToken(svc.qualifyFNOToken(sig.FNOToken))
+						ps.SetPositionToken(svc.qualifyFNOTokenFor(sig.StrategyName, sig.FNOToken))
 					}
 					svc.setStrategyFNOEntryPrice(sig.StrategyName, currentFNOPrice)
 					svc.upsertLiveOrder(sig.StrategyName, sig.Side, fnoToken, currentFNOPrice)
@@ -923,6 +938,9 @@ func (svc *Service) applyOptionAutomation(ctx context.Context, sig *strategy.Sig
 	if !svc.cfg.OptionAutomation || !svc.cfg.DynamicStrikes || sig == nil || sig.Action != strategy.ActionBuy {
 		return
 	}
+	if svc.srExtraFor(sig.StrategyName) != nil {
+		return // the NIFTY strike picker; other underlyings resolve in resolveEntryStrike
+	}
 	if sig.Side != strategy.SideCall && sig.Side != strategy.SidePut {
 		return
 	}
@@ -1035,8 +1053,8 @@ func (svc *Service) setStrategyFNOEntryPrice(strategyName string, price int64) {
 	if price <= 0 {
 		return
 	}
-	if svc.srStrategy != nil && strategyName == svc.srStrategy.Name() {
-		svc.srStrategy.SetFNOEntryPrice(price)
+	if sr := svc.srByName(strategyName); sr != nil {
+		sr.SetFNOEntryPrice(price)
 	}
 }
 
@@ -1064,7 +1082,16 @@ func (svc *Service) fnoSymbolFor(token string) string {
 	if exch == "" {
 		exch = "NFO"
 	}
-	return orderexec.GetInstrumentMaster().SymbolForToken(exch, svc.unqualifyToken(token))
+	im := orderexec.GetInstrumentMaster()
+	if name := im.SymbolForToken(exch, svc.unqualifyToken(token)); name != "" {
+		return name
+	}
+	for _, ex := range svc.srExtras {
+		if name := im.SymbolForToken(ex.prof.FNOExchange, svc.unqualifyToken(token)); name != "" {
+			return name
+		}
+	}
+	return ""
 }
 
 func (svc *Service) unqualifyToken(token string) string {
@@ -1115,9 +1142,9 @@ func (svc *Service) subscribeHeldContracts(ctx context.Context) {
 }
 
 func (svc *Service) seedLiveOrdersFromStrategies() {
-	if svc.srStrategy != nil {
-		if pos := svc.srStrategy.CurrentFNOPosition(); pos != nil {
-			svc.setLiveOrderFromPosition(svc.srStrategy.Name(), pos)
+	for _, sr := range svc.srAll() {
+		if pos := sr.CurrentFNOPosition(); pos != nil {
+			svc.setLiveOrderFromPosition(sr.Name(), pos)
 		}
 	}
 }
@@ -1213,8 +1240,8 @@ func (svc *Service) updateLiveOrdersFromTick(ctx context.Context, tick model.Tic
 
 func (svc *Service) stopConfig(strategyName string) (hardSL, trailSL, trailStart float64, ok bool) {
 	switch {
-	case svc.srStrategy != nil && strategyName == svc.srStrategy.Name():
-		cfg := svc.srStrategy.Config()
+	case svc.srByName(strategyName) != nil:
+		cfg := svc.srByName(strategyName).Config()
 		return float64(cfg.FNOHardSLPct), float64(cfg.FNOTrailSLPct), float64(cfg.FNOTrailStartPct), true
 	default:
 		return 0, 0, 0, false
@@ -1362,9 +1389,15 @@ func (svc *Service) fnoSubscribeMode() int {
 	return smartconnect.ModeQuote
 }
 
-// publishFNOSubscriptionMode asks mdengine to stream tokens in a feed mode
-// (smartconnect.ModeQuote / ModeSnapQuote).
+// publishFNOSubscriptionMode asks mdengine to stream NFO tokens in a feed
+// mode (smartconnect.ModeQuote / ModeSnapQuote).
 func (svc *Service) publishFNOSubscriptionMode(ctx context.Context, mode int, tokens ...string) {
+	svc.publishSubscriptionMode(ctx, 2, mode, tokens...)
+}
+
+// publishSubscriptionMode asks mdengine to stream tokens of one Angel
+// exchange_type (2 NFO, 4 BFO) in a feed mode.
+func (svc *Service) publishSubscriptionMode(ctx context.Context, exchType, mode int, tokens ...string) {
 	uniq := make([]string, 0, len(tokens))
 	seen := make(map[string]struct{})
 	for _, token := range tokens {
@@ -1383,7 +1416,7 @@ func (svc *Service) publishFNOSubscriptionMode(ctx context.Context, mode int, to
 	}
 
 	subCmd, _ := json.Marshal(map[string]interface{}{
-		"exchange_type": 2,
+		"exchange_type": exchType,
 		"tokens":        uniq,
 		"mode":          mode,
 	})

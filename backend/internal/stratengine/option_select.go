@@ -60,15 +60,15 @@ func optionTypeFor(side strategy.PositionSide) string {
 }
 
 func (svc *Service) entryCancellerFor(name string) entryCanceller {
-	if svc.srStrategy != nil && name == svc.srStrategy.Name() {
-		return svc.srStrategy
+	if sr := svc.srByName(name); sr != nil {
+		return sr
 	}
 	return nil
 }
 
 func (svc *Service) positionTokenSetterFor(name string) positionTokenSetter {
-	if svc.srStrategy != nil && name == svc.srStrategy.Name() {
-		return svc.srStrategy
+	if sr := svc.srByName(name); sr != nil {
+		return sr
 	}
 	return nil
 }
@@ -79,6 +79,9 @@ func (svc *Service) positionTokenSetterFor(name string) positionTokenSetter {
 // NIFTY50_SR entries pick their strike from the chain by greeks first
 // (see sr_strike.go).
 func (svc *Service) resolveEntryStrike(ctx context.Context, sig *strategy.Signal, now time.Time) error {
+	if ex := svc.srExtraFor(sig.StrategyName); ex != nil {
+		return svc.resolveExtraEntry(ctx, ex, sig, now)
+	}
 	// STRAT_PICKER_MODE=on: the picker's contract (quoted, streamed) or a
 	// refusal. Off/shadow fall through to the selection below unchanged.
 	if decided, err := svc.pickEntry(sig, now); decided {

@@ -91,6 +91,9 @@ func NewStrikePickerFor(sc *smartconnect.SmartConnect, p underlying.Profile) *St
 	}
 }
 
+// SmartConnect returns the picker's broker client (nil without a session).
+func (sp *StrikePicker) SmartConnect() *smartconnect.SmartConnect { return sp.sc }
+
 // Profile returns the underlying this picker resolves options for.
 func (sp *StrikePicker) Profile() underlying.Profile { return sp.prof() }
 
