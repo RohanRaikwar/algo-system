@@ -25,11 +25,26 @@ import (
 )
 
 const (
-	instrumentMasterURL   = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
-	cacheDir              = ".cache"
 	cacheFileName         = "instrument_master_cache.json"
 	cacheMetadataFileName = "instrument_master_metadata.json"
+
+	// A failed download is retried from loadRetryBase, doubling up to
+	// loadRetryMax, until it succeeds.
+	loadRetryBase = 30 * time.Second
+	loadRetryMax  = 5 * time.Minute
 )
+
+// instrumentMasterURL is a var so tests can point it at a local server.
+var instrumentMasterURL = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+
+// cacheDir is where the disk cache lives. INSTRUMENT_MASTER_CACHE_DIR points
+// it at a persistent volume so a restart does not need a fresh download.
+var cacheDir = func() string {
+	if dir := os.Getenv("INSTRUMENT_MASTER_CACHE_DIR"); dir != "" {
+		return dir
+	}
+	return ".cache"
+}()
 
 // Instrument represents a single instrument from Angel One's master file
 type Instrument struct {
@@ -200,13 +215,41 @@ func (im *InstrumentMaster) StopScheduler() {
 // backgroundRefresh checks if cache is stale and refreshes in background
 func (im *InstrumentMaster) backgroundRefresh() {
 	im.mu.RLock()
-	needsRefresh := time.Since(im.lastUpdated) > im.cacheTTL || len(im.instruments) == 0
+	haveCache := len(im.instruments) > 0
+	needsRefresh := time.Since(im.lastUpdated) > im.cacheTTL || !haveCache
 	im.mu.RUnlock()
 
-	if needsRefresh {
-		log.Println("[instrumentmaster] 🔄 Starting background refresh...")
-		if err := im.Load(); err != nil {
-			log.Printf("[instrumentmaster] ⚠️  Background refresh failed: %v", err)
+	if !needsRefresh {
+		return
+	}
+	if !im.startupDownload && haveCache {
+		log.Println("[instrumentmaster] ⏸️  Startup download disabled, using expired cache")
+		return
+	}
+	log.Println("[instrumentmaster] 🔄 Starting background refresh...")
+	im.loadWithRetry(loadRetryBase, loadRetryMax)
+}
+
+// loadWithRetry calls Load until it succeeds or the scheduler is stopped.
+// Without it one slow download at startup leaves the master empty (lot sizes
+// and expiries on fallback) until the next daily refresh.
+func (im *InstrumentMaster) loadWithRetry(base, max time.Duration) {
+	wait := base
+	for {
+		err := im.Load()
+		if err == nil && im.IsLoaded() {
+			return
+		}
+		if err != nil {
+			log.Printf("[instrumentmaster] ❌ Download failed, retrying in %v: %v", wait, err)
+		}
+		select {
+		case <-time.After(wait):
+		case <-im.schedulerStop:
+			return
+		}
+		if wait *= 2; wait > max {
+			wait = max
 		}
 	}
 }
@@ -219,16 +262,6 @@ func (im *InstrumentMaster) loadFromDiskCache() {
 	// Check if cache file exists
 	if _, err := os.Stat(cacheFilePath); os.IsNotExist(err) {
 		log.Println("[instrumentmaster] 💾 No disk cache found")
-		if im.startupDownload {
-			log.Println("[instrumentmaster] 📥 Startup download enabled, downloading immediately...")
-			go func() {
-				if err := im.Load(); err != nil {
-					log.Printf("[instrumentmaster] ❌ Startup download failed: %v", err)
-				}
-			}()
-		} else {
-			log.Println("[instrumentmaster] ⏸️  Startup download disabled, skipping download")
-		}
 		return
 	}
 
@@ -236,102 +269,36 @@ func (im *InstrumentMaster) loadFromDiskCache() {
 	metadataFile, err := os.ReadFile(cacheMetadataFilePath)
 	if err != nil {
 		log.Printf("[instrumentmaster] ⚠️  Failed to read cache metadata: %v", err)
-		if im.startupDownload {
-			log.Println("[instrumentmaster] 🔄 Cache metadata invalid, downloading fresh data...")
-			go func() {
-				if err := im.Load(); err != nil {
-					log.Printf("[instrumentmaster] ❌ Startup download failed: %v", err)
-				}
-			}()
-		} else {
-			log.Println("[instrumentmaster] ⏸️  Startup download disabled, skipping download")
-		}
 		return
 	}
 
 	var metadata CacheMetadata
 	if err := json.Unmarshal(metadataFile, &metadata); err != nil {
 		log.Printf("[instrumentmaster] ⚠️  Failed to parse cache metadata: %v", err)
-		if im.startupDownload {
-			log.Println("[instrumentmaster] 🔄 Cache metadata corrupted, downloading fresh data...")
-			go func() {
-				if err := im.Load(); err != nil {
-					log.Printf("[instrumentmaster] ❌ Startup download failed: %v", err)
-				}
-			}()
-		} else {
-			log.Println("[instrumentmaster] ⏸️  Startup download disabled, skipping download")
-		}
 		return
 	}
 
 	// Check if cache is still valid
 	if time.Since(metadata.LastUpdated) > im.cacheTTL {
 		log.Printf("[instrumentmaster] ⏰ Disk cache expired (age: %v)", time.Since(metadata.LastUpdated))
-		if im.startupDownload {
-			log.Println("[instrumentmaster] 📥 Downloading fresh data...")
-			go func() {
-				if err := im.Load(); err != nil {
-					log.Printf("[instrumentmaster] ❌ Startup download failed: %v", err)
-				}
-			}()
-		} else {
-			log.Println("[instrumentmaster] ⏸️  Startup download disabled, using expired cache")
-		}
-		// Continue to load expired cache if startup download is disabled
-		if !im.startupDownload {
-			// Load expired cache anyway
-		} else {
-			return
-		}
 	}
 
 	// Load instruments from cache
 	cacheFile, err := os.ReadFile(cacheFilePath)
 	if err != nil {
 		log.Printf("[instrumentmaster] ⚠️  Failed to read cache file: %v", err)
-		if im.startupDownload {
-			log.Println("[instrumentmaster] 🔄 Cache file unreadable, downloading fresh data...")
-			go func() {
-				if err := im.Load(); err != nil {
-					log.Printf("[instrumentmaster] ❌ Startup download failed: %v", err)
-				}
-			}()
-		} else {
-			log.Println("[instrumentmaster] ⏸️  Startup download disabled, skipping download")
-		}
 		return
 	}
 
 	var instruments []Instrument
 	if err := json.Unmarshal(cacheFile, &instruments); err != nil {
 		log.Printf("[instrumentmaster] ⚠️  Failed to parse cache file: %v", err)
-		if im.startupDownload {
-			log.Println("[instrumentmaster] 🔄 Cache file corrupted, downloading fresh data...")
-			go func() {
-				if err := im.Load(); err != nil {
-					log.Printf("[instrumentmaster] ❌ Startup download failed: %v", err)
-				}
-			}()
-		} else {
-			log.Println("[instrumentmaster] ⏸️  Startup download disabled, skipping download")
-		}
 		return
 	}
 
 	// Validate cache data
 	if len(instruments) == 0 {
 		log.Println("[instrumentmaster] ⚠️  Cache file is empty")
-		if im.startupDownload {
-			log.Println("[instrumentmaster] 📥 Downloading fresh data...")
-			go func() {
-				if err := im.Load(); err != nil {
-					log.Printf("[instrumentmaster] ❌ Startup download failed: %v", err)
-				}
-			}()
-		} else {
-			log.Println("[instrumentmaster] ⏸️  Startup download disabled, skipping download")
-		}
 		return
 	}
 
@@ -375,7 +342,7 @@ func (im *InstrumentMaster) saveToDiskCache() error {
 		return fmt.Errorf("failed to marshal instruments: %w", err)
 	}
 
-	if err := os.WriteFile(cacheFilePath, data, 0644); err != nil {
+	if err := writeFileAtomic(cacheFilePath, data); err != nil {
 		return fmt.Errorf("failed to write cache file: %w", err)
 	}
 
@@ -389,12 +356,22 @@ func (im *InstrumentMaster) saveToDiskCache() error {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	if err := os.WriteFile(cacheMetadataFilePath, metadataData, 0644); err != nil {
+	if err := writeFileAtomic(cacheMetadataFilePath, metadataData); err != nil {
 		return fmt.Errorf("failed to write metadata file: %w", err)
 	}
 
 	log.Printf("[instrumentmaster] 💾 Saved %d instruments to disk cache", len(instruments))
 	return nil
+}
+
+// writeFileAtomic writes via a temp file and rename, so a crash mid-write
+// never leaves a truncated cache on the volume.
+func writeFileAtomic(path string, data []byte) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // Load downloads and parses the instrument master file
@@ -417,7 +394,7 @@ func (im *InstrumentMaster) Load() error {
 	log.Println("[instrumentmaster] 📥 Downloading instrument master file...")
 	startTime := time.Now()
 
-	client := &http.Client{Timeout: 60 * time.Second} // Increased timeout for large file
+	client := &http.Client{Timeout: 3 * time.Minute} // large file; 60s timed out on Railway
 	resp, err := client.Get(instrumentMasterURL)
 	if err != nil {
 		return fmt.Errorf("failed to download instrument master: %w", err)

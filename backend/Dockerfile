@@ -22,5 +22,8 @@ COPY --from=build /out/ /app/bin/
 COPY config/ /app/config/
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh && mkdir -p /app/data /app/logs /app/.cache
+# Instrument master cache on the Railway volume (/app/data), so a restart
+# reads it from disk instead of re-downloading the 60s+ file.
+ENV INSTRUMENT_MASTER_CACHE_DIR=/app/data/instrument-cache
 EXPOSE 9090
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
