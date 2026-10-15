@@ -12,9 +12,10 @@ import (
 // held long enough to stall a service's batch insert past its busy_timeout.
 const pruneChunk = 50000
 
-// pruneBefore deletes rows of table with ts < cutoff, in chunks. It
-// returns the number of rows deleted.
-func pruneBefore(ctx context.Context, db *sql.DB, table string, cutoff int64) (int64, error) {
+// pruneBefore deletes rows of t with a day timestamp < cutoff, in chunks.
+// It returns the number of rows deleted.
+func pruneBefore(ctx context.Context, db *sql.DB, t dayTable, cutoff int64) (int64, error) {
+	table := t.name
 	exists, err := tableExists(ctx, db, table)
 	if err != nil || !exists {
 		return 0, err
@@ -22,7 +23,7 @@ func pruneBefore(ctx context.Context, db *sql.DB, table string, cutoff int64) (i
 	var total int64
 	for {
 		res, err := db.ExecContext(ctx,
-			`DELETE FROM `+table+` WHERE rowid IN (SELECT rowid FROM `+table+` WHERE ts < ? LIMIT ?)`,
+			`DELETE FROM `+table+` WHERE rowid IN (SELECT rowid FROM `+table+` WHERE `+t.expr()+` < ? LIMIT ?)`,
 			cutoff, pruneChunk)
 		if err != nil {
 			return total, fmt.Errorf("prune %s: %w", table, err)

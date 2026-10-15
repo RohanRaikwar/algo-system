@@ -46,6 +46,10 @@ type Hub struct {
 	// Optional SQLite reader for candle backfill when Redis is trimmed
 	CandleReader model.CandleReader
 
+	// Optional MEGA archive reader for chart history older than the local
+	// SQLite window (nil when MEGA is not configured).
+	ColdCandles ColdCandleReader
+
 	mu      sync.RWMutex
 	clients map[*Client]bool
 	latest  map[string]latestEntry

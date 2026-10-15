@@ -41,6 +41,41 @@ func (f *fakeUploader) Upload(_ context.Context, localPath string, dir []string,
 	return int64(len(b)), nil
 }
 
+// List and Download read back what Upload stored, so the fake is also the
+// Downloader for cold reads and restore.
+func (f *fakeUploader) List(_ context.Context, dir []string) ([]RemoteFile, error) {
+	if f.fail {
+		return nil, errors.New("mega down")
+	}
+	entries, err := os.ReadDir(filepath.Join(append([]string{f.dir}, dir...)...))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []RemoteFile
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, RemoteFile{Name: e.Name(), Size: info.Size(), IsDir: e.IsDir()})
+	}
+	return out, nil
+}
+
+func (f *fakeUploader) Download(_ context.Context, dir []string, name, localPath string) error {
+	if f.fail {
+		return errors.New("mega down")
+	}
+	b, err := os.ReadFile(filepath.Join(append(append([]string{f.dir}, dir...), name)...))
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(localPath, b, 0o644)
+}
+
 // Tuesday 2026-10-06, 17:00 IST: after the default 16:00 run time.
 var testNow = time.Date(2026, 10, 6, 17, 0, 0, 0, markethours.IST)
 
@@ -79,22 +114,30 @@ func newTestService(t *testing.T, up *fakeUploader) *Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustExec(t, db, `CREATE TABLE candles_1s (token TEXT, ts INTEGER, close INTEGER)`)
-	mustExec(t, db, `CREATE TABLE candles_tf (token TEXT, tf INTEGER, ts INTEGER, close INTEGER)`)
+	mustExec(t, db, `CREATE TABLE candles_1s (token TEXT, exchange TEXT, ts INTEGER, open INTEGER, high INTEGER,
+		low INTEGER, close INTEGER, volume INTEGER, ticks_count INTEGER, PRIMARY KEY (exchange, token, ts))`)
+	mustExec(t, db, `CREATE TABLE candles_tf (token TEXT, exchange TEXT, tf INTEGER, ts INTEGER, open INTEGER,
+		high INTEGER, low INTEGER, close INTEGER, volume INTEGER, count INTEGER, PRIMARY KEY (exchange, token, tf, ts))`)
 	for _, d := range []int{5, 6} {
 		for h := 10; h < 15; h++ {
-			mustExec(t, db, `INSERT INTO candles_1s VALUES ('99926000', ?, 2500000)`, istTS(d, h))
-			mustExec(t, db, `INSERT INTO candles_tf VALUES ('99926000', 60, ?, 2500000)`, istTS(d, h))
+			mustExec(t, db, `INSERT INTO candles_1s VALUES ('99926000', 'NSE', ?, 2500000, 2500000, 2500000, 2500000, 0, 1)`, istTS(d, h))
+			mustExec(t, db, `INSERT INTO candles_tf VALUES ('99926000', 'NSE', 60, ?, 2500000, 2500000, 2500000, 2500000, 0, 60)`, istTS(d, h))
 		}
 	}
 	sep20 := time.Date(2026, 9, 20, 11, 0, 0, 0, markethours.IST).Unix()
-	mustExec(t, db, `INSERT INTO candles_tf VALUES ('99926000', 60, ?, 2400000)`, sep20)
+	mustExec(t, db, `INSERT INTO candles_tf VALUES ('99926000', 'NSE', 60, ?, 2400000, 2400000, 2400000, 2400000, 0, 60)`, sep20)
 	db.Close()
 
+	// Signals on Oct 5 and Oct 6; candle_ts is RFC3339 UTC text as the
+	// signal journal writes it.
 	journal := filepath.Join(dir, "signals.db")
 	jdb, _ := sql.Open("sqlite3", journal)
-	mustExec(t, jdb, `CREATE TABLE signals (id INTEGER, ts INTEGER)`)
-	mustExec(t, jdb, `INSERT INTO signals VALUES (1, ?)`, istTS(6, 11))
+	mustExec(t, jdb, `CREATE TABLE signals (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy TEXT, candle_ts DATETIME NOT NULL,
+		UNIQUE(strategy, candle_ts))`)
+	for _, d := range []int{5, 6} {
+		mustExec(t, jdb, `INSERT INTO signals (strategy, candle_ts) VALUES ('SR', ?)`,
+			time.Unix(istTS(d, 11), 0).UTC().Format(time.RFC3339))
+	}
 	jdb.Close()
 
 	cfg := Config{
@@ -118,25 +161,28 @@ func TestRunOnce_UploadsThenPrunes(t *testing.T) {
 		"algo-archive/2026/09/20/candles-2026-09-20.db.gz",
 		"algo-archive/2026/10/05/candles-2026-10-05.db.gz",
 		"algo-archive/2026/10/06/candles-2026-10-06.db.gz",
+		"algo-archive/2026/10/05/signals-2026-10-05.db.gz",
 		"algo-archive/2026/10/06/signals-2026-10-06.db.gz",
 	}
 	if strings.Join(up.names, ",") != strings.Join(want, ",") {
 		t.Fatalf("uploads = %v, want %v", up.names, want)
 	}
 
-	// The Oct 6 archive holds exactly that day's rows.
-	gz, err := os.Open(filepath.Join(up.dir, "algo-archive/2026/10/06/candles-2026-10-06.db.gz"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	zr, _ := gzip.NewReader(gz)
-	raw := filepath.Join(t.TempDir(), "day.db")
-	out, _ := os.Create(raw)
-	io.Copy(out, zr)
-	out.Close()
-	gz.Close()
+	// The Oct 6 archive holds exactly that day's rows, with the live keys.
+	raw := unpack(t, filepath.Join(up.dir, "algo-archive/2026/10/06/candles-2026-10-06.db.gz"))
 	if n := count(t, raw, `SELECT COUNT(*) FROM candles_1s`); n != 5 {
 		t.Fatalf("archived 1s rows = %d, want 5", n)
+	}
+	if n := count(t, raw, `SELECT COUNT(*) FROM sqlite_master WHERE name='candles_tf' AND sql LIKE '%PRIMARY KEY%'`); n != 1 {
+		t.Fatalf("day file lost the candles_tf primary key")
+	}
+	// The journal day folder holds only that day's signal, not the whole journal.
+	sig := unpack(t, filepath.Join(up.dir, "algo-archive/2026/10/06/signals-2026-10-06.db.gz"))
+	if n := count(t, sig, `SELECT COUNT(*) FROM signals`); n != 1 {
+		t.Fatalf("Oct 6 signals file rows = %d, want 1", n)
+	}
+	if n := count(t, s.cfg.JournalPaths[0], `SELECT COUNT(*) FROM signals`); n != 2 {
+		t.Fatalf("local journal pruned: %d rows, want 2", n)
 	}
 
 	c := s.cfg.CandlesPath
@@ -147,8 +193,8 @@ func TestRunOnce_UploadsThenPrunes(t *testing.T) {
 	if n := count(t, c, `SELECT COUNT(*) FROM candles_tf`); n != 10 {
 		t.Fatalf("local tf rows = %d, want 10", n)
 	}
-	if n := count(t, s.cfg.ManifestPath, `SELECT COUNT(*) FROM archived`); n != 4 {
-		t.Fatalf("manifest rows = %d, want 4", n)
+	if n := count(t, s.cfg.ManifestPath, `SELECT COUNT(*) FROM archived`); n != 5 {
+		t.Fatalf("manifest rows = %d, want 5", n)
 	}
 
 	// A second run finds everything archived and uploads nothing.
@@ -158,6 +204,145 @@ func TestRunOnce_UploadsThenPrunes(t *testing.T) {
 	}
 	if len(up.names) != 0 {
 		t.Fatalf("second run uploaded %v", up.names)
+	}
+}
+
+// unpack gunzips a day file into a temp SQLite file.
+func unpack(t *testing.T, gzPath string) string {
+	t.Helper()
+	gz, err := os.Open(gzPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gz.Close()
+	zr, err := gzip.NewReader(gz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := filepath.Join(t.TempDir(), "day.db")
+	out, _ := os.Create(raw)
+	io.Copy(out, zr)
+	out.Close()
+	return raw
+}
+
+func TestRunOnce_ReexportsOldJournalSnapshots(t *testing.T) {
+	up := &fakeUploader{dir: t.TempDir()}
+	s := newTestService(t, up)
+	// An older archiver recorded a whole-journal snapshot for Oct 6.
+	man, err := openManifest(s.cfg.ManifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	man.record(context.Background(), manifestEntry{Source: "signals", Day: "2026-10-06", RemotePath: "x", Rows: 0})
+	man.Close()
+
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(up.names, ","), "signals-2026-10-06.db.gz") {
+		t.Fatalf("Oct 6 journal not re-exported per day: %v", up.names)
+	}
+}
+
+func TestColdReader_PagesBackThroughArchive(t *testing.T) {
+	up := &fakeUploader{dir: t.TempDir()}
+	s := newTestService(t, up)
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	cfg := s.cfg
+	cfg.ColdCacheDir = filepath.Join(t.TempDir(), "cache")
+	r := newColdReader(up, cfg)
+
+	// Before Oct 6 10:00 IST: Oct 5's five candles, oldest first. Sep 20
+	// lies past 10 days with no candles, so the walk stops before it.
+	got, err := r.ReadTFCandlesBefore("NSE", "99926000", 60, istTS(6, 10), 6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 5 || got[0].TS.Unix() != istTS(5, 10) || got[4].TS.Unix() != istTS(5, 14) {
+		t.Fatalf("got %d candles %v..., want Oct 5 10:00–14:00", len(got), got)
+	}
+
+	// A walk that starts within 10 days of Sep 20 reaches it across the
+	// weekend and empty days.
+	got, _ = r.ReadTFCandlesBefore("NSE", "99926000", 60, sepTS(28, 10), 5)
+	if len(got) != 1 || got[0].Close != 2400000 {
+		t.Fatalf("Sep 20 candle not reached: %v", got)
+	}
+
+	// Cached: a second read works with MEGA down.
+	up.fail = true
+	got, _ = r.ReadTFCandlesBefore("NSE", "99926000", 60, istTS(6, 10), 3)
+	if len(got) != 3 || got[2].TS.Unix() != istTS(5, 14) {
+		t.Fatalf("cached read = %d candles", len(got))
+	}
+
+	// Past the start of the archive the walk stops with what it has.
+	up.fail = false
+	got, _ = r.ReadTFCandlesBefore("NSE", "99926000", 60, sepTS(20, 11), 10)
+	if len(got) != 0 {
+		t.Fatalf("before archive start: got %d candles", len(got))
+	}
+}
+
+func sepTS(day, hour int) int64 {
+	return time.Date(2026, 9, day, hour, 0, 0, 0, markethours.IST).Unix()
+}
+
+func TestRestore_RefillsEmptyVolume(t *testing.T) {
+	up := &fakeUploader{dir: t.TempDir()}
+	s := newTestService(t, up)
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// New account: empty volume.
+	for _, p := range []string{s.cfg.CandlesPath, s.cfg.JournalPaths[0], s.cfg.ManifestPath} {
+		os.Remove(p)
+		os.Remove(p + "-wal")
+		os.Remove(p + "-shm")
+	}
+	s.store = up
+	if err := s.Restore(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	c := s.cfg.CandlesPath
+	// candles_tf keeps 10 days back from Oct 6: Oct 5–6, not Sep 20.
+	if n := count(t, c, `SELECT COUNT(*) FROM candles_tf`); n != 10 {
+		t.Fatalf("restored tf rows = %d, want 10", n)
+	}
+	if n := count(t, c, `SELECT COUNT(*) FROM sqlite_master WHERE name='candles_tf' AND sql LIKE '%PRIMARY KEY%'`); n != 1 {
+		t.Fatalf("restored candles_tf has no primary key")
+	}
+	// Journals come back whole.
+	if n := count(t, s.cfg.JournalPaths[0], `SELECT COUNT(*) FROM signals`); n != 2 {
+		t.Fatalf("restored signals = %d, want 2", n)
+	}
+	if n := count(t, s.cfg.ManifestPath, `SELECT COUNT(*) FROM archived`); n != 5 {
+		t.Fatalf("rebuilt manifest rows = %d, want 5", n)
+	}
+
+	// The next daily run uploads nothing again.
+	up.names = nil
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(up.names) != 0 {
+		t.Fatalf("run after restore uploaded %v", up.names)
+	}
+
+	// With candles present, restore does not contact MEGA at all.
+	db, _ := sql.Open("sqlite3", c)
+	mustExec(t, db, `DELETE FROM candles_tf WHERE ts < ?`, istTS(6, 0))
+	db.Close()
+	os.Remove(s.cfg.JournalPaths[0])
+	up.fail = true
+	if err := s.Restore(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, c, `SELECT COUNT(*) FROM candles_tf`); n != 5 {
+		t.Fatalf("restore touched live data: %d rows, want 5", n)
 	}
 }
 

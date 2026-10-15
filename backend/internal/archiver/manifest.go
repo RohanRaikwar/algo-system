@@ -32,6 +32,13 @@ func openManifest(path string) (*manifest, error) {
 		db.Close()
 		return nil, fmt.Errorf("manifest schema: %w", err)
 	}
+	// Journals used to be uploaded as whole-database snapshots, recorded
+	// with rows = 0 (a day export with no rows is never recorded). Drop
+	// those entries so each journal day is exported again on its own.
+	if _, err := db.Exec(`DELETE FROM archived WHERE rows = 0`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("manifest migrate: %w", err)
+	}
 	return &manifest{db: db}, nil
 }
 

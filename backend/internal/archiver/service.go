@@ -22,12 +22,27 @@ import (
 	"trading-systemv1/internal/markethours"
 )
 
-// dayTable is a table with a unix-second ts column, archived per day.
-// keepDays < 0 means archived but never pruned.
+// dayTable is a table archived per IST day. tsExpr is the SQL expression
+// giving a row's unix-second time ("" means the ts column). keepDays < 0
+// means archived but never pruned.
 type dayTable struct {
 	name     string
+	tsExpr   string
 	keepDays int
 }
+
+func (t dayTable) expr() string {
+	if t.tsExpr == "" {
+		return "ts"
+	}
+	return t.tsExpr
+}
+
+// Day expressions for tables whose time is not a unix-second ts column.
+const (
+	signalsDayExpr = `CAST(strftime('%s', candle_ts) AS INTEGER)` // RFC3339 text
+	nanosDayExpr   = `(%s / 1000000000)`                          // unix-nano column
+)
 
 // daySource is one database whose tables are exported a day at a time.
 type daySource struct {
@@ -48,31 +63,60 @@ const quietFrom = 8*60 + 45
 type Service struct {
 	cfg      Config
 	uploader Uploader
+	store    Downloader
 	now      func() time.Time
 	backoff  []time.Duration // waits between upload attempts
 }
 
 // New builds the service. A disabled config builds a no-op service.
 func New(cfg Config) *Service {
+	ms := newMegaStore(cfg.MegaEmail, cfg.MegaPassword)
 	return &Service{
 		cfg:      cfg,
-		uploader: newMegaUploader(cfg.MegaEmail, cfg.MegaPassword),
+		uploader: ms,
+		store:    ms,
 		now:      time.Now,
 		backoff:  []time.Duration{30 * time.Second, 2 * time.Minute},
 	}
 }
 
+// daySources lists every archived database. Each lands in MEGA as one file
+// per IST day holding only that day's rows, so a day folder can be pulled
+// out on its own. Journals (keepDays -1) are never pruned locally: P&L
+// analytics reads all of their history.
 func (s *Service) daySources() []daySource {
-	return []daySource{
+	srcs := []daySource{
 		{name: "candles", path: s.cfg.CandlesPath, tables: []dayTable{
-			{"candles_1s", s.cfg.Keep1sDays},
-			{"candles_tf", s.cfg.KeepTFDays},
+			{"candles_1s", "", s.cfg.Keep1sDays},
+			{"candles_tf", "", s.cfg.KeepTFDays},
 		}},
 		{name: "exitwatch", path: s.cfg.ExitwatchPath, tables: []dayTable{
-			{"decisions", -1},
-			{"features_1hz", s.cfg.KeepFeaturesDays},
+			{"decisions", "", -1},
+			{"features_1hz", "", s.cfg.KeepFeaturesDays},
 		}},
 	}
+	for _, p := range s.cfg.JournalPaths {
+		srcs = append(srcs, daySource{name: baseName(p), path: p, tables: []dayTable{
+			{"signals", signalsDayExpr, -1},
+		}})
+	}
+	if s.cfg.OrdersPath != "" {
+		srcs = append(srcs, daySource{name: baseName(s.cfg.OrdersPath), path: s.cfg.OrdersPath, tables: []dayTable{
+			{"order_events", fmt.Sprintf(nanosDayExpr, "ts"), -1},
+			{"intents", fmt.Sprintf(nanosDayExpr, "claimed_ts"), -1},
+		}})
+	}
+	if s.cfg.ExitPolicyPath != "" {
+		srcs = append(srcs, daySource{name: baseName(s.cfg.ExitPolicyPath), path: s.cfg.ExitPolicyPath, tables: []dayTable{
+			{"exit_decisions", "", -1},
+		}})
+	}
+	return srcs
+}
+
+// baseName is a database file name without directory or extension.
+func baseName(path string) string {
+	return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 }
 
 // Run blocks until ctx is cancelled. It returns nil on cancel; run errors
@@ -155,11 +199,6 @@ func (s *Service) RunOnce(ctx context.Context) error {
 			log.Printf("[archiver] ❌ %s: %v", src.name, err)
 		}
 	}
-	for _, path := range s.cfg.JournalPaths {
-		if err := s.archiveSnapshot(ctx, man, path, lastDay); err != nil {
-			log.Printf("[archiver] ❌ %s: %v", path, err)
-		}
-	}
 	log.Printf("[archiver] run done in %s", time.Since(start).Round(time.Millisecond))
 	return nil
 }
@@ -177,11 +216,7 @@ func (s *Service) archiveDaySource(ctx context.Context, man *manifest, src daySo
 	}
 	defer db.Close()
 
-	names := make([]string, len(src.tables))
-	for i, t := range src.tables {
-		names[i] = t.name
-	}
-	minTS, ok, err := earliestTS(ctx, db, names)
+	minTS, ok, err := earliestTS(ctx, db, src.tables)
 	if err != nil {
 		return err
 	}
@@ -193,7 +228,7 @@ func (s *Service) archiveDaySource(ctx context.Context, man *manifest, src daySo
 	pruneLimit := lastEnd // rows before this are all safely archived
 	day := time.Unix(minTS, 0).In(markethours.IST)
 	for i := 0; i < maxCatchUpDays && !dayAfter(day, lastDay); i, day = i+1, day.AddDate(0, 0, 1) {
-		if err := s.archiveDay(ctx, man, db, src, names, day); err != nil {
+		if err := s.archiveDay(ctx, man, db, src, day); err != nil {
 			pruneLimit, _ = dayBounds(day)
 			log.Printf("[archiver] ❌ %s %s: %v (pruning stops before this day)", src.name, dayKey(day), err)
 			break
@@ -209,7 +244,7 @@ func (s *Service) archiveDaySource(ctx context.Context, man *manifest, src daySo
 		if cutoff > pruneLimit {
 			cutoff = pruneLimit
 		}
-		n, err := pruneBefore(ctx, db, t.name, cutoff)
+		n, err := pruneBefore(ctx, db, t, cutoff)
 		if err != nil {
 			return err
 		}
@@ -234,7 +269,7 @@ func (s *Service) archiveDaySource(ctx context.Context, man *manifest, src daySo
 // rows is skipped without a manifest entry. A day is exported once: rows
 // written into it after the export (only staging writes after the close)
 // are not archived before pruning.
-func (s *Service) archiveDay(ctx context.Context, man *manifest, db *sql.DB, src daySource, tables []string, day time.Time) error {
+func (s *Service) archiveDay(ctx context.Context, man *manifest, db *sql.DB, src daySource, day time.Time) error {
 	key := dayKey(day)
 	if done, err := man.has(ctx, src.name, key); err != nil || done {
 		return err
@@ -242,7 +277,7 @@ func (s *Service) archiveDay(ctx context.Context, man *manifest, db *sql.DB, src
 	start, end := dayBounds(day)
 	raw := filepath.Join(s.cfg.TmpDir, fmt.Sprintf("%s-%s.db", src.name, key))
 	defer os.Remove(raw)
-	rows, err := exportDay(ctx, db, tables, start, end, raw)
+	rows, err := exportDay(ctx, db, src.tables, start, end, raw)
 	if err != nil {
 		return err
 	}
@@ -252,33 +287,9 @@ func (s *Service) archiveDay(ctx context.Context, man *manifest, db *sql.DB, src
 	return s.uploadAndRecord(ctx, man, src.name, day, raw, rows)
 }
 
-// archiveSnapshot uploads a whole-database copy of a journal for lastDay.
-// Journals are never pruned: P&L analytics reads all of their history.
-func (s *Service) archiveSnapshot(ctx context.Context, man *manifest, path string, lastDay time.Time) error {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return nil
-	}
-	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	key := dayKey(lastDay)
-	if done, err := man.has(ctx, name, key); err != nil || done {
-		return err
-	}
-	db, err := openDB(path)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	raw := filepath.Join(s.cfg.TmpDir, fmt.Sprintf("%s-%s.db", name, key))
-	defer os.Remove(raw)
-	if err := snapshotDB(ctx, db, raw); err != nil {
-		return err
-	}
-	return s.uploadAndRecord(ctx, man, name, lastDay, raw, 0)
-}
-
 // uploadAndRecord gzips raw, uploads it to <root>/YYYY/MM/DD/, checks the
 // remote size and writes the manifest entry. One folder per trading day holds
-// that day's candles, signals and exitwatch files together.
+// that day's files, each holding only that day's rows.
 func (s *Service) uploadAndRecord(ctx context.Context, man *manifest, source string, day time.Time, raw string, rows int64) error {
 	gz := raw + ".gz"
 	defer os.Remove(gz)
@@ -286,8 +297,7 @@ func (s *Service) uploadAndRecord(ctx context.Context, man *manifest, source str
 	if err != nil {
 		return fmt.Errorf("gzip: %w", err)
 	}
-	ist := day.In(markethours.IST)
-	dir := []string{strings.Trim(s.cfg.MegaRootDir, "/"), ist.Format("2006"), ist.Format("01"), ist.Format("02")}
+	dir := dayDir(s.cfg.MegaRootDir, day)
 	name := filepath.Base(gz)
 
 	var remote int64
