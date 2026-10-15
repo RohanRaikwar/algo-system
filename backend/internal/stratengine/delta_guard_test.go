@@ -3,6 +3,7 @@ package stratengine
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,12 +15,31 @@ import (
 type fakeGreeks struct {
 	chain []orderexec.OptionContract
 	err   error
+
+	mu    sync.Mutex // entryChain may refresh from a goroutine
 	calls int
 }
 
 func (f *fakeGreeks) LoadOptionChain(time.Time) ([]orderexec.OptionContract, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls++
 	return f.chain, f.err
+}
+
+func (f *fakeGreeks) n() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+// warmChain loads the chain off the signal path, as strikeSelLoop and the
+// picker do in market hours; entries then read the cache.
+func warmChain(t *testing.T, svc *Service, now time.Time) {
+	t.Helper()
+	if _, err := svc.optionChain(now); err != nil {
+		t.Fatalf("warm chain: %v", err)
+	}
 }
 
 var testExpiry = time.Date(2026, 10, 6, 0, 0, 0, 0, time.FixedZone("IST", 5*3600+30*60))
@@ -60,8 +80,10 @@ func TestDeltaGuardRefusesWithoutGreeks(t *testing.T) {
 	}
 	g2 := &fakeGreeks{chain: []orderexec.OptionContract{contract(24100, "CE", 0.4)}}
 	svc2 := deltaSvc(g2, 2400000, "CE24000")
+	now := time.Now()
+	warmChain(t, svc2, now)
 	sig2 := buyCall(24000)
-	if err := svc2.resolveEntryStrike(context.Background(), &sig2, time.Now()); err == nil {
+	if err := svc2.resolveEntryStrike(context.Background(), &sig2, now); err == nil {
 		t.Fatal("strike missing from the chain must refuse")
 	}
 }
@@ -71,8 +93,8 @@ func TestDeltaGuardOffSkipsGreeks(t *testing.T) {
 	svc := deltaSvc(g, 2400000, "CE24000")
 	svc.cfg.RangeDeltaGuard = false
 	sig := buyCall(24000)
-	if err := svc.resolveEntryStrike(context.Background(), &sig, time.Now()); err != nil || g.calls != 0 {
-		t.Fatalf("guard off: err=%v calls=%d", err, g.calls)
+	if err := svc.resolveEntryStrike(context.Background(), &sig, time.Now()); err != nil || g.n() != 0 {
+		t.Fatalf("guard off: err=%v calls=%d", err, g.n())
 	}
 }
 
@@ -80,14 +102,15 @@ func TestDeltaGuardCachesChain(t *testing.T) {
 	g := &fakeGreeks{chain: []orderexec.OptionContract{contract(24000, "CE", 0.5)}}
 	svc := deltaSvc(g, 2400000, "CE24000")
 	now := time.Now()
+	warmChain(t, svc, now)
 	for i := 0; i < 3; i++ {
 		sig := buyCall(24000)
 		if err := svc.resolveEntryStrike(context.Background(), &sig, now); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if g.calls != 1 {
-		t.Fatalf("OptionGreek called %d times, want 1 within the cache window", g.calls)
+	if g.n() != 1 {
+		t.Fatalf("OptionGreek called %d times, want 1 within the cache window", g.n())
 	}
 }
 
@@ -108,8 +131,10 @@ func TestDeltaGuardIgnoresOtherExpiry(t *testing.T) {
 		contract(24000, "CE", 0.50),
 	}}
 	svc := deltaSvc(g, 2400000, "CE24000")
+	now := time.Now()
+	warmChain(t, svc, now)
 	sig := buyCall(24000)
-	if err := svc.resolveEntryStrike(context.Background(), &sig, time.Now()); err != nil {
+	if err := svc.resolveEntryStrike(context.Background(), &sig, now); err != nil {
 		t.Fatalf("matched the wrong expiry: %v", err)
 	}
 }
@@ -129,6 +154,7 @@ func guardSvc(t *testing.T, c orderexec.OptionContract, ltp int64) *Service {
 	svc := &Service{cfg: Config{RangeDeltaGuard: true, RangeMinLiquidity: 5000, RangeMaxBuyIV: 25, RangeCostMultiple: 3},
 		orderExecutor: oe, legResolver: symbolResolver{}}
 	svc.greeks = g
+	warmChain(t, svc, time.Now())
 	return svc
 }
 

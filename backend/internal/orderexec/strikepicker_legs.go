@@ -89,17 +89,31 @@ func (sp *StrikePicker) lookupSymbol(symbol string) (string, int64, error) {
 	if sp.lookup != nil {
 		return sp.lookup(symbol)
 	}
-	if inst, err := GetInstrumentMaster().GetInstrument(symbol); err == nil && inst.Token != "" {
-		lot, _ := strconv.ParseInt(strings.TrimSpace(inst.LotSize), 10, 64)
+	if token, lot, ok := sp.lookupOffline(symbol); ok {
 		if lot <= 0 {
 			lot = sp.lotFallback()
 		}
-		return inst.Token, lot, nil
+		return token, lot, nil
 	}
 	if sp.sc == nil {
 		return "", 0, fmt.Errorf("%s not in instrument master and no broker session", symbol)
 	}
 	return sp.searchTokenWithRetry(symbol)
+}
+
+// lookupOffline finds symbol in the test hook or the instrument master,
+// never the broker. lot is 0 when the master has none.
+func (sp *StrikePicker) lookupOffline(symbol string) (string, int64, bool) {
+	if sp.lookup != nil {
+		token, lot, err := sp.lookup(symbol)
+		return token, lot, err == nil && token != ""
+	}
+	inst, err := GetInstrumentMaster().GetInstrument(symbol)
+	if err != nil || inst.Token == "" {
+		return "", 0, false
+	}
+	lot, _ := strconv.ParseInt(strings.TrimSpace(inst.LotSize), 10, 64)
+	return inst.Token, lot, true
 }
 
 // ResolveStrikeOn resolves one option contract on a given expiry (a
@@ -152,21 +166,9 @@ func (sp *StrikePicker) LookupOn(expiry time.Time, strike int64, optionType stri
 	if ok {
 		return cached, true
 	}
-	var token string
-	var lot int64
-	if sp.lookup != nil {
-		t, l, err := sp.lookup(symbol)
-		if err != nil {
-			return StrikeInfo{}, false
-		}
-		token, lot = t, l
-	} else {
-		inst, err := GetInstrumentMaster().GetInstrument(symbol)
-		if err != nil || inst.Token == "" {
-			return StrikeInfo{}, false
-		}
-		token = inst.Token
-		lot, _ = strconv.ParseInt(strings.TrimSpace(inst.LotSize), 10, 64)
+	token, lot, ok := sp.lookupOffline(symbol)
+	if !ok {
+		return StrikeInfo{}, false
 	}
 	info := StrikeInfo{Token: token, Symbol: symbol, Strike: strike, LotSize: lot}
 	sp.mu.Lock()
@@ -176,4 +178,26 @@ func (sp *StrikePicker) LookupOn(expiry time.Time, strike int64, optionType stri
 	sp.legCache[symbol] = info
 	sp.mu.Unlock()
 	return info, true
+}
+
+// LookupNearest is ResolveStrike without the SearchScrip fallback: the
+// nearest candidate expiry listed offline. Like ResolveStrike it updates
+// CurrentExpiry. For the signal path, where a broker call is not allowed.
+func (sp *StrikePicker) LookupNearest(now time.Time, strike int64, optionType string) (StrikeInfo, bool) {
+	if strike <= 0 || sp.strikeStep <= 0 || strike%sp.strikeStep != 0 {
+		return StrikeInfo{}, false
+	}
+	for _, expiry := range sp.candidateExpiries(now) {
+		exp, err := time.ParseInLocation("02Jan06", expiry, istZone)
+		if err != nil {
+			continue
+		}
+		if info, ok := sp.LookupOn(exp, strike, optionType); ok {
+			sp.mu.Lock()
+			sp.expiry = exp
+			sp.mu.Unlock()
+			return info, true
+		}
+	}
+	return StrikeInfo{}, false
 }

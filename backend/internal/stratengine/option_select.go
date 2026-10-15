@@ -99,7 +99,7 @@ func (svc *Service) resolveEntryStrike(ctx context.Context, sig *strategy.Signal
 		}
 		expiry = c.Expiry
 	}
-	info, err := svc.resolveOn(now, expiry, sig.Strike, optionTypeFor(sig.Side))
+	info, err := svc.resolveEntryContract(now, expiry, sig.Strike, optionTypeFor(sig.Side))
 	if err != nil {
 		return fmt.Errorf("strike %d%s not resolvable: %w", sig.Strike, optionTypeFor(sig.Side), err)
 	}

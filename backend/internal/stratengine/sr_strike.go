@@ -70,12 +70,12 @@ func (svc *Service) isSRSignal(sig *strategy.Signal) bool {
 // pickSRStrike sets sig.Strike to the contract the greeks select and
 // returns it; the caller resolves that exact expiry.
 func (svc *Service) pickSRStrike(sig *strategy.Signal, now time.Time) (orderexec.OptionContract, error) {
-	chain, err := svc.optionChain(now)
+	chain, err := svc.entryChain(now)
 	if err != nil {
 		return orderexec.OptionContract{}, fmt.Errorf("SR strike: no greeks (%v)", err)
 	}
 	opt := optionTypeFor(sig.Side)
-	premium := svc.srPremium(now, opt)
+	premium := svc.srPremiumOffline(now, opt)
 	lim := svc.srGreekLimits()
 	lim.TargetMove = sig.TargetMove
 	c, err := selectSRContract(chain, opt, now, lim, premium)
@@ -103,6 +103,62 @@ func (svc *Service) resolveOn(now, expiry time.Time, strike int64, opt string) (
 		return er.ResolveStrikeOn(expiry, strike, opt)
 	}
 	return r.ResolveStrike(now, strike, opt)
+}
+
+// offlineResolver resolves contracts without a broker call. Satisfied by
+// *orderexec.StrikePicker (instrument master + the day's resolved cache).
+type offlineResolver interface {
+	LookupOn(expiry time.Time, strike int64, optionType string) (orderexec.StrikeInfo, bool)
+	LookupNearest(now time.Time, strike int64, optionType string) (orderexec.StrikeInfo, bool)
+}
+
+// lookupOffline is resolveOn without a broker call. ok is false on a miss.
+// A resolver that is not an offlineResolver (test fakes, in memory) is
+// asked through resolveOn.
+func (svc *Service) lookupOffline(now, expiry time.Time, strike int64, opt string) (orderexec.StrikeInfo, bool) {
+	r := svc.resolverForLegs()
+	or, isOffline := r.(offlineResolver)
+	if !isOffline {
+		info, err := svc.resolveOn(now, expiry, strike, opt)
+		return info, err == nil
+	}
+	if _, isExp := r.(expiryResolver); expiry.IsZero() || !isExp {
+		return or.LookupNearest(now, strike, opt)
+	}
+	return or.LookupOn(expiry, strike, opt)
+}
+
+// resolveEntryContract is resolveOn for the signal path: never SearchScrip.
+// On a miss the entry is refused and one background broker lookup caches
+// the contract for the next signal.
+func (svc *Service) resolveEntryContract(now, expiry time.Time, strike int64, opt string) (orderexec.StrikeInfo, error) {
+	if info, ok := svc.lookupOffline(now, expiry, strike, opt); ok {
+		return info, nil
+	}
+	if svc.contractWarming.CompareAndSwap(false, true) {
+		go func() {
+			defer svc.contractWarming.Store(false)
+			if _, err := svc.resolveOn(time.Now(), expiry, strike, opt); err != nil {
+				log.Printf("[stratengine] background lookup %d%s: %v", strike, opt, err)
+			}
+		}()
+	}
+	return orderexec.StrikeInfo{}, fmt.Errorf("%d%s not in instrument master (broker lookup started)", strike, opt)
+}
+
+// srPremiumOffline is srPremium for the signal path: a contract the
+// instrument master does not list has no premium.
+func (svc *Service) srPremiumOffline(now time.Time, opt string) func(orderexec.OptionContract) float64 {
+	return func(c orderexec.OptionContract) float64 {
+		if c.Premium > 0 {
+			return c.Premium
+		}
+		info, ok := svc.lookupOffline(now, c.Expiry, c.Strike, opt)
+		if !ok {
+			return 0
+		}
+		return float64(svc.orderExecutor.GetLTP(info.Token)) / 100
+	}
 }
 
 // srPremium returns a contract's premium in rupees. OptionGreek carries no

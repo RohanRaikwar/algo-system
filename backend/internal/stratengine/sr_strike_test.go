@@ -138,6 +138,7 @@ func TestSREntryResolvesGreeksPick(t *testing.T) {
 	sig := buyCall(24000)
 	sig.StrategyName = "NIFTY50_SR"
 	now := time.Date(2026, 9, 30, 10, 0, 0, 0, istSR)
+	warmChain(t, svc, now)
 	if err := svc.resolveEntryStrike(context.Background(), &sig, now); err != nil {
 		t.Fatal(err)
 	}

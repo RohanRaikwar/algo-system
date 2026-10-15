@@ -53,8 +53,8 @@ func TestChainAdapterSharesCacheWithOldOptionChainPath(t *testing.T) {
 	if _, err := svc.optionChain(now); err != nil {
 		t.Fatalf("optionChain: %v", err)
 	}
-	if g.calls != 1 {
-		t.Fatalf("OptionGreek called %d times, want 1 (shared cache)", g.calls)
+	if g.n() != 1 {
+		t.Fatalf("OptionGreek called %d times, want 1 (shared cache)", g.n())
 	}
 }
 

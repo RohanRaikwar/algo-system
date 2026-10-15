@@ -422,6 +422,11 @@ func (svc *Service) Run(ctx context.Context) error {
 		go svc.strikeSelLoop(ctx)
 	}
 
+	// ── Option chain warm-up: entries read the cached chain only ──
+	if svc.needsEntryChain() {
+		go svc.chainWarmLoop(ctx)
+	}
+
 	// ── Start snapshot loop ──
 	go svc.snapshotLoop(ctx)
 
@@ -968,7 +973,17 @@ func (svc *Service) applyOptionAutomation(ctx context.Context, sig *strategy.Sig
 		return
 	}
 
+	// Signal path: the cached chain and the instrument master only, never a
+	// broker call. Without them the static/ATM tokens stay (as on any
+	// automation error).
+	chain, err := svc.entryChain(now)
+	if err != nil {
+		log.Printf("[stratengine] option automation fallback: %v", err)
+		return
+	}
 	input := svc.buildAutomationInput(*sig, now, spotPrice)
+	input.OptionChain = chain
+	input.Offline = true
 	pick, err := sp.ResolveForEntry(input)
 	if err != nil {
 		log.Printf("[stratengine] option automation fallback: %v", err)

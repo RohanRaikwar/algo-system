@@ -3,6 +3,7 @@ package stratengine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -35,12 +36,16 @@ type srExtra struct {
 	prof  underlying.Profile
 	strat *strategy.Nifty50SR
 
-	mu      sync.Mutex
+	mu      sync.Mutex // guards picker, chain, chainAt; never held across a broker call
 	picker  *orderexec.StrikePicker
 	greeks  greeksSource  // test hook; nil = picker
 	res     extraResolver // test hook; nil = picker
 	chain   []orderexec.OptionContract
 	chainAt time.Time
+
+	chainLoadMu     sync.Mutex // one LoadOptionChain at a time
+	chainRefreshing atomic.Bool
+	contractWarming atomic.Bool
 
 	ladderBusy       atomic.Bool
 	ladderCenter     atomic.Int64
@@ -199,10 +204,13 @@ func (svc *Service) extraChainFresh(ex *srExtra, now time.Time, ttl time.Duratio
 		}
 		src = p
 	}
-	ex.mu.Lock()
-	defer ex.mu.Unlock()
-	if ex.chain != nil && now.Sub(ex.chainAt) < ttl && !now.Before(ex.chainAt) {
-		return ex.chain, nil
+	if chain, ok := ex.cachedChain(now, ttl); ok {
+		return chain, nil
+	}
+	ex.chainLoadMu.Lock()
+	defer ex.chainLoadMu.Unlock()
+	if chain, ok := ex.cachedChain(now, ttl); ok {
+		return chain, nil
 	}
 	chain, err := src.LoadOptionChain(now)
 	if err != nil {
@@ -211,8 +219,68 @@ func (svc *Service) extraChainFresh(ex *srExtra, now time.Time, ttl time.Duratio
 	if len(chain) == 0 {
 		return nil, fmt.Errorf("empty %s option chain", ex.prof.OptionName)
 	}
+	ex.mu.Lock()
 	ex.chain, ex.chainAt = chain, now
+	ex.mu.Unlock()
 	return chain, nil
+}
+
+// cachedChain returns ex's cached chain when it is younger than maxAge.
+func (ex *srExtra) cachedChain(now time.Time, maxAge time.Duration) ([]orderexec.OptionContract, bool) {
+	ex.mu.Lock()
+	defer ex.mu.Unlock()
+	if ex.chain != nil && now.Sub(ex.chainAt) < maxAge && !now.Before(ex.chainAt) {
+		return ex.chain, true
+	}
+	return nil, false
+}
+
+// errChainStale: a chain source exists but the cache is too old for an
+// entry. Unlike "no source" it refuses the entry.
+var errChainStale = errors.New("option chain stale")
+
+// extraEntryChain is entryChain for ex: the cache only, never a broker
+// call. A stale cache starts one background refresh and returns
+// errChainStale; no chain source returns the source error.
+func (svc *Service) extraEntryChain(ex *srExtra, now time.Time) ([]orderexec.OptionContract, error) {
+	maxAge := svc.cfg.EntryChainMaxAge
+	if maxAge <= 0 {
+		maxAge = defaultEntryChainMaxAge
+	}
+	if chain, ok := ex.cachedChain(now, maxAge); ok {
+		return chain, nil
+	}
+	if ex.greeks == nil && svc.extraPicker(ex).SmartConnect() == nil {
+		return nil, fmt.Errorf("no broker session for %s OptionGreek", ex.prof.OptionName)
+	}
+	if ex.chainRefreshing.CompareAndSwap(false, true) {
+		go func() {
+			defer ex.chainRefreshing.Store(false)
+			if _, err := svc.extraChainFresh(ex, time.Now(), deltaChainTTL); err != nil {
+				log.Printf("[stratengine] %s option chain refresh failed: %v", ex.prof.OptionName, err)
+			}
+		}()
+	}
+	return nil, fmt.Errorf("%w: older than %s (refresh started)", errChainStale, maxAge)
+}
+
+// extraOffline is lookupOffline for ex's resolver.
+func (svc *Service) extraOffline(ex *srExtra, now, expiry time.Time, strike int64, opt string) (orderexec.StrikeInfo, bool) {
+	r := svc.resolverOf(ex)
+	or, isOffline := r.(offlineResolver)
+	var info orderexec.StrikeInfo
+	var err error
+	switch {
+	case isOffline && expiry.IsZero():
+		return or.LookupNearest(now, strike, opt)
+	case isOffline:
+		return or.LookupOn(expiry, strike, opt)
+	case expiry.IsZero():
+		info, err = r.ResolveStrike(now, strike, opt)
+	default:
+		info, err = r.ResolveStrikeOn(expiry, strike, opt)
+	}
+	return info, err == nil
 }
 
 // resolveExtraEntry turns an extra underlying's SR entry into the exact
@@ -232,7 +300,11 @@ func (svc *Service) resolveExtraEntry(ctx context.Context, ex *srExtra, sig *str
 	opt := optionTypeFor(sig.Side)
 	strike, expiry := sig.Strike, time.Time{}
 
-	if chain, err := svc.extraChain(ex, now); err == nil {
+	chain, chainErr := svc.extraEntryChain(ex, now)
+	if errors.Is(chainErr, errChainStale) {
+		return chainErr
+	}
+	if chainErr == nil {
 		lim := svc.srGreekLimits()
 		lim.TargetMove = sig.TargetMove
 		lim.ViewTargetMove = ex.prof.Scale(lim.ViewTargetMove)
@@ -240,8 +312,8 @@ func (svc *Service) resolveExtraEntry(ctx context.Context, ex *srExtra, sig *str
 			if c.Premium > 0 {
 				return c.Premium
 			}
-			info, err := picker.ResolveStrikeOn(c.Expiry, c.Strike, opt)
-			if err != nil {
+			info, ok := svc.extraOffline(ex, now, c.Expiry, c.Strike, opt)
+			if !ok {
 				return 0
 			}
 			return float64(svc.orderExecutor.GetLTP(info.Token)) / 100
@@ -256,18 +328,27 @@ func (svc *Service) resolveExtraEntry(ctx context.Context, ex *srExtra, sig *str
 		svc.recordExtraPick(ex, *sig, c, premium(c), now)
 		strike, expiry = c.Strike, c.Expiry
 	} else if ex.noGreeksLogged.CompareAndSwap(false, true) {
-		log.Printf("[stratengine] ⚠️  %s: no option greeks (%v) — entries take the ATM strike on the nearest expiry without greek checks", sig.StrategyName, err)
+		log.Printf("[stratengine] ⚠️  %s: no option greeks (%v) — entries take the ATM strike on the nearest expiry without greek checks", sig.StrategyName, chainErr)
 	}
 
-	var info orderexec.StrikeInfo
-	var err error
-	if expiry.IsZero() {
-		info, err = picker.ResolveStrike(now, strike, opt)
-	} else {
-		info, err = picker.ResolveStrikeOn(expiry, strike, opt)
-	}
-	if err != nil {
-		return fmt.Errorf("strike %d%s not resolvable: %w", strike, opt, err)
+	info, ok := svc.extraOffline(ex, now, expiry, strike, opt)
+	if !ok {
+		if ex.contractWarming.CompareAndSwap(false, true) {
+			name := sig.StrategyName
+			go func() {
+				defer ex.contractWarming.Store(false)
+				var err error
+				if expiry.IsZero() {
+					_, err = picker.ResolveStrike(time.Now(), strike, opt)
+				} else {
+					_, err = picker.ResolveStrikeOn(expiry, strike, opt)
+				}
+				if err != nil {
+					log.Printf("[stratengine] %s background lookup %d%s: %v", name, strike, opt, err)
+				}
+			}()
+		}
+		return fmt.Errorf("strike %d%s not resolvable: not in instrument master (broker lookup started)", strike, opt)
 	}
 	if svc.orderExecutor.GetLTP(info.Token) <= 0 {
 		svc.subscribeOn(ctx, ex, info.Token)

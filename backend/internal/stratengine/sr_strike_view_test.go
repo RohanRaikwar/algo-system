@@ -76,6 +76,7 @@ func TestPickSRStrikeRecordsLastPick(t *testing.T) {
 	svc := strikeSelSvc(g, &sent)
 	svc.orderExecutor.UpdateLTP(model.Tick{Token: "PE22650", Exchange: "NFO", Price: 9000})
 	sig := strategy.Signal{StrategyName: "NIFTY50_SR", Action: strategy.ActionBuy, Side: strategy.SidePut, Strike: 22700}
+	warmChain(t, svc, now)
 	if _, err := svc.pickSRStrike(&sig, now); err != nil {
 		t.Fatal(err)
 	}
@@ -109,6 +110,7 @@ func TestSREntryOnMondayBuysNextWeekContract(t *testing.T) {
 	svc.orderExecutor.UpdateLTP(model.Tick{Token: "13OCT26PE22700", Exchange: "NFO", Price: 18000})
 
 	sig := strategy.Signal{StrategyName: svc.srStrategy.Name(), Action: strategy.ActionBuy, Side: strategy.SidePut, Strike: 22700}
+	warmChain(t, svc, monday)
 	if err := svc.resolveEntryStrike(context.Background(), &sig, monday); err != nil {
 		t.Fatal(err)
 	}
@@ -141,8 +143,8 @@ func TestStrikeSelSkipsSRWorkWhenSRDisabled(t *testing.T) {
 
 	svc.refreshStrikeSel(context.Background(), pickerNow)
 
-	if g.calls != 0 {
-		t.Fatalf("chain fetched %d times with SR disabled, want 0", g.calls)
+	if g.n() != 0 {
+		t.Fatalf("chain fetched %d times with SR disabled, want 0", g.n())
 	}
 	v := lastStrikeSel(t, sent)
 	if v.Call != nil || v.Put != nil {

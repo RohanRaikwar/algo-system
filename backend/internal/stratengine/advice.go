@@ -76,15 +76,15 @@ func (svc *Service) adviceContract(sig *strategy.Signal, now time.Time) error {
 	var expiry time.Time
 	strike := sig.Strike
 	if svc.isSRSignal(sig) {
-		if chain, err := svc.optionChain(now); err == nil {
+		if chain, err := svc.entryChain(now); err == nil {
 			lim := svc.srGreekLimits()
 			lim.TargetMove = sig.TargetMove
-			if c, err := selectSRContract(chain, opt, now, lim, svc.srPremium(now, opt)); err == nil {
+			if c, err := selectSRContract(chain, opt, now, lim, svc.srPremiumOffline(now, opt)); err == nil {
 				strike, expiry = c.Strike, c.Expiry
 			}
 		}
 	}
-	info, err := svc.resolveOn(now, expiry, strike, opt)
+	info, err := svc.resolveEntryContract(now, expiry, strike, opt)
 	if err != nil {
 		return err
 	}

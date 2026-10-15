@@ -98,6 +98,10 @@ type AutomationInput struct {
 	// Strike selection mode: "ATM" (default), "OTM1", "OTM2", "OTM3"
 	// OTM1 = 1 strike OTM, OTM2 = 2 strikes OTM, etc.
 	StrikeMode       string
+
+	// Offline forbids a broker token lookup: a contract missing from the
+	// instrument master is an error (signal path).
+	Offline bool
 }
 
 type ExitPolicy struct {
@@ -172,6 +176,14 @@ func (sp *StrikePicker) ResolveByAutomation(input AutomationInput) (AutomationPi
 	token := contract.Token
 	var lotSize int64
 	if token == "" {
+		if t, lot, ok := sp.lookupOffline(symbol); ok {
+			token, lotSize = t, lot
+		}
+	}
+	if token == "" {
+		if input.Offline {
+			return AutomationPick{}, fmt.Errorf("%s not in instrument master (no broker lookup on the signal path)", symbol)
+		}
 		if sp.sc == nil {
 			return AutomationPick{}, fmt.Errorf("cannot resolve token for %s without SmartConnect session", symbol)
 		}

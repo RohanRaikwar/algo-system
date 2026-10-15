@@ -98,6 +98,9 @@ func TestResolveExtraEntry_GreeksPickOwnContract(t *testing.T) {
 	now := time.Date(2026, 9, 30, 10, 0, 0, 0, istSR)
 
 	sig := strategy.Signal{StrategyName: "SENSEX_SR", Action: strategy.ActionBuy, Side: strategy.SideCall, Strike: 81100}
+	if _, err := svc.extraChain(ex, now); err != nil { // off-path warm-up
+		t.Fatal(err)
+	}
 	err := svc.resolveExtraEntry(context.Background(), ex, &sig, now)
 	if err == nil || !strings.Contains(err.Error(), "no premium") || len(subscribed) != 1 || subscribed[0] != "81200CE" {
 		t.Fatalf("want refusal + subscribe 81200CE, got err=%v subscribed=%v", err, subscribed)
