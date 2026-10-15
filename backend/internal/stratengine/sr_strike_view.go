@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"trading-systemv1/internal/markethours"
+	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/optionpicker"
 	"trading-systemv1/internal/orderexec"
 	"trading-systemv1/internal/strategy"
@@ -20,8 +21,8 @@ import (
 // CE/PE the greeks would pick right now, and the last contract actually
 // picked for an entry signal.
 const (
-	strikeSelKey     = "strikesel:state"
-	strikeSelChannel = "pub:strikesel"
+	strikeSelKey     = model.StrikeSelKey
+	strikeSelChannel = model.StrikeSelChannel
 	strikeSelEvery   = 30 * time.Second
 )
 

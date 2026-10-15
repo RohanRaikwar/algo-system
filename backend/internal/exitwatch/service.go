@@ -20,17 +20,17 @@ import (
 )
 
 const (
-	reversalChannel   = "pub:analyst:reversal"
-	reversalKey       = "analyst:reversal:latest"
-	posContextChannel = "pub:poscontext"
-	posContextKey     = "poscontext:latest"
-	analystLevelsChan = "pub:analyst:levels"
-	analystLevelsKey  = "analyst:levels:latest"
-	ourSRChannel      = "pub:sr"
-	ourSRKey          = "sr:state"
-	ourSRXChannel     = "pub:srx" // extra underlyings' SR views (SENSEX_SR, …)
-	ourSRXKey         = "srx:state"
-	signalChannel     = "pub:signal"
+	reversalChannel   = model.ReversalChannel
+	reversalKey       = model.ReversalKey
+	posContextChannel = model.PosContextChannel
+	posContextKey     = model.PosContextKey
+	analystLevelsChan = model.AnalystLevelsChannel
+	analystLevelsKey  = model.AnalystLevelsKey
+	ourSRChannel      = model.SRStateChannel
+	ourSRKey          = model.SRStateKey
+	ourSRXChannel     = model.SRXStateChannel // extra underlyings' SR views (SENSEX_SR, …)
+	ourSRXKey         = model.SRXStateKey
+	signalChannel     = model.SignalChannel
 
 	evalEvery   = 250 * time.Millisecond // stall keeps growing between ticks
 	candleEvery = 5 * time.Second        // poll for newly closed 1m index candles
@@ -201,7 +201,7 @@ func splitKey(k string) (exch, token string) {
 
 // subscribeTicks decodes only ticks whose channel token the engine wants.
 func (svc *Service) subscribeTicks(ctx context.Context) {
-	ps := svc.rdb.PSubscribe(ctx, "pub:tick:*")
+	ps := svc.rdb.PSubscribe(ctx, model.TickChannelPattern)
 	defer ps.Close()
 	ch := ps.Channel()
 	for {

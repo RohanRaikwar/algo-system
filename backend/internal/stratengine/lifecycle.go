@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/notification"
 	"trading-systemv1/internal/strategy"
 )
@@ -219,9 +220,9 @@ func (svc *Service) publishPnLSummary(ctx context.Context) {
 	}
 
 	// Store for REST API
-	svc.redisWriter.Client().Set(ctx, "pnl:summary", payload, 24*time.Hour)
+	svc.redisWriter.Client().Set(ctx, model.PnLKey, payload, 24*time.Hour)
 	// Publish for WS broadcast
-	svc.redisWriter.Client().Publish(ctx, "pub:pnl", string(payload))
+	svc.redisWriter.Client().Publish(ctx, model.PnLChannel, string(payload))
 }
 
 // buildStreams constructs Redis stream names for TF=60 (1m), TF=120 (2m), and TF=180 (3m) candles.

@@ -583,8 +583,8 @@ func (svc *Service) tickRouterLoop(ctx context.Context, tfTickCh chan<- model.Ti
 						"call_ltp":    svc.orderExecutor.GetLTP(ce.Token),
 						"put_ltp":     svc.orderExecutor.GetLTP(pe.Token),
 					})
-					svc.redisWriter.Client().Set(ctx, "strike:info", strikePayload, 24*time.Hour)
-					svc.redisWriter.Client().Publish(ctx, "pub:strike", string(strikePayload))
+					svc.redisWriter.Client().Set(ctx, model.StrikeKey, strikePayload, 24*time.Hour)
+					svc.redisWriter.Client().Publish(ctx, model.StrikeChannel, string(strikePayload))
 					log.Println("[stratengine] 📡 published strike info to Redis")
 
 					// ✅ Only mark as resolved AFTER everything succeeded
@@ -884,7 +884,7 @@ func (svc *Service) signalLoop(ctx context.Context) {
 				})
 				pctx, pcancel := context.WithTimeout(ctx, 2*time.Second)
 				if err == nil {
-					if pubErr := svc.redisWriter.Client().Publish(pctx, "pub:signal", string(sigPayload)).Err(); pubErr != nil {
+					if pubErr := svc.redisWriter.Client().Publish(pctx, model.SignalChannel, string(sigPayload)).Err(); pubErr != nil {
 						log.Printf("[stratengine] signal publish error: %v", pubErr)
 					}
 				}
@@ -1376,8 +1376,8 @@ func (svc *Service) publishLiveOrders(ctx context.Context) {
 	svc.lastLiveOrdersJSON = payloadStr
 	svc.liveOrdersMu.Unlock()
 
-	svc.redisWriter.Client().Set(ctx, "orders:live", payload, 24*time.Hour)
-	svc.redisWriter.Client().Publish(ctx, "pub:orders", payloadStr)
+	svc.redisWriter.Client().Set(ctx, model.OrdersKey, payload, 24*time.Hour)
+	svc.redisWriter.Client().Publish(ctx, model.OrdersChannel, payloadStr)
 }
 
 // publishFNOSubscription subscribes option tokens; SnapQuote when the picker
@@ -1428,7 +1428,7 @@ func (svc *Service) publishSubscriptionMode(ctx context.Context, exchType, mode 
 		"tokens":        uniq,
 		"mode":          mode,
 	})
-	if err := svc.redisWriter.Client().Publish(ctx, "cmd:subscribe_token", string(subCmd)).Err(); err != nil {
+	if err := svc.redisWriter.Client().Publish(ctx, model.SubscribeTokenChannel, string(subCmd)).Err(); err != nil {
 		log.Printf("[stratengine] ⚠️  failed to publish FNO subscribe command: %v", err)
 		return
 	}
@@ -1465,8 +1465,8 @@ func (svc *Service) publishStrikeInfo(ctx context.Context, spotPrice int64) {
 		"call_ltp":    svc.orderExecutor.GetLTP(ce.Token),
 		"put_ltp":     svc.orderExecutor.GetLTP(pe.Token),
 	})
-	svc.redisWriter.Client().Set(ctx, "strike:info", strikePayload, 24*time.Hour)
-	svc.redisWriter.Client().Publish(ctx, "pub:strike", string(strikePayload))
+	svc.redisWriter.Client().Set(ctx, model.StrikeKey, strikePayload, 24*time.Hour)
+	svc.redisWriter.Client().Publish(ctx, model.StrikeChannel, string(strikePayload))
 }
 
 func automationSignalType(side strategy.PositionSide) orderexec.AutomationSignalType {

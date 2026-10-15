@@ -64,7 +64,7 @@ func (r *IndicatorResult) StreamKey() string {
 // PubSubChannel returns the Redis PubSub channel for this indicator result.
 // Uses string concatenation instead of fmt.Sprintf for zero-alloc hot path.
 func (r *IndicatorResult) PubSubChannel() string {
-	return "pub:ind:" + r.Name + ":" + Itoa(r.TF) + "s:" + r.Exchange + ":" + r.Token
+	return IndChannelPrefix + r.Name + ":" + Itoa(r.TF) + "s:" + r.Exchange + ":" + r.Token
 }
 
 // JSON returns the JSON-encoded indicator result.

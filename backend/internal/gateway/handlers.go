@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"trading-systemv1/internal/markethours"
+	"trading-systemv1/internal/model"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -175,7 +176,7 @@ func RegisterRoutes(mux *http.ServeMux, hub *Hub, rdb *goredis.Client, ctx conte
 			}
 			if len(specs) > 0 {
 				payload := strings.Join(specs, ",")
-				if err := rdb.Publish(ctx, "config:indicators", payload).Err(); err != nil {
+				if err := rdb.Publish(ctx, model.IndicatorConfigChannel, payload).Err(); err != nil {
 					log.Printf("[api_gateway] WARNING: failed to publish config:indicators: %v", err)
 				} else {
 					log.Printf("[api_gateway] published indicator config to indengine: %s", payload)
@@ -501,7 +502,7 @@ func RegisterRoutes(mux *http.ServeMux, hub *Hub, rdb *goredis.Client, ctx conte
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		val, err := rdb.Get(ctx, "strike:info").Result()
+		val, err := rdb.Get(ctx, model.StrikeKey).Result()
 		if err != nil {
 			json.NewEncoder(w).Encode(map[string]interface{}{"resolved": false})
 			return
@@ -517,7 +518,7 @@ func RegisterRoutes(mux *http.ServeMux, hub *Hub, rdb *goredis.Client, ctx conte
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		val, err := rdb.Get(ctx, "strikesel:state").Result()
+		val, err := rdb.Get(ctx, model.StrikeSelKey).Result()
 		if err != nil {
 			w.Write([]byte("null"))
 			return
@@ -533,7 +534,7 @@ func RegisterRoutes(mux *http.ServeMux, hub *Hub, rdb *goredis.Client, ctx conte
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		val, err := rdb.Get(ctx, "pnl:summary").Result()
+		val, err := rdb.Get(ctx, model.PnLKey).Result()
 		if err != nil {
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"realized_pnl": 0, "total_trades": 0, "wins": 0, "losses": 0,
@@ -716,7 +717,7 @@ func makeTradingConfigHandler(rdb *goredis.Client, ctx context.Context) http.Han
 
 		if r.Method == "GET" {
 			// Get current configuration from Redis
-			val, err := rdb.Get(ctx, "trading:config").Result()
+			val, err := rdb.Get(ctx, model.TradingConfigKey).Result()
 			if err != nil {
 				// Return default configuration if not found
 				defaultConfig := TradingConfig{
@@ -773,13 +774,13 @@ func makeTradingConfigHandler(rdb *goredis.Client, ctx context.Context) http.Han
 				return
 			}
 
-			if err := rdb.Set(ctx, "trading:config", configJSON, 0).Err(); err != nil {
+			if err := rdb.Set(ctx, model.TradingConfigKey, configJSON, 0).Err(); err != nil {
 				http.Error(w, "Failed to save configuration", http.StatusInternalServerError)
 				return
 			}
 
 			// Publish configuration update to strategy engine
-			if err := rdb.Publish(ctx, "cmd:config_update", string(configJSON)).Err(); err != nil {
+			if err := rdb.Publish(ctx, model.TradingConfigChannel, string(configJSON)).Err(); err != nil {
 				log.Printf("[api_gateway] Failed to publish config update: %v", err)
 			}
 

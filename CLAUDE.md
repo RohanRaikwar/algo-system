@@ -82,7 +82,9 @@ Channels the gateway forwards to the browser are listed in `dynamicPubSubPattern
 | `pub:strikesel` | stratengine |
 | `pub:strikeselx` | stratengine (strike selection of extra underlyings, map by index key) |
 
-`pub:candle` and `pub:market` are published but are **not** in that list — they are internal-only and never reach the browser. A new channel must be added to `dynamicPubSubPatterns` before the hub will fan it out; the frontend then consumes it via `envelope.channel` switching in `frontend/src/hooks/useWebSocket.ts`.
+Every channel and snapshot-key name is a constant in `internal/model/channels.go`; `model.TestChannelNamesOnlyInChannelsGo` fails on a `"pub:"`/`"cmd:"`/`"config:"` literal anywhere else under `internal/`. Shared payloads live in `model` too (`ExitRequest`, `PositionContextSet`, `RefusedEntry`/`RefusedView`).
+
+`pub:candle` is not in that list: the hub subscribes the candle channels of its configured tokens explicitly (`buildChannels`). `pub:market:state`, `pub:poscontext` and all `cmd:*`/`config:*` channels are internal-only. A new channel must be added to `dynamicPubSubPatterns` before the hub will fan it out, and classified in `gateway/channels_contract_test.go` (browser or internal); the frontend then consumes it via `envelope.channel` switching in `frontend/src/hooks/useWebSocket.ts`.
 
 ### Gateway delivery guarantees
 

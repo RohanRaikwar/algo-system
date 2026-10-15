@@ -464,36 +464,6 @@ func (r *Reader) DiscoverTFStreams(ctx context.Context, tfs []int, tokens []stri
 	return streams
 }
 
-// SubscribeFormingCandles subscribes to pub:candle:* PubSub pattern and feeds
-// forming TF candles into the output channel. Blocks until ctx is cancelled.
-func (r *Reader) SubscribeFormingCandles(ctx context.Context, out chan<- model.TFCandle) error {
-	pubsub := r.client.PSubscribe(ctx, "pub:candle:*")
-	defer pubsub.Close()
-
-	ch := pubsub.Channel()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case msg, ok := <-ch:
-			if !ok {
-				return nil
-			}
-			var tfc model.TFCandle
-			if err := json.Unmarshal([]byte(msg.Payload), &tfc); err != nil {
-				continue
-			}
-			if !tfc.Forming {
-				continue // only forward forming candles (completed ones come via XREADGROUP)
-			}
-			select {
-			case out <- tfc:
-			default:
-			}
-		}
-	}
-}
-
 // Subscribe1sForPeek subscribes to pub:candle:1s:* PubSub and converts each
 // 1s candle into a forming TFCandle for every TF in tfs. A local mini-aggregator
 // tracks in-progress buckets and emits a Forming=true snapshot on every tick.
@@ -510,11 +480,11 @@ func (r *Reader) Subscribe1sForPeek(ctx context.Context, tfs []int, tokens []str
 	if len(tokens) > 0 {
 		channels := make([]string, len(tokens))
 		for i, tk := range tokens {
-			channels[i] = "pub:candle:1s:" + tk
+			channels[i] = model.Candle1sChannelPref + tk
 		}
 		pubsub = r.client.Subscribe(ctx, channels...)
 	} else {
-		pubsub = r.client.PSubscribe(ctx, "pub:candle:1s:*")
+		pubsub = r.client.PSubscribe(ctx, model.Candle1sChannelPref+"*")
 	}
 	defer pubsub.Close()
 
@@ -632,7 +602,7 @@ func (r *Reader) Publish(ctx context.Context, channel, message string) error {
 // into the output channel for live stoploss checking.
 // Blocks until ctx is cancelled.
 func (r *Reader) SubscribeTicks(ctx context.Context, out chan<- model.Tick) error {
-	pubsub := r.client.PSubscribe(ctx, "pub:tick:*")
+	pubsub := r.client.PSubscribe(ctx, model.TickChannelPattern)
 	defer pubsub.Close()
 
 	ch := pubsub.Channel()
@@ -652,40 +622,6 @@ func (r *Reader) SubscribeTicks(ctx context.Context, out chan<- model.Tick) erro
 			case out <- tick:
 			default:
 				// tick channel full, drop (non-blocking to avoid backpressure)
-			}
-		}
-	}
-}
-
-// SubscribeIndicators subscribes to indicator PubSub channels and feeds
-// parsed IndicatorResult values into the output channel.
-// patterns should be like ["pub:ind:EMA_6:60s:*", "pub:ind:EMA_9:60s:*"].
-// Blocks until ctx is cancelled.
-func (r *Reader) SubscribeIndicators(ctx context.Context, patterns []string, out chan<- model.IndicatorResult) error {
-	pubsub := r.client.PSubscribe(ctx, patterns...)
-	defer pubsub.Close()
-
-	ch := pubsub.Channel()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case msg, ok := <-ch:
-			if !ok {
-				return nil
-			}
-			var ind model.IndicatorResult
-			if err := json.Unmarshal([]byte(msg.Payload), &ind); err != nil {
-				continue
-			}
-			// Only forward confirmed closed-candle indicators (not live/preview)
-			if !ind.Ready || ind.Live {
-				continue
-			}
-			select {
-			case out <- ind:
-			default:
-				// channel full, drop oldest
 			}
 		}
 	}

@@ -481,8 +481,8 @@ func warmupExtras(reader model.CandleReader, extras []*srExtra, days int, now ti
 // Extra underlyings' strike selection views, one full-state map by index
 // key, so NIFTY's pub:strikesel stays as it was.
 const (
-	strikeSelXKey     = "strikeselx:state"
-	strikeSelXChannel = "pub:strikeselx"
+	strikeSelXKey     = model.StrikeSelXKey
+	strikeSelXChannel = model.StrikeSelXChannel
 )
 
 // extraLimits are the SR greek limits with the view target scaled to ex.

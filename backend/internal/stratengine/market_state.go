@@ -4,12 +4,14 @@ import (
 	"context"
 	"log"
 	"time"
+
+	"trading-systemv1/internal/model"
 )
 
 // marketStateChannel carries "open"/"closed", published by mdengine
 // (internal/store/redis/writer.go PublishMarketState) on every WS connect —
 // so an intraday reconnect counts too, not only the 09:15 open.
-const marketStateChannel = "pub:market:state"
+const marketStateChannel = model.MarketStateChannel
 
 // onMarketState handles one payload from marketStateChannel. On "open" it
 // resets the global option picker's session and the old strike ladder so

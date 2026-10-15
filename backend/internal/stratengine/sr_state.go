@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/strategy"
 )
 
@@ -14,15 +15,15 @@ import (
 // view is written to a Redis key (REST / SNAPSHOT after a gateway restart)
 // and published on a full-state channel for WS push.
 const (
-	srStateKey     = "sr:state"
-	srStateChannel = "pub:sr"
+	srStateKey     = model.SRStateKey
+	srStateChannel = model.SRStateChannel
 	srStateEvery   = 5 * time.Second
 	srIndexKey     = "NSE:99926000"
 
 	// Extra underlyings' SR views (SENSEX_SR, …), keyed by index key, as
 	// one full-state map so NIFTY's pub:sr stays as it was.
-	srxStateKey     = "srx:state"
-	srxStateChannel = "pub:srx"
+	srxStateKey     = model.SRXStateKey
+	srxStateChannel = model.SRXStateChannel
 )
 
 // srStateLoop publishes NIFTY50_SR's view whenever it changes.

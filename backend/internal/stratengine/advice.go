@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/strategy"
 )
 
@@ -60,7 +61,7 @@ func (svc *Service) publishAdvice(ctx context.Context, sig strategy.Signal, now 
 	}
 	pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if err := svc.redisWriter.Client().Publish(pctx, "pub:signal", string(payload)).Err(); err != nil {
+	if err := svc.redisWriter.Client().Publish(pctx, model.SignalChannel, string(payload)).Err(); err != nil {
 		log.Printf("[stratengine] advice publish error: %v", err)
 	}
 	log.Printf("[stratengine] ADVICE (no order): %s %s %s fno=%s ltp=%d — %s",

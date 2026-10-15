@@ -29,6 +29,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"trading-systemv1/internal/model"
 )
 
 func main() {
@@ -44,7 +46,7 @@ func main() {
 		record         = flag.Bool("record", false, "record mode: PSUBSCRIBE to ticks on Redis and write JSONL to -out")
 		redisAddr      = flag.String("redis", envOr("REDIS_ADDR", "localhost:6379"), "Redis address (record mode)")
 		redisPass      = flag.String("redis-password", os.Getenv("REDIS_PASSWORD"), "Redis password (record mode)")
-		recordPattern  = flag.String("pattern", "pub:tick:*", "PubSub pattern to record (record mode)")
+		recordPattern  = flag.String("pattern", model.TickChannelPattern, "PubSub pattern to record (record mode)")
 		recordDuration = flag.Duration("duration", 0, "stop recording after this long (0 = until Ctrl-C)")
 	)
 	flag.Parse()
