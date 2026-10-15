@@ -242,10 +242,10 @@ func main() {
 		log.Fatalf("[tickserver] no instruments configured via TICK_TOKENS")
 	}
 
-	// Enable scenario mode for the index token (99926000)
+	// Enable scenario mode for the index tokens (NIFTY 99926000, SENSEX 99919000)
 	if scenarioEnabled {
 		for i := range instruments {
-			if instruments[i].Token == "99926000" {
+			if instruments[i].Token == "99926000" || instruments[i].Token == "99919000" {
 				instruments[i].ScenarioMode = true
 				log.Printf("[tickserver] 🎬 SCENARIO MODE enabled for %s:%s",
 					instruments[i].Exchange, instruments[i].Token)
@@ -287,6 +287,7 @@ func parseInstruments(s string) []instrument {
 		"1594":     250000_00, // ~₹25000.00
 		"99926009": 25660_00,  // ~₹25660.00 (NIFTY sim alt)
 		"99926000": 25660_00,  // ~₹25660.00 (NIFTY 50 index sim)
+		"99919000": 84200_00,  // ~₹84200.00 (SENSEX index sim)
 		"45497":    25000,     // ~₹250.00 (NIFTY CALL option)
 		"45498":    18000,     // ~₹180.00 (NIFTY PUT option)
 	}
