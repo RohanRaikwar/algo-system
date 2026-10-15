@@ -17,3 +17,21 @@ func TestIndexInstrument(t *testing.T) {
 		}
 	}
 }
+
+func TestIndexListsIncludeUnderlyings(t *testing.T) {
+	t.Setenv("INDEX_TOKEN", "")
+	t.Setenv("UNDERLYINGS", "NIFTY,SENSEX")
+	if got := IndexSubscribeTokens(); got != "1:99926000,3:99919000" {
+		t.Errorf("IndexSubscribeTokens = %q", got)
+	}
+	if got := IndexKeys(); got != "NSE:99926000,BSE:99919000" {
+		t.Errorf("IndexKeys = %q", got)
+	}
+	if IndexKey() != "NSE:99926000" || IndexToken() != "99926000" {
+		t.Errorf("primary index changed")
+	}
+	t.Setenv("UNDERLYINGS", "")
+	if got := IndexSubscribeTokens(); got != "1:99926000" {
+		t.Errorf("default IndexSubscribeTokens = %q", got)
+	}
+}

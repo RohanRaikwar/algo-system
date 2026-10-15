@@ -4,6 +4,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"trading-systemv1/internal/underlying"
 )
 
 // GetEnv returns the value of an environment variable, or fallback if unset/empty.
@@ -86,11 +88,39 @@ func IndexToken() string { _, t := indexInstrument(); return t }
 func IndexExchange() string { e, _ := indexInstrument(); return e }
 
 // IndexSubscribeTokens is the SUBSCRIBE_TOKENS default in Angel's
-// "<exchange_type>:<token>" form, e.g. "1:99926000" or "3:99919000".
+// "<exchange_type>:<token>" form, e.g. "1:99926000" or "3:99919000". It
+// lists INDEX_TOKEN first, then every extra underlying in UNDERLYINGS.
 func IndexSubscribeTokens() string {
 	e, t := indexInstrument()
-	return strconv.Itoa(angelExchangeType[e]) + ":" + t
+	out := []string{strconv.Itoa(angelExchangeType[e]) + ":" + t}
+	for _, p := range extraUnderlyings() {
+		out = append(out, p.IndexSubscribeToken())
+	}
+	return strings.Join(out, ",")
 }
 
-// IndexKey is the "<EXCH>:<token>" default for EXCH:TOKEN lists.
+// IndexKey is the "<EXCH>:<token>" key of INDEX_TOKEN, the primary index.
 func IndexKey() string { e, t := indexInstrument(); return e + ":" + t }
+
+// IndexKeys is the "<EXCH>:<token>" list default: INDEX_TOKEN, then every
+// extra underlying in UNDERLYINGS.
+func IndexKeys() string {
+	out := []string{IndexKey()}
+	for _, p := range extraUnderlyings() {
+		out = append(out, p.IndexKey())
+	}
+	return strings.Join(out, ",")
+}
+
+// extraUnderlyings are the underlyings UNDERLYINGS adds beyond NIFTY (the
+// primary, which INDEX_TOKEN names), minus any equal to INDEX_TOKEN.
+func extraUnderlyings() []underlying.Profile {
+	primary := IndexKey()
+	var out []underlying.Profile
+	for _, p := range underlying.All()[1:] {
+		if !strings.EqualFold(p.IndexKey(), primary) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
