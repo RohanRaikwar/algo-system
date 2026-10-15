@@ -276,6 +276,7 @@ func New(cfg Config) (*Service, error) {
 		LiveLots:         cfg.LiveLots,
 		FreezeQty:        cfg.FreezeQty,
 		MaxDayLossPaise:  cfg.LiveMaxDayLossPaise,
+		MaxDayLossTotalPaise: cfg.LiveMaxDayLossTotalPaise,
 		RequireJournal:   cfg.LiveOrders,
 		ProtectionMode:   cfg.ProtectionMode,
 		ExecMode:         cfg.ExecMode,

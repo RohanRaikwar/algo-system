@@ -138,7 +138,7 @@ func (oe *OrderExecutor) modifyOrder(orderID, symbol, token, orderType string, q
 		"quantity":      fmt.Sprintf("%d", qty),
 		"tradingsymbol": symbol,
 		"symboltoken":   token,
-		"exchange":      oe.cfg.FNOExchange,
+		"exchange":      oe.exchangeFor(symbol),
 		"price":         "0",
 	}
 	if price > 0 {
