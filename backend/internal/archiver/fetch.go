@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -131,13 +132,42 @@ func (f *dayFetcher) download(ctx context.Context, day time.Time, name, local st
 	return local, nil
 }
 
+// cachedDayFile matches only names fetch writes (<source>-YYYY-MM-DD.db),
+// so cache cleanup can never delete a live database such as candles.db,
+// even if the cache dir is pointed at data/.
+var cachedDayFile = regexp.MustCompile(`^[a-z0-9_]+-\d{4}-\d{2}-\d{2}\.db$`)
+
+// cachedFiles lists the MEGA day files in the cache dir.
+func (f *dayFetcher) cachedFiles() []string {
+	paths, _ := filepath.Glob(filepath.Join(f.dir, "*.db"))
+	out := paths[:0]
+	for _, p := range paths {
+		if cachedDayFile.MatchString(filepath.Base(p)) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// expire deletes cached MEGA day files not read for ttl. fetch refreshes a
+// file's mtime on every read, so a file in use is never expired.
+func (f *dayFetcher) expire(ttl time.Duration) {
+	paths := f.cachedFiles()
+	cutoff := time.Now().Add(-ttl)
+	for _, p := range paths {
+		if st, err := os.Stat(p); err == nil && st.ModTime().Before(cutoff) {
+			os.Remove(p)
+		}
+	}
+}
+
 // evict removes the least recently used cached files until the cache fits
 // capBytes, never the file just fetched.
 func (f *dayFetcher) evict(keep string) {
 	if f.capBytes <= 0 {
 		return
 	}
-	paths, _ := filepath.Glob(filepath.Join(f.dir, "*.db"))
+	paths := f.cachedFiles()
 	type entry struct {
 		path string
 		size int64

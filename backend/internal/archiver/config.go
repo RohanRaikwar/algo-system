@@ -40,9 +40,11 @@ type Config struct {
 	WarmupDays int
 
 	// Cold reads: chart history older than the local window is fetched
-	// from MEGA day files into ColdCacheDir, capped at ColdCacheMB.
+	// from MEGA day files into ColdCacheDir, capped at ColdCacheMB. A
+	// cached day not read for ColdCacheTTL is deleted.
 	ColdCacheDir string
 	ColdCacheMB  int
+	ColdCacheTTL time.Duration
 	ColdMaxDays  int // how far back a chart page may walk
 }
 
@@ -77,6 +79,7 @@ func LoadConfig() Config {
 		WarmupDays:       config.GetEnvInt("STRAT_RANGE_WARMUP_DAYS", 5),
 		ColdCacheDir:     config.GetEnv("ARCHIVE_COLD_CACHE_DIR", "data/archive_cache"),
 		ColdCacheMB:      config.GetEnvInt("ARCHIVE_COLD_CACHE_MB", 300),
+		ColdCacheTTL:     time.Duration(config.GetEnvInt("ARCHIVE_COLD_CACHE_TTL_MIN", 10)) * time.Minute,
 		ColdMaxDays:      config.GetEnvInt("ARCHIVE_COLD_MAX_DAYS", 365),
 	}
 }

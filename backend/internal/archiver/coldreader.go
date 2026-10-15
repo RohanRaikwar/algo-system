@@ -42,9 +42,28 @@ func newColdReader(store Downloader, cfg Config) *ColdReader {
 	if maxDays <= 0 {
 		maxDays = 365
 	}
-	return &ColdReader{
+	r := &ColdReader{
 		f:       newDayFetcher(store, cfg.MegaRootDir, cfg.ColdCacheDir, int64(cfg.ColdCacheMB)<<20),
 		maxDays: maxDays,
+	}
+	if cfg.ColdCacheTTL > 0 {
+		r.f.expire(cfg.ColdCacheTTL) // leftovers from the last run
+		go r.expireLoop(cfg.ColdCacheTTL)
+	}
+	return r
+}
+
+// expireLoop deletes unused cached days for the life of the process (the
+// gateway), checking every minute or every ttl if shorter.
+func (r *ColdReader) expireLoop(ttl time.Duration) {
+	every := time.Minute
+	if ttl < every {
+		every = ttl
+	}
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for range t.C {
+		r.f.expire(ttl)
 	}
 }
 

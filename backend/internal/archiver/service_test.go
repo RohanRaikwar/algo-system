@@ -287,6 +287,31 @@ func TestColdReader_PagesBackThroughArchive(t *testing.T) {
 	}
 }
 
+func TestDayFetcher_ExpiresUnusedFiles(t *testing.T) {
+	dir := t.TempDir()
+	f := newDayFetcher(nil, "algo-archive", dir, 0)
+	old := filepath.Join(dir, "candles-2026-10-05.db")
+	fresh := filepath.Join(dir, "candles-2026-10-06.db")
+	live := filepath.Join(dir, "candles.db") // a live DB if the cache dir were data/
+	for _, p := range []string{old, fresh, live} {
+		os.WriteFile(p, []byte("x"), 0o644)
+	}
+	stale := time.Now().Add(-11 * time.Minute)
+	os.Chtimes(old, stale, stale)
+	os.Chtimes(live, stale, stale)
+
+	f.expire(10 * time.Minute)
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Fatalf("file unused for 11m not expired")
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Fatalf("recently used file expired: %v", err)
+	}
+	if _, err := os.Stat(live); err != nil {
+		t.Fatalf("live candles.db deleted: %v", err)
+	}
+}
+
 func sepTS(day, hour int) int64 {
 	return time.Date(2026, 9, day, hour, 0, 0, 0, markethours.IST).Unix()
 }
