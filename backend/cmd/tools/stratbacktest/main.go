@@ -1,10 +1,10 @@
-// cmd/stratbacktest replays historical 1m candle data through a selected strategy.
+// cmd/tools/stratbacktest replays historical 1m candle data through a selected strategy.
 //
 // Usage:
 //
-//	go run ./cmd/stratbacktest --db=data/historical.db --token=99926000
-//	go run ./cmd/stratbacktest --output=json --outdir=./results
-//	go run ./cmd/stratbacktest --help
+//	go run ./cmd/tools/stratbacktest --db=data/historical.db --token=99926000
+//	go run ./cmd/tools/stratbacktest --output=json --outdir=./results
+//	go run ./cmd/tools/stratbacktest --help
 package main
 
 import (

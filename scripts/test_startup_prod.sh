@@ -16,7 +16,7 @@ echo ""
 export $(cat ../.env.prod | grep -v '^#' | xargs)
 
 # Run a quick test
-timeout 10s go run cmd/testlotsize/main.go
+timeout 10s go run cmd/tools/testlotsize/main.go
 
 echo ""
 echo "📋 Test 2: Production startup with missing cache"
@@ -28,7 +28,7 @@ echo ""
 rm -rf .cache
 
 # Run test with missing cache
-timeout 15s go run cmd/testlotsize/main.go
+timeout 15s go run cmd/tools/testlotsize/main.go
 
 echo ""
 echo "📋 Test 3: Production startup with disabled download"
@@ -43,7 +43,7 @@ rm -rf .cache
 export INSTRUMENT_MASTER_STARTUP_DOWNLOAD=false
 
 # Run test with disabled startup download
-timeout 10s go run cmd/testlotsize/main.go
+timeout 10s go run cmd/tools/testlotsize/main.go
 
 echo ""
 echo "✅ Production startup tests completed"

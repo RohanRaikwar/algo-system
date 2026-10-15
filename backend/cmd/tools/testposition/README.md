@@ -14,10 +14,10 @@ Automated test tool that places a 1-quantity REAL order and auto-sells when pric
 
 ```bash
 # Test CALL option (uses .env.prod automatically)
-go run backend/cmd/testposition/main.go CALL
+go run backend/cmd/tools/testposition/main.go CALL
 
 # Test PUT option (uses .env.prod automatically)
-go run backend/cmd/testposition/main.go PUT
+go run backend/cmd/tools/testposition/main.go PUT
 ```
 
 **The tool will:**

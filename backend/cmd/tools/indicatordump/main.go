@@ -1,8 +1,8 @@
-// cmd/indicatordump exports 1-minute EMA6, EMA9, SMA21 values from historical DB to JSON.
+// cmd/tools/indicatordump exports 1-minute EMA6, EMA9, SMA21 values from historical DB to JSON.
 //
 // Usage:
 //
-//	go run ./cmd/indicatordump --db=data/historical.db --exchange=NSE --token=99926000 --from=2026-03-19 --to=2026-03-20 --out=results/indicator_values_1m.json
+//	go run ./cmd/tools/indicatordump --db=data/historical.db --exchange=NSE --token=99926000 --from=2026-03-19 --to=2026-03-20 --out=results/indicator_values_1m.json
 package main
 
 import (

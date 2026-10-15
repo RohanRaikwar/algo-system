@@ -34,7 +34,7 @@ func main() {
 	}
 
 	if len(args) < 1 {
-		log.Fatal("Usage: go run backend/cmd/cancelorder/main.go " + realmoney.Flag + " <ORDER_ID>")
+		log.Fatal("Usage: go run backend/cmd/tools/cancelorder/main.go " + realmoney.Flag + " <ORDER_ID>")
 	}
 
 	orderID := args[0]

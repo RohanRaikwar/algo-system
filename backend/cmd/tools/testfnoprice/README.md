@@ -24,7 +24,7 @@ This test program demonstrates how to fetch **live FNO (F&O option) prices** fro
 ```bash
 cd backend
 source ../.env
-go run ./cmd/testfnoprice
+go run ./cmd/tools/testfnoprice
 ```
 
 ### Expected Output
@@ -255,7 +255,7 @@ STRAT_MAX_PREMIUM=25000  # ₹250
 
 ```bash
 # Run test to see which OTM strikes have ₹200-250 premiums
-go run ./cmd/testfnoprice
+go run ./cmd/tools/testfnoprice
 ```
 
 Look for strikes marked with ⭐ in the output.
@@ -264,7 +264,7 @@ Look for strikes marked with ⭐ in the output.
 
 ```bash
 # See live premiums for all strikes
-go run ./cmd/testfnoprice
+go run ./cmd/tools/testfnoprice
 ```
 
 Review the complete strike chain section.
@@ -273,7 +273,7 @@ Review the complete strike chain section.
 
 ```bash
 # Test if OTM1/OTM2 selection works with live data
-go run ./cmd/testfnoprice
+go run ./cmd/tools/testfnoprice
 ```
 
 Check if selected strikes match expected OTM levels.

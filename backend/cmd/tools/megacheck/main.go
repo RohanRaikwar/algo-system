@@ -4,7 +4,7 @@
 // With -day it instead downloads one archived day folder and unpacks each
 // file to plain SQLite:
 //
-//	go run ./cmd/megacheck -day 2026-10-23 -out data/extract
+//	go run ./cmd/tools/megacheck -day 2026-10-23 -out data/extract
 package main
 
 import (

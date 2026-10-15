@@ -6,11 +6,11 @@
 //
 //	# 1. Record ticks during a session (the system does not persist raw ticks;
 //	#    mdengine publishes every tick as model.Tick JSON on pub:tick:*).
-//	go run ./cmd/replay -record -redis localhost:6379 -out ticks.jsonl
+//	go run ./cmd/tools/replay -record -redis localhost:6379 -out ticks.jsonl
 //
 //	# 2. Replay them before and after a change and diff.
-//	go run ./cmd/replay -in ticks.jsonl -tfs 60,300 > before.jsonl
-//	go run ./cmd/replay -in ticks.jsonl -tfs 60,300 > after.jsonl
+//	go run ./cmd/tools/replay -in ticks.jsonl -tfs 60,300 > before.jsonl
+//	go run ./cmd/tools/replay -in ticks.jsonl -tfs 60,300 > after.jsonl
 //	diff before.jsonl after.jsonl
 //
 // Input: one model.Tick JSON object per line (the pub:tick:* payload format,

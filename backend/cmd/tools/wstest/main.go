@@ -1,4 +1,4 @@
-// cmd/wstest — Quick backend WebSocket test for Angel One SmartAPI.
+// cmd/tools/wstest — Quick backend WebSocket test for Angel One SmartAPI.
 //
 // Connects to the Angel One WebSocket, subscribes to NIFTY 50 index
 // and the dynamically resolved CE/PE F&O tokens, and prints live ticks.
@@ -6,7 +6,7 @@
 // Usage:
 //
 //	set -a && source ../.env && set +a
-//	go run ./cmd/wstest
+//	go run ./cmd/tools/wstest
 //
 // Market must be open (9:15–15:30 IST Mon-Fri) for ticks to flow.
 package main

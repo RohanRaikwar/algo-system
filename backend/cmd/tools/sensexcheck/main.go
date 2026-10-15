@@ -8,8 +8,8 @@
 // opens a new Angel session; run it outside market hours if production
 // shares the account.
 //
-//	go run ./cmd/sensexcheck            # SENSEX
-//	go run ./cmd/sensexcheck -key NIFTY
+//	go run ./cmd/tools/sensexcheck            # SENSEX
+//	go run ./cmd/tools/sensexcheck -key NIFTY
 package main
 
 import (

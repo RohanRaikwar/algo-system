@@ -112,7 +112,7 @@ aggTickCh hold 10 000 each, which is 100 s of buffer at 100/s. The per-tick
 cost is dominated by the inline `PublishTick` round trip, which is well under
 1 ms to a local Redis.
 
-### Message sizes (JSON, measured on `backend/cmd/replay/testdata`)
+### Message sizes (JSON, measured on `backend/cmd/tools/replay/testdata`)
 
 | Payload | Bytes |
 |---|---|
@@ -237,7 +237,7 @@ REST latency and availability (stage 10), and exchange fill time
 TF buckets are aligned to the Unix epoch in UTC: `ts − ts % TF` in
 `tfbuilder`. IST is UTC+5:30, so:
 
-- **120 s** buckets start on even UTC minutes. NSE opens at 09:15 IST = 03:45 UTC, so the first 2-minute candle is 09:14–09:16 IST and contains only 09:15–09:16. The golden file in `backend/cmd/replay/testdata` shows this: the first 120 s candle is stamped `03:44:00Z`.
+- **120 s** buckets start on even UTC minutes. NSE opens at 09:15 IST = 03:45 UTC, so the first 2-minute candle is 09:14–09:16 IST and contains only 09:15–09:16. The golden file in `backend/cmd/tools/replay/testdata` shows this: the first 120 s candle is stamped `03:44:00Z`.
 - **3600 s** buckets run :30 → :30 IST. The first hourly candle is 08:30–09:30 IST and holds only 15 minutes of trading.
 - **60, 180 and 300 s** align with 09:15.
 

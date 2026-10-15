@@ -57,7 +57,7 @@ The strike picker now uses a comprehensive ranking system:
 source .env
 
 # Run the test
-go run ./cmd/teststrike_otm
+go run ./cmd/tools/teststrike_otm
 ```
 
 ### Expected Output

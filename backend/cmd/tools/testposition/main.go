@@ -21,8 +21,8 @@ import (
 // to test order flow with minimal risk.
 //
 // Usage:
-//   go run backend/cmd/testposition/main.go --i-understand-real-money CALL
-//   go run backend/cmd/testposition/main.go --i-understand-real-money PUT
+//   go run backend/cmd/tools/testposition/main.go --i-understand-real-money CALL
+//   go run backend/cmd/tools/testposition/main.go --i-understand-real-money PUT
 //
 // It asks for a typed confirmation before logging in.
 //
@@ -59,7 +59,7 @@ func main() {
 
 	// Parse command line arguments
 	if len(args) < 1 {
-		log.Fatal("Usage: go run backend/cmd/testposition/main.go " + realmoney.Flag + " [CALL|PUT] [--test-mode]")
+		log.Fatal("Usage: go run backend/cmd/tools/testposition/main.go " + realmoney.Flag + " [CALL|PUT] [--test-mode]")
 	}
 
 	side := args[0]
@@ -154,7 +154,7 @@ func main() {
 			log.Println("   • Angel One API rate limit")
 			log.Println("   • Network connectivity issue")
 			log.Println("\n� TIP: Use --test-mode flag to test with hardcoded values:")
-			log.Println("   go run cmd/testposition/main.go CALL --test-mode")
+			log.Println("   go run cmd/tools/testposition/main.go CALL --test-mode")
 			log.Fatal("Cannot proceed without NIFTY index price")
 		}
 		log.Printf("NIFTY Index: ₹%.2f", float64(niftyPrice)/100)

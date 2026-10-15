@@ -1,10 +1,10 @@
-// cmd/histdata downloads historical candle data from Angel One SmartAPI
+// cmd/tools/histdata downloads historical candle data from Angel One SmartAPI
 // and stores it into a separate SQLite database (data/historical.db) for backtesting.
 //
 // Usage:
 //
-//	source ../../.env && go run ./cmd/histdata --token=99926000 --from=2026-03-01 --to=2026-03-07
-//	go run ./cmd/histdata --help
+//	source ../../.env && go run ./cmd/tools/histdata --token=99926000 --from=2026-03-01 --to=2026-03-07
+//	go run ./cmd/tools/histdata --help
 package main
 
 import (

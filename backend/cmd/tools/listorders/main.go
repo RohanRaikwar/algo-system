@@ -96,7 +96,7 @@ func main() {
 				if status == "open" || status == "pending" || status == "trigger pending" {
 					openOrders++
 					fmt.Printf("   ⚠️  OPEN ORDER - Can be cancelled\n")
-					fmt.Printf("   Cancel command: go run backend/cmd/cancelorder/main.go %s\n", orderID)
+					fmt.Printf("   Cancel command: go run backend/cmd/tools/cancelorder/main.go %s\n", orderID)
 				}
 			}
 		}
@@ -106,7 +106,7 @@ func main() {
 		
 		if openOrders > 0 {
 			fmt.Println("\n💡 TIP: Cancel open orders using:")
-			fmt.Println("   go run backend/cmd/cancelorder/main.go <ORDER_ID>")
+			fmt.Println("   go run backend/cmd/tools/cancelorder/main.go <ORDER_ID>")
 		}
 	}
 }

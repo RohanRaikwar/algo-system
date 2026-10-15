@@ -1,4 +1,4 @@
-// cmd/feedseqcheck — verify that parallel Angel feed sockets see the same
+// cmd/tools/feedseqcheck — verify that parallel Angel feed sockets see the same
 // sequence_number for the same packet, which ws.FeedGroup's dedup relies on.
 //
 // Opens two sockets (pinned to different Angel IPs, like mdengine), subscribes
@@ -12,7 +12,7 @@
 // Usage:
 //
 //	set -a && source ../.env && set +a
-//	go run ./cmd/feedseqcheck -tokens 1:99926000 -dur 60s
+//	go run ./cmd/tools/feedseqcheck -tokens 1:99926000 -dur 60s
 package main
 
 import (

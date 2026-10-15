@@ -1,9 +1,9 @@
-// cmd/backtest replays historical candle data from SQLite through the indicator
+// cmd/tools/backtest replays historical candle data from SQLite through the indicator
 // engine to validate indicators and strategies without live market data.
 //
 // Usage:
 //
-//	go run ./cmd/backtest --speed=100 --tf=60,300 --from=0
+//	go run ./cmd/tools/backtest --speed=100 --tf=60,300 --from=0
 package main
 
 import (

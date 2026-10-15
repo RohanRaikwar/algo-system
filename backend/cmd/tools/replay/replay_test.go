@@ -217,7 +217,7 @@ func TestReplay_Golden(t *testing.T) {
 	}
 	f, err := os.Open(in)
 	if err != nil {
-		t.Fatalf("%v (run: go test ./cmd/replay -run Golden -update)", err)
+		t.Fatalf("%v (run: go test ./cmd/tools/replay -run Golden -update)", err)
 	}
 	ticks, err := ReadTicks(f)
 	f.Close()
