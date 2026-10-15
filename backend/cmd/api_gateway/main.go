@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"trading-systemv1/config"
+	"trading-systemv1/internal/archiver"
 	"trading-systemv1/internal/gateway"
 	"trading-systemv1/internal/heartbeat"
 	"trading-systemv1/internal/markethours"
@@ -71,6 +72,13 @@ func main() {
 
 	// Hub manages all WebSocket connections
 	hub := gateway.NewHub(rdb, tfs, tokenKeys, indicators, candleReader)
+
+	// Chart history older than the local SQLite window comes from the
+	// MEGA day files the archiver uploads.
+	if cr := archiver.NewColdReader(archiver.LoadConfig()); cr != nil {
+		hub.ColdCandles = cr
+		log.Printf("[api_gateway] MEGA archive reader enabled for chart history")
+	}
 
 	// Pipeline, indicator and order stats come from snapshots the owning
 	// processes write to Redis; heartbeats say which services are up.

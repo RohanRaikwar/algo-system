@@ -23,9 +23,11 @@ type Config struct {
 	// fall after the 15:30 close so mdengine's final candle flush is done.
 	RunAt string
 
-	CandlesPath   string   // SQLITE_PATH: candles_1s, candles_tf
-	ExitwatchPath string   // EXITWATCH_DB: decisions, features_1hz
-	JournalPaths  []string // signal journals: snapshotted whole, never pruned
+	CandlesPath    string   // SQLITE_PATH: candles_1s, candles_tf
+	ExitwatchPath  string   // EXITWATCH_DB: decisions, features_1hz
+	JournalPaths   []string // signal journals: archived per day, never pruned
+	OrdersPath     string   // STRAT_ORDER_JOURNAL_PATH: archived per day, never pruned
+	ExitPolicyPath string   // STRAT_EXITPOLICY_DB: archived per day, never pruned
 
 	// Local retention in calendar days, counted back from the archived day.
 	// Rows older than this are deleted only once their day is in MEGA.
@@ -36,6 +38,14 @@ type Config struct {
 	// WarmupDays mirrors STRAT_RANGE_WARMUP_DAYS so Validate can refuse a
 	// candles_tf window that would starve stratengine's startup warmup.
 	WarmupDays int
+
+	// Cold reads: chart history older than the local window is fetched
+	// from MEGA day files into ColdCacheDir, capped at ColdCacheMB. A
+	// cached day not read for ColdCacheTTL is deleted.
+	ColdCacheDir string
+	ColdCacheMB  int
+	ColdCacheTTL time.Duration
+	ColdMaxDays  int // how far back a chart page may walk
 }
 
 // LoadConfig reads all environment variables and returns a Config.
@@ -61,10 +71,16 @@ func LoadConfig() Config {
 		CandlesPath:      config.GetEnv("SQLITE_PATH", "data/candles.db"),
 		ExitwatchPath:    config.GetEnv("EXITWATCH_DB", "data/exitwatch.db"),
 		JournalPaths:     journals,
-		Keep1sDays:       config.GetEnvInt("ARCHIVE_KEEP_1S_DAYS", 5),
+		OrdersPath:       config.GetEnv("STRAT_ORDER_JOURNAL_PATH", "data/orders.db"),
+		ExitPolicyPath:   config.GetEnv("STRAT_EXITPOLICY_DB", "data/exitpolicy.db"),
+		Keep1sDays:       config.GetEnvInt("ARCHIVE_KEEP_1S_DAYS", 10),
 		KeepTFDays:       config.GetEnvInt("ARCHIVE_KEEP_TF_DAYS", 10),
-		KeepFeaturesDays: config.GetEnvInt("ARCHIVE_KEEP_FEATURES_DAYS", 3),
+		KeepFeaturesDays: config.GetEnvInt("ARCHIVE_KEEP_FEATURES_DAYS", 10),
 		WarmupDays:       config.GetEnvInt("STRAT_RANGE_WARMUP_DAYS", 5),
+		ColdCacheDir:     config.GetEnv("ARCHIVE_COLD_CACHE_DIR", "data/archive_cache"),
+		ColdCacheMB:      config.GetEnvInt("ARCHIVE_COLD_CACHE_MB", 300),
+		ColdCacheTTL:     time.Duration(config.GetEnvInt("ARCHIVE_COLD_CACHE_TTL_MIN", 10)) * time.Minute,
+		ColdMaxDays:      config.GetEnvInt("ARCHIVE_COLD_MAX_DAYS", 365),
 	}
 }
 

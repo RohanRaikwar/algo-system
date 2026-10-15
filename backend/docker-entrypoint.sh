@@ -27,6 +27,11 @@ shutdown() {
 }
 trap 'shutdown; exit 0' TERM INT
 
+# A fresh volume (new Railway account, lost disk) is refilled from MEGA
+# before anything opens the databases. No-op when local data exists;
+# never blocks startup for long or on failure.
+timeout 300 /app/bin/archiver -restore || echo "[entrypoint] restore did not finish; continuing"
+
 start mdengine
 sleep 2
 start indengine

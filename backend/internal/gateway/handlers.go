@@ -281,35 +281,21 @@ func RegisterRoutes(mux *http.ServeMux, hub *Hub, rdb *goredis.Client, ctx conte
 			candles = append(candles, c)
 		}
 
-		// SQLite backfill when Redis has fewer candles than requested
-		if len(candles) < limit && hub.CandleReader != nil {
-			parts := strings.SplitN(token, ":", 2)
-			if len(parts) == 2 {
-				sqlCandles, sqlErr := readCandlesBefore(hub.CandleReader, parts[0], parts[1], tfVal, before, limit)
-				if sqlErr == nil && len(sqlCandles) > 0 {
-					// Dedup: collect existing timestamps
-					seen := make(map[string]bool, len(candles))
-					for _, c := range candles {
-						seen[c.TS] = true
-					}
-					for _, tc := range sqlCandles {
-						ts := tc.TS.UTC().Format(time.RFC3339)
-						if !seen[ts] {
-							candles = append(candles, CandleOut{
-								TS: ts, Open: float64(tc.Open), High: float64(tc.High),
-								Low: float64(tc.Low), Close: float64(tc.Close),
-								Volume: float64(tc.Volume), Count: float64(tc.Count),
-								Token: parts[1], Exchange: parts[0], TF: tfVal,
-							})
-							seen[ts] = true
-						}
-					}
-					// Re-sort and cap
-					sort.Slice(candles, func(i, j int) bool { return candles[i].TS < candles[j].TS })
-					if len(candles) > limit {
-						candles = candles[len(candles)-limit:]
-					}
-				}
+		// SQLite backfill when Redis has fewer candles than requested,
+		// then the MEGA archive for history older than the local window.
+		parts := strings.SplitN(token, ":", 2)
+		if len(candles) < limit && hub.CandleReader != nil && len(parts) == 2 {
+			sqlCandles, sqlErr := readCandlesBefore(hub.CandleReader, parts[0], parts[1], tfVal, before, limit)
+			if sqlErr == nil && len(sqlCandles) > 0 {
+				candles = mergeTFCandles(candles, sqlCandles, parts[0], parts[1], tfVal, limit)
+			}
+		}
+		if len(candles) < limit && hub.ColdCandles != nil && len(parts) == 2 {
+			sort.Slice(candles, func(i, j int) bool { return candles[i].TS < candles[j].TS })
+			cold, coldErr := hub.ColdCandles.ReadTFCandlesBefore(parts[0], parts[1], tfVal,
+				coldBeforeTS(candles, before), limit-len(candles))
+			if coldErr == nil && len(cold) > 0 {
+				candles = mergeTFCandles(candles, cold, parts[0], parts[1], tfVal, limit)
 			}
 		}
 
@@ -702,18 +688,19 @@ func querySignalRowsForAPI(db *sql.DB, limit int, strategy string) (*sql.Rows, e
 	}
 	return nil, lastErr
 }
+
 // TradingConfig represents the trading configuration structure
 type TradingConfig struct {
-	LiveOrders      bool    `json:"liveOrders"`
-	Quantity        int     `json:"quantity"`
-	TargetProfitPct float64 `json:"targetProfitPct"`
-	HardSLPct       float64 `json:"hardSLPct"`
-	TrailSLPct      float64 `json:"trailSLPct"`
-	TrailStartPct   float64 `json:"trailStartPct"`
-	KillSwitch      bool    `json:"killSwitch"`
-	MaxDailyLoss    int     `json:"maxDailyLoss"`
-	SkipFirstMinutes int    `json:"skipFirstMinutes"`
-	SkipLastMinutes  int    `json:"skipLastMinutes"`
+	LiveOrders       bool    `json:"liveOrders"`
+	Quantity         int     `json:"quantity"`
+	TargetProfitPct  float64 `json:"targetProfitPct"`
+	HardSLPct        float64 `json:"hardSLPct"`
+	TrailSLPct       float64 `json:"trailSLPct"`
+	TrailStartPct    float64 `json:"trailStartPct"`
+	KillSwitch       bool    `json:"killSwitch"`
+	MaxDailyLoss     int     `json:"maxDailyLoss"`
+	SkipFirstMinutes int     `json:"skipFirstMinutes"`
+	SkipLastMinutes  int     `json:"skipLastMinutes"`
 }
 
 // makeTradingConfigHandler creates a handler for GET/POST /api/trading/config
@@ -721,7 +708,7 @@ func makeTradingConfigHandler(rdb *goredis.Client, ctx context.Context) http.Han
 	return func(w http.ResponseWriter, r *http.Request) {
 		SetCORS(w, r)
 		w.Header().Set("Content-Type", "application/json")
-		
+
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return
@@ -747,13 +734,13 @@ func makeTradingConfigHandler(rdb *goredis.Client, ctx context.Context) http.Han
 				json.NewEncoder(w).Encode(defaultConfig)
 				return
 			}
-			
+
 			var config TradingConfig
 			if err := json.Unmarshal([]byte(val), &config); err != nil {
 				http.Error(w, "Failed to parse configuration", http.StatusInternalServerError)
 				return
 			}
-			
+
 			json.NewEncoder(w).Encode(config)
 			return
 		}
@@ -796,7 +783,7 @@ func makeTradingConfigHandler(rdb *goredis.Client, ctx context.Context) http.Han
 				log.Printf("[api_gateway] Failed to publish config update: %v", err)
 			}
 
-			log.Printf("[api_gateway] Trading configuration updated: LiveOrders=%v, Qty=%d, TargetProfit=%.1f%%, HardSL=%.1f%%", 
+			log.Printf("[api_gateway] Trading configuration updated: LiveOrders=%v, Qty=%d, TargetProfit=%.1f%%, HardSL=%.1f%%",
 				config.LiveOrders, config.Quantity, config.TargetProfitPct, config.HardSLPct)
 
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -897,8 +884,8 @@ func makeAllSessionsHealthHandler(rdb *goredis.Client, ctx context.Context, acco
 		}
 
 		response["overall"] = map[string]interface{}{
-			"all_healthy":   allHealthy,
-			"total_sessions": sessionCount,
+			"all_healthy":      allHealthy,
+			"total_sessions":   sessionCount,
 			"healthy_sessions": healthyCount,
 		}
 
