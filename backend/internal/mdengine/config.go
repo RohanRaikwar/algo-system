@@ -32,7 +32,7 @@ type Config struct {
 	// ── Subscription ──
 	TokenList    []smartconnect.TokenListEntry // parsed production tokens
 	EnabledTFs   []int                         // timeframe durations in seconds
-	CandleTokens map[string]bool               // when non-empty, only these tokens get candle aggregation
+	CandleTokens map[string]bool               // only these tokens get candle aggregation (the indexes); empty = all
 
 	// CloseRefToken is the one instrument whose price the smart market-close
 	// detector watches (default NIFTY 50 index, 99926000).
@@ -66,7 +66,7 @@ func LoadConfig() Config {
 		SQLitePath:      config.GetEnv("SQLITE_PATH", "data/candles.db"),
 		MetricsAddr:     config.GetEnv("METRICS_ADDR", ":9090"),
 		SimWSURL:        config.GetEnv("SIM_WS_URL", "ws://localhost:9001/ws"),
-		CandleTokens:    parseCandleTokens(candleTokensEnv()),
+		CandleTokens:    candleTokenSet(),
 		CloseRefToken:   config.IndexToken(),
 		Persist1sTokens: subscribeTokenSet(config.IndexSubscribeTokens()),
 	}
@@ -122,17 +122,19 @@ func parseFeedConnections(v string) int {
 	return min(max(n, 1), ws.MaxFeedConns)
 }
 
-// candleTokensEnv is CANDLE_TOKENS with the extra underlyings' indexes
-// added when the filter is set (empty stays empty: every token).
-func candleTokensEnv() string {
+// candleTokenSet is the set of tokens whose ticks build candles: the index
+// tokens (INDEX_TOKEN + UNDERLYINGS). Option ticks build no candles, so no
+// option data is stored (SQLite, MEGA, Redis candle streams); they are still
+// published for LTP, quotes and premium stops. CANDLE_TOKENS, when set,
+// replaces the list (staging), with the extra underlyings' indexes added.
+func candleTokenSet() map[string]bool {
 	list := config.GetEnv("CANDLE_TOKENS", "")
 	if strings.TrimSpace(list) == "" {
-		return list
+		return subscribeTokenSet(config.IndexSubscribeTokens())
 	}
+	set := parseCandleTokens(list)
 	for _, t := range config.ExtraIndexTokens() {
-		if !parseCandleTokens(list)[t] {
-			list += "," + t
-		}
+		set[t] = true
 	}
-	return list
+	return set
 }

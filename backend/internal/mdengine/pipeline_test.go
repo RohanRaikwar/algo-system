@@ -303,3 +303,21 @@ func TestFilterCandles_KeepsOnlyListedTokens(t *testing.T) {
 		t.Fatalf("got %v, want two 99926000 candles", got)
 	}
 }
+
+// An option tick builds no candle but is still published (LTP, quotes,
+// premium stops).
+func TestRouteTick_OptionPublishedNotAggregated(t *testing.T) {
+	s, _ := newTestService(Config{CandleTokens: map[string]bool{"99926000": true, "99919000": true}})
+	s.tickPubCh = make(chan model.Tick, 4)
+	aggTickCh := make(chan model.Tick, 4)
+
+	s.routeTick(model.Tick{Token: "1163095", Exchange: "BFO", Price: 30000}, aggTickCh)
+	s.routeTick(model.Tick{Token: "99919000", Exchange: "BSE", Price: 8420000}, aggTickCh)
+
+	if len(aggTickCh) != 1 || (<-aggTickCh).Token != "99919000" {
+		t.Fatal("option tick reached the candle aggregator")
+	}
+	if len(s.tickPubCh) != 2 {
+		t.Fatalf("published %d ticks, want both", len(s.tickPubCh))
+	}
+}

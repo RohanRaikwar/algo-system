@@ -389,7 +389,7 @@ func (s *Service) setupPipeline(ctx context.Context) {
 
 	// Fan-out: each tick goes to aggregator AND Redis PubSub
 	if len(s.cfg.CandleTokens) > 0 {
-		log.Printf("[mdengine] CANDLE_TOKENS filter active: only %v get candle aggregation", s.cfg.CandleTokens)
+		log.Printf("[mdengine] candles built only for %v (option ticks are published, not stored)", s.cfg.CandleTokens)
 	}
 
 	aggTickCh := make(chan model.Tick, 10000)
