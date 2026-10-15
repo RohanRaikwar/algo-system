@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { asOf, boxLine, clock, dayPicture, nearestN, reasonWarnings, situationLine, warnSummary, hhmm, nearestLevels, peekSummary, pnlPaise, points, rupees, watching } from './srFormat';
+import { asOf, boxLine, clock, dayPicture, nearestN, reasonWarnings, recentSweep, situationLine, sweepLabel, warnSummary, hhmm, nearestLevels, peekSummary, pnlPaise, points, rupees, watching } from './srFormat';
+import type { SRSweep } from '../../types/sr';
 import type { SRView } from '../../types/sr';
 
 const base: SRView = {
@@ -126,5 +127,20 @@ describe('chart situation helpers', () => {
     it('builds the situation line', () => {
         const v: SRView = { ...base, regime: 'TREND_UP', day_high: 2300000, day_low: 2272000, box_pts: 3500, box_bars: 6, boxed: true };
         expect(situationLine(v, 2297200)).toBe('SR · Trend up · 90% of day · Sideways 35 pts/30m');
+    });
+});
+
+describe('liquidity sweeps', () => {
+    const sw: SRSweep = { side: 'HIGH', level: 2451000, source: 'PREV_DAY', wick: 1200, extreme: 2452200, close: 2450500, ts: '2026-10-15T04:12:00Z' };
+
+    it('labels a sweep and its warning', () => {
+        expect(sweepLabel(sw)).toBe('High sweep 24,510.00 prev day · wick 12 pts');
+        expect(warnSummary(['call:sweep_high'])).toBe('CALL: after high sweep');
+    });
+
+    it('shows only a sweep from the last 15 minutes of the view', () => {
+        expect(recentSweep({ ...base, ts: '2026-10-15T04:20:00Z', sweeps: [sw] })).toBe(sw);
+        expect(recentSweep({ ...base, ts: '2026-10-15T04:30:00Z', sweeps: [sw] })).toBeNull();
+        expect(recentSweep({ ...base, ts: '2026-10-15T04:20:00Z', sweeps: null })).toBeNull();
     });
 });

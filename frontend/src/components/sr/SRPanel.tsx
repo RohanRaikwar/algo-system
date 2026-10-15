@@ -1,6 +1,6 @@
 import { useSelectedSRView } from '../../store/useSRStore';
 import { rejectLabel } from '../signals/SRStatusCard';
-import { KIND_LABEL, REGIME_LABEL, asOf, clock, hhmm, nearestLevels, pnlPaise, points, rupees, sourceLabel, warnLabel, watching } from './srFormat';
+import { KIND_LABEL, REGIME_LABEL, asOf, clock, hhmm, nearestLevels, pnlPaise, points, recentSweep, rupees, sourceLabel, sweepLabel, warnLabel, watching } from './srFormat';
 import { DayPosition } from './DayPosition';
 import { useLastNiftyPaise } from './useLastNiftyPaise';
 import styles from './SRPanel.module.css';
@@ -39,6 +39,7 @@ export function SRPanel() {
     const updated = asOf(v.ts);
     const { support, resistance } = nearestLevels(v.levels, price);
     const rejectAt = clock(v.last_reject_ts);
+    const sweep = recentSweep(v);
 
     return (
         <section className={styles.panel} aria-label="S/R strategy">
@@ -48,6 +49,12 @@ export function SRPanel() {
                     {REGIME_LABEL[v.regime] ?? v.regime}
                 </span>
                 <span className={`${styles.pill} ${styles.paper}`} title="The executor only sends real orders for NIFTY50_FNO">Paper</span>
+                {sweep && (
+                    <span className={`${styles.pill} ${styles.sweep}`}
+                        title={`Liquidity sweep: wick through the level, closed back inside. ${sweep.side === 'HIGH' ? 'CALL' : 'PUT'} entries in the next ${v.sweep_warn_min ?? 5} min are flagged.`}>
+                        ⚠ {sweepLabel(sweep)} · {clock(sweep.ts)}
+                    </span>
+                )}
                 {updated && <span className={styles.updated}>as of {updated} IST</span>}
             </div>
 
@@ -75,6 +82,13 @@ export function SRPanel() {
                         <p className={styles.reject}>
                             Last refused{rejectAt ? ` ${rejectAt}` : ''}: {rejectLabel(v.last_reject)}
                         </p>
+                    )}
+                    {v.sweeps && v.sweeps.length > 0 && (
+                        <ul className={styles.sweeps} aria-label="Liquidity sweeps today">
+                            {[...v.sweeps].reverse().map(sw => (
+                                <li key={`${sw.ts}-${sw.level}`}>⚠ {clock(sw.ts)} {sweepLabel(sw)}</li>
+                            ))}
+                        </ul>
                     )}
                 </div>
 

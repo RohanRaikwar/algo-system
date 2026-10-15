@@ -11,7 +11,8 @@ import type {
 } from 'lightweight-charts';
 
 // 'watch' is advice only (exitwatch WATCH_EXIT, SR WATCH_BUY): no order, no position change.
-export type TradeMarkerKind = 'entry' | 'exit' | 'refused' | 'watch';
+// 'sweep' is an SR liquidity sweep on the index: warning only.
+export type TradeMarkerKind = 'entry' | 'exit' | 'refused' | 'watch' | 'sweep';
 
 export interface TradeMarker {
     time: number; // chart time (IST-shifted seconds, TF-aligned)
@@ -20,6 +21,7 @@ export interface TradeMarker {
     side: string; // "C" | "P" | ""
     lines: string[]; // card detail rows; empty in compact mode
     pnl?: number; // paise, exits paired with an entry; tints the P&L row
+    below?: boolean; // card under the bar; entries always are
 }
 
 export const MARKER_COLORS: Record<TradeMarkerKind, string> = {
@@ -27,7 +29,10 @@ export const MARKER_COLORS: Record<TradeMarkerKind, string> = {
     exit: '#f0616d', // --sg-loss
     refused: '#8a94a6', // --sg-text-3
     watch: '#4fb8d6', // --sg-info, same as the signal log's Shadow badge
+    sweep: '#e5a23a', // --sg-warn
 };
+
+const isBelow = (m: TradeMarker) => m.kind === 'entry' || m.below === true;
 
 const FONT = "600 10px 'Inter', sans-serif";
 const DETAIL_FONT = "500 10px 'Inter', sans-serif";
@@ -156,7 +161,7 @@ export function autoscaleMargins(markers: readonly TradeMarker[], paneH: number)
     let tallestBelow = 0;
     for (const m of markers) {
         const h = cardSize(m).h;
-        if (m.kind === 'entry') tallestBelow = Math.max(tallestBelow, h);
+        if (isBelow(m)) tallestBelow = Math.max(tallestBelow, h);
         else tallestAbove = Math.max(tallestAbove, h);
     }
     const cap = paneH > 0 ? paneH * MAX_MARGIN_FRAC : Infinity;
@@ -215,6 +220,16 @@ function drawIcon(ctx: CanvasRenderingContext2D, kind: TradeMarkerKind, cx: numb
         ctx.moveTo(cx + h * 0.4, cy - h * 0.6);
         ctx.lineTo(cx + h, cy);
         ctx.lineTo(cx + h * 0.4, cy + h * 0.6);
+    } else if (kind === 'sweep') {
+        // Warning triangle with a bang.
+        ctx.moveTo(cx, cy - h);
+        ctx.lineTo(cx + h, cy + h * 0.8);
+        ctx.lineTo(cx - h, cy + h * 0.8);
+        ctx.closePath();
+        ctx.moveTo(cx, cy - h * 0.3);
+        ctx.lineTo(cx, cy + h * 0.2);
+        ctx.moveTo(cx, cy + h * 0.5);
+        ctx.lineTo(cx, cy + h * 0.55);
     } else if (kind === 'watch') {
         // Eye: almond outline with pupil.
         ctx.moveTo(cx - h, cy);
@@ -257,7 +272,7 @@ class Renderer implements ISeriesPrimitivePaneRenderer {
         ctx.strokeStyle = color;
         ctx.globalAlpha = 0.7;
         ctx.lineWidth = 1;
-        ctx.setLineDash(m.kind === 'refused' || m.kind === 'watch' ? [2, 2] : []);
+        ctx.setLineDash(m.kind === 'refused' || m.kind === 'watch' || m.kind === 'sweep' ? [2, 2] : []);
         ctx.beginPath();
         ctx.moveTo(cx, cy);
         if (Math.abs(cx - ax) < 1) {
@@ -388,7 +403,7 @@ export class TradeMarkersPrimitive implements ISeriesPrimitive<Time> {
                 if (logical === null) continue;
                 const bar = series.dataByIndex(Math.round(logical));
                 if (!bar || !('high' in bar) || bar.time !== m.time) continue;
-                const above = m.kind !== 'entry';
+                const above = !isBelow(m);
                 const y = series.priceToCoordinate(above ? bar.high : bar.low);
                 if (y === null) continue;
                 reqs.push({ x, y, above, ...cardSize(m) });

@@ -68,4 +68,20 @@ export interface SRView {
     /** Today's entries taken with each warning. */
     warns?: Record<string, number> | null;
     gate_mode?: string; // warn | block
+    /** Today's latest liquidity sweeps, oldest first. */
+    sweeps?: SRSweep[] | null;
+    /** Minutes a sweep flags an entry against it. */
+    sweep_warn_min?: number;
+}
+
+/** A 1m bar that wicked through a key level and closed back inside (stop hunt). */
+export interface SRSweep {
+    side: 'HIGH' | 'LOW';
+    level: number; // paise
+    source: string; // PREV_DAY | OPENING | DAY_HIGH | DAY_LOW | SWING
+    wick: number; // paise beyond the level
+    extreme: number; // wick high / low, paise
+    close: number;
+    touches?: number;
+    ts: string; // bucket start of the sweep bar
 }

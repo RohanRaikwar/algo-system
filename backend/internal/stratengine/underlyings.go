@@ -91,6 +91,8 @@ func srExtraConfig(base strategy.Nifty50SRConfig, p underlying.Profile) strategy
 	c.SupportStopZonePts = config.GetEnvInt64(pre+"SUPPORT_STOP_ZONE_PAISE", c.SupportStopZonePts)
 	c.TouchTolPts = config.GetEnvInt64(pre+"TOUCH_TOL_PAISE", c.TouchTolPts)
 	c.StopMinPts = config.GetEnvInt64(pre+"STOP_MIN_PAISE", c.StopMinPts)
+	c.SweepMinWickPts = config.GetEnvInt64(pre+"SWEEP_MIN_WICK_PAISE", c.SweepMinWickPts)
+	c.SweepEnabled = c.SweepEnabled && c.SweepMinWickPts > 0
 	return c
 }
 

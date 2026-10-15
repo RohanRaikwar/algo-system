@@ -225,6 +225,8 @@ func (svc *Service) buildStrategies(cfg Config) {
 	srCfg.AdviceMaxRiskATRPct, srCfg.StrongTrendADX = cfg.SRAdviceMaxRiskATRPct, cfg.SRStrongTrendADX
 	srCfg.SupportStopMode, srCfg.SupportStopTouches = cfg.SRSupportStopMode, cfg.SRSupportStopTouches
 	srCfg.SupportStopZonePts = cfg.SRSupportStopZonePts
+	srCfg.SweepEnabled = cfg.SRSweepMinWickPts > 0
+	srCfg.SweepMinWickPts, srCfg.SweepCooldownMin, srCfg.SweepWarnMin = cfg.SRSweepMinWickPts, cfg.SRSweepCooldownMin, cfg.SRSweepWarnMin
 	svc.srStrategy = strategy.NewNifty50SR(cfg.Qty, srCfg)
 	svc.srStrategy.SetExpiry(instruments.NewStrikePicker(nil).NextExpiry(time.Now()))
 

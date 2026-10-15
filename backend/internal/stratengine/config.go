@@ -116,6 +116,11 @@ type Config struct {
 	SRBoxBars   int
 	SRBoxATRPct int64
 	SRGateMode  string // warn (default: flag the entry) | block
+	// SR liquidity sweep (warning only): a 1m wick ≥ SRSweepMinWickPts
+	// (paise) through a key level that closes back inside. 0 = off.
+	SRSweepMinWickPts  int64
+	SRSweepCooldownMin int
+	SRSweepWarnMin     int
 	// SR support stop: at breakeven the stop goes under the nearest strong
 	// support (≥ SRSupportStopTouches touches) by SRSupportStopZonePts
 	// instead of to entry. off | breakeven | trail.
@@ -232,6 +237,9 @@ func LoadConfig() Config {
 		SRBoxBars:             config.GetEnvInt("STRAT_SR_BOX_BARS", 6),
 		SRBoxATRPct:           config.GetEnvInt64("STRAT_SR_BOX_ATR_PCT", 150),
 		SRGateMode:            config.GetEnv("STRAT_SR_GATE_MODE", "warn"),
+		SRSweepMinWickPts:     config.GetEnvInt64("STRAT_SR_SWEEP_MIN_WICK_PAISE", 500),
+		SRSweepCooldownMin:    config.GetEnvInt("STRAT_SR_SWEEP_COOLDOWN_MIN", 15),
+		SRSweepWarnMin:        config.GetEnvInt("STRAT_SR_SWEEP_WARN_MIN", 5),
 		SRSupportStopMode:     config.GetEnv("STRAT_SR_SUPPORT_STOP", "breakeven"),
 		SRSupportStopTouches:  config.GetEnvInt("STRAT_SR_SUPPORT_STOP_TOUCHES", 3),
 		SRSupportStopZonePts:  config.GetEnvInt64("STRAT_SR_SUPPORT_STOP_ZONE_PAISE", 300),

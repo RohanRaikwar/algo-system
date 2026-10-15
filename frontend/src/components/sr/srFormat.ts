@@ -1,4 +1,4 @@
-import type { SRLevel, SRView } from '../../types/sr';
+import type { SRLevel, SRSweep, SRView } from '../../types/sr';
 import { rejectLabel } from '../signals/SRStatusCard';
 
 export const REGIME_LABEL: Record<string, string> = {
@@ -20,6 +20,8 @@ const SOURCE_LABEL: Record<string, string> = {
     SWING: 'swing',
     PREV_DAY: 'prev day',
     OPENING: 'opening range',
+    DAY_HIGH: 'day high',
+    DAY_LOW: 'day low',
 };
 
 export function sourceLabel(s: string): string {
@@ -68,7 +70,25 @@ export function nearestN(levels: SRLevel[] | null, price: number | null | undefi
     return { supports, resistances };
 }
 
-const WARN_LABEL: Record<string, string> = { day_extreme: 'day extreme', sideways: 'sideways' };
+const WARN_LABEL: Record<string, string> = {
+    day_extreme: 'day extreme',
+    sideways: 'sideways',
+    sweep_high: 'after high sweep',
+    sweep_low: 'after low sweep',
+};
+
+/** "High sweep 24,510.00 prev day · wick 12 pts" */
+export function sweepLabel(sw: SRSweep): string {
+    return `${sw.side === 'HIGH' ? 'High' : 'Low'} sweep ${rupees(sw.level)} ${sourceLabel(sw.source)} · wick ${points(sw.wick)}`;
+}
+
+/** Latest sweep at most maxMin minutes before the view's last bar, else null. */
+export function recentSweep(v: SRView, maxMin = 15): SRSweep | null {
+    const last = v.sweeps?.[v.sweeps.length - 1];
+    if (!last) return null;
+    const age = Date.parse(v.ts) - Date.parse(last.ts);
+    return Number.isFinite(age) && age >= 0 && age <= maxMin * 60_000 ? last : null;
+}
 
 /** "day_extreme" → "day extreme". */
 export function warnLabel(w: string): string {

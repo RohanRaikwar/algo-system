@@ -21,6 +21,19 @@ const entry = {
 } as SignalRecord;
 
 describe('buildChartMarkers', () => {
+    it('marks SR sweeps: high above the bar, low below', () => {
+        const sweeps = [
+            { side: 'HIGH' as const, level: 2451000, source: 'DAY_HIGH', wick: 800, extreme: 2451800, close: 2450600, ts: '2026-09-29T05:12:00Z' },
+            { side: 'LOW' as const, level: 2440000, source: 'SWING', wick: 600, extreme: 2439400, close: 2440200, ts: '2026-09-29T05:20:00Z' },
+        ];
+        const [hi, lo] = buildChartMarkers([], [], 'NSE:99926000', 60, false, {}, sweeps);
+        expect(hi).toMatchObject({ kind: 'sweep', label: 'HIGH SWEEP', below: false });
+        expect(hi.lines[1]).toBe('Level ₹24,510.00 · wick 8 pts');
+        expect(lo).toMatchObject({ kind: 'sweep', label: 'LOW SWEEP', below: true });
+        expect(autoscaleMargins([lo], 1000).below).toBeGreaterThan(0);
+        expect(buildChartMarkers([], [], 'NSE:99926000', 60, true, {}, sweeps)[0].label).toBe('');
+    });
+
     it('marks refused entries on their TF bucket', () => {
         const m = buildChartMarkers([entry], [refused], 'NSE:99926000', 60, false);
         expect(m).toHaveLength(2);
