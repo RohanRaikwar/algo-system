@@ -47,6 +47,24 @@ func parseAnalystLevels(b []byte) (string, []Level, error) {
 	return m.Token, ls, nil
 }
 
+// parseOurSRXLevels splits a pub:srx map {"BSE:99919000": SRView} into
+// one level set per index token.
+func parseOurSRXLevels(b []byte) (map[string][]Level, error) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, fmt.Errorf("srx views: %w", err)
+	}
+	out := make(map[string][]Level, len(m))
+	for _, raw := range m {
+		tok, ls, err := parseOurSRLevels(raw)
+		if err != nil {
+			return nil, err
+		}
+		out[tok] = ls
+	}
+	return out, nil
+}
+
 // parseOurSRLevels returns the index token and our SR strategy's levels.
 // First-seen time is left to the book, so a level the strategy adds mid-run
 // counts as new.
