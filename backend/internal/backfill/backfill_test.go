@@ -13,26 +13,34 @@ import (
 	"trading-systemv1/internal/store/sqlite"
 )
 
-// fakeAPI serves a full 375-minute session for every requested day, except
-// days listed in fail.
+// fakeAPI serves full 375-minute sessions for every weekday in the
+// requested range, except days listed in skip; rateLimits makes the first
+// calls fail as throttled.
 type fakeAPI struct {
-	calls []string
-	fail  map[string]bool
+	calls      []string
+	skip       map[string]bool
+	rateLimits int
 }
 
 func (f *fakeAPI) GetCandleData(p map[string]any) (map[string]any, error) {
-	key := fmt.Sprintf("%v %v", p["symboltoken"], p["fromdate"])
-	f.calls = append(f.calls, key)
-	day := p["fromdate"].(string)[:10]
-	if f.fail[day] {
-		return nil, errors.New("AB1004")
+	f.calls = append(f.calls, fmt.Sprintf("%v %v..%v", p["symboltoken"], p["fromdate"], p["todate"]))
+	if f.rateLimits > 0 {
+		f.rateLimits--
+		return nil, errors.New("Angel One API rate limit: Access denied because of exceeding access rate")
 	}
-	d, _ := time.ParseInLocation("2006-01-02 15:04", day+" 09:15", markethours.IST)
+	from, _ := time.ParseInLocation("2006-01-02", p["fromdate"].(string)[:10], markethours.IST)
+	to, _ := time.ParseInLocation("2006-01-02", p["todate"].(string)[:10], markethours.IST)
 	var rows []any
-	for i := 0; i < 375; i++ {
-		ts := d.Add(time.Duration(i) * time.Minute).Format(time.RFC3339)
-		px := 84200.0 + float64(i)
-		rows = append(rows, []any{ts, px, px + 5, px - 5, px + 1, 0.0})
+	for d := from; !d.After(to); d = d.AddDate(0, 0, 1) {
+		if d.Weekday() == time.Saturday || d.Weekday() == time.Sunday || f.skip[d.Format("2006-01-02")] {
+			continue
+		}
+		open := d.Add(9*time.Hour + 15*time.Minute)
+		for i := 0; i < 375; i++ {
+			ts := open.Add(time.Duration(i) * time.Minute).Format(time.RFC3339)
+			px := 84200.0 + float64(i)
+			rows = append(rows, []any{ts, px, px + 5, px - 5, px + 1, 0.0})
+		}
 	}
 	return map[string]any{"status": true, "data": rows}, nil
 }
@@ -73,8 +81,9 @@ func TestRun_FillsEveryUnderlying(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 2*3*375 || len(api.calls) != 6 {
-		t.Fatalf("inserted %d with %d calls, want %d / 6", n, len(api.calls), 2*3*375)
+	// One call per index covers all 3 days.
+	if n != 2*3*375 || len(api.calls) != 2 {
+		t.Fatalf("inserted %d with calls %v, want %d / 2", n, api.calls, 2*3*375)
 	}
 	if c := count(t, db, `SELECT COUNT(*) FROM candles_tf WHERE token='99919000' AND exchange='BSE' AND tf=60`); c != 3*375 {
 		t.Fatalf("SENSEX 1m rows = %d", c)
@@ -118,7 +127,7 @@ func TestRun_LiveRowsWinAndFailuresSkip(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO candles_tf VALUES ('99926000','NSE',60,?,1,2,3,4,0,60)`, ts); err != nil {
 		t.Fatal(err)
 	}
-	api := &fakeAPI{fail: map[string]bool{"2026-10-12": true}}
+	api := &fakeAPI{skip: map[string]bool{"2026-10-12": true}}
 	if _, err := Run(context.Background(), Config{Days: 3, TFs: []int{60}, Now: now}, api, db); err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +136,7 @@ func TestRun_LiveRowsWinAndFailuresSkip(t *testing.T) {
 	if open != 1 {
 		t.Fatalf("live row overwritten: open=%d", open)
 	}
-	// Oct 12 failed, Oct 13–14 filled.
+	// Oct 12 had no data upstream, Oct 13–14 filled.
 	if c := count(t, db, `SELECT COUNT(*) FROM candles_tf WHERE token='99926000' AND tf=60`); c != 2*375 {
 		t.Fatalf("NIFTY rows = %d, want 750", c)
 	}
@@ -145,5 +154,30 @@ func TestAggregate_OHLC(t *testing.T) {
 	}
 	if b := got[0]; b.ts != 600 || b.open != 10 || b.high != 20 || b.low != 8 || b.close != 18 || b.volume != 3 || b.count != 120 {
 		t.Fatalf("first 5m bar = %+v", b)
+	}
+}
+
+func TestRun_RetriesRateLimit(t *testing.T) {
+	t.Setenv("UNDERLYINGS", "")
+	old := rateBackoff
+	rateBackoff = []time.Duration{time.Millisecond, time.Millisecond}
+	t.Cleanup(func() { rateBackoff = old })
+	db := testDB(t)
+	api := &fakeAPI{rateLimits: 2}
+	n, err := Run(context.Background(), Config{Days: 2, TFs: []int{60}, Now: now}, api, db)
+	if err != nil || n != 2*375 || len(api.calls) != 3 {
+		t.Fatalf("n=%d err=%v calls=%v, want 750 after 2 retries", n, err, api.calls)
+	}
+}
+
+func TestSpans_MaxThirtyDays(t *testing.T) {
+	var days []time.Time
+	d := time.Date(2026, 8, 1, 0, 0, 0, 0, markethours.IST)
+	for i := 0; i < 60; i++ {
+		days = append(days, d.AddDate(0, 0, i))
+	}
+	got := spans(days)
+	if len(got) != 2 || len(got[0]) != 30 || len(got[1]) != 30 {
+		t.Fatalf("spans = %d (%d, %d)", len(got), len(got[0]), len(got[len(got)-1]))
 	}
 }

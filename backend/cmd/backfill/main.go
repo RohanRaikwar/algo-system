@@ -78,7 +78,7 @@ func main() {
 	bcfg := backfill.Config{
 		Days:  config.GetEnvInt("BACKFILL_DAYS", 30),
 		TFs:   config.ParseTFString(config.GetEnv("ENABLED_TFS", "60,120,180,300,3600")),
-		Delay: 350 * time.Millisecond,
+		Delay: time.Second, // getCandleData allows 3/s; other services share the account
 	}
 	if _, err := backfill.Run(ctx, bcfg, sc, db); err != nil {
 		log.Printf("[backfill] ❌ %v", err)

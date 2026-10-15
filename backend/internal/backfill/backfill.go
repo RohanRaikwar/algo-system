@@ -17,6 +17,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"trading-systemv1/internal/archiver"
@@ -49,8 +50,17 @@ type candle struct {
 	volume                 int64
 }
 
+// maxSpanDays is the most calendar days one ONE_MINUTE request may cover
+// (Angel's limit), so a whole month of missing days costs one call.
+const maxSpanDays = 30
+
+// rateBackoff is the wait before each retry of a rate-limited request.
+var rateBackoff = []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second}
+
 // Run fills every configured underlying's index. It returns the number of
-// 1m candles inserted; per-day API errors are logged and skipped.
+// 1m candles inserted; per-request API errors are logged and skipped.
+// Missing days are fetched in spans of up to maxSpanDays per request,
+// spaced by cfg.Delay and retried with backoff when Angel rate-limits.
 func Run(ctx context.Context, cfg Config, api CandleAPI, db *sql.DB) (int, error) {
 	if cfg.Days <= 0 {
 		return 0, nil
@@ -61,51 +71,94 @@ func Run(ctx context.Context, cfg Config, api CandleAPI, db *sql.DB) (int, error
 	days := tradingDays(cfg.Now(), cfg.Days)
 	total, calls := 0, 0
 	for _, p := range underlying.All() {
-		filled := 0
+		var missing []time.Time
 		for _, day := range days {
-			if err := ctx.Err(); err != nil {
-				return total, err
-			}
 			n, err := dayRows(ctx, db, p.IndexExchange, p.IndexToken, day)
 			if err != nil {
 				return total, err
 			}
-			if n >= fullDay {
-				continue
+			if n < fullDay {
+				missing = append(missing, day)
 			}
+		}
+		filled := 0
+		for _, span := range spans(missing) {
 			if calls > 0 && cfg.Delay > 0 {
-				select {
-				case <-ctx.Done():
-					return total, ctx.Err()
-				case <-time.After(cfg.Delay):
-				}
-			}
-			calls++
-			bars, err := fetchDay(api, p.IndexExchange, p.IndexToken, day)
-			if err != nil {
-				log.Printf("[backfill] %s %s: %v (skipped)", p.Key, day.Format("2006-01-02"), err)
-				continue
-			}
-			ins, err := store(ctx, db, p.IndexExchange, p.IndexToken, bars, cfg.TFs)
-			if err != nil {
-				return total, err
-			}
-			if ins > 0 {
-				// The day may already be in MEGA without these rows: have
-				// the archiver merge them into its day file.
-				if err := archiver.MarkDirty(ctx, db, day.Format("2006-01-02")); err != nil {
+				if err := sleep(ctx, cfg.Delay); err != nil {
 					return total, err
 				}
 			}
-			filled += ins
+			calls++
+			from, to := span[0], span[len(span)-1]
+			bars, err := fetchSpan(ctx, api, p.IndexExchange, p.IndexToken, from, to)
+			if err != nil {
+				log.Printf("[backfill] %s %s..%s: %v (skipped)", p.Key, from.Format("2006-01-02"), to.Format("2006-01-02"), err)
+				continue
+			}
+			for _, day := range span {
+				ins, err := store(ctx, db, p.IndexExchange, p.IndexToken, dayBars(bars, day), cfg.TFs)
+				if err != nil {
+					return total, err
+				}
+				if ins > 0 {
+					// The day may already be in MEGA without these rows:
+					// have the archiver merge them into its day file.
+					if err := archiver.MarkDirty(ctx, db, day.Format("2006-01-02")); err != nil {
+						return total, err
+					}
+				}
+				filled += ins
+			}
 		}
 		if filled > 0 {
-			log.Printf("[backfill] ✅ %s %s: %d 1m candles filled over %d days", p.Key, p.IndexKey(), filled, len(days))
+			log.Printf("[backfill] ✅ %s %s: %d 1m candles filled (%d missing days)", p.Key, p.IndexKey(), filled, len(missing))
 		}
 		total += filled
 	}
 	log.Printf("[backfill] done: %d candles, %d API calls", total, calls)
 	return total, nil
+}
+
+// spans groups sorted days into runs covering at most maxSpanDays
+// calendar days each.
+func spans(days []time.Time) [][]time.Time {
+	var out [][]time.Time
+	for _, d := range days {
+		if n := len(out); n > 0 && d.Sub(out[n-1][0]) < maxSpanDays*24*time.Hour {
+			out[n-1] = append(out[n-1], d)
+			continue
+		}
+		out = append(out, []time.Time{d})
+	}
+	return out
+}
+
+// dayBars keeps the bars of one IST day.
+func dayBars(bars []candle, day time.Time) []candle {
+	start := day.Unix()
+	var out []candle
+	for _, c := range bars {
+		if c.ts >= start && c.ts < start+86400 {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func sleep(ctx context.Context, d time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(d):
+		return nil
+	}
+}
+
+// isRateLimit reports Angel's throttling replies.
+func isRateLimit(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "exceeding access rate") || strings.Contains(msg, "rate limit") ||
+		strings.Contains(msg, "AB1019") || strings.Contains(msg, "Too many")
 }
 
 // tradingDays returns the last n trading days before now's IST date,
@@ -134,13 +187,25 @@ func dayRows(ctx context.Context, db *sql.DB, exchange, token string, day time.T
 	return n, err
 }
 
-// fetchDay asks Angel for one session of 1m candles.
-func fetchDay(api CandleAPI, exchange, token string, day time.Time) ([]candle, error) {
-	d := day.Format("2006-01-02")
-	resp, err := api.GetCandleData(map[string]any{
+// fetchSpan asks Angel for the 1m candles of the sessions from..to,
+// retrying with backoff when rate-limited.
+func fetchSpan(ctx context.Context, api CandleAPI, exchange, token string, from, to time.Time) ([]candle, error) {
+	params := map[string]any{
 		"exchange": exchange, "symboltoken": token, "interval": "ONE_MINUTE",
-		"fromdate": d + " 09:15", "todate": d + " 15:30",
-	})
+		"fromdate": from.Format("2006-01-02") + " 09:15", "todate": to.Format("2006-01-02") + " 15:30",
+	}
+	var resp map[string]any
+	var err error
+	for attempt := 0; ; attempt++ {
+		resp, err = api.GetCandleData(params)
+		if err == nil || !isRateLimit(err) || attempt >= len(rateBackoff) {
+			break
+		}
+		log.Printf("[backfill] rate-limited; retrying in %s", rateBackoff[attempt])
+		if err := sleep(ctx, rateBackoff[attempt]); err != nil {
+			return nil, err
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
