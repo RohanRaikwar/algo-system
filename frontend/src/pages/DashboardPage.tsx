@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { TradingChart } from '../components/chart/TradingChart';
 import { SRPanel } from '../components/sr/SRPanel';
+import { FnoInstrumentsTab } from '../components/signals/FnoInstrumentsTab';
+import '../components/signals/signals.css';
 import { SRPeek } from '../components/sr/SRPeek';
 import { SRSheet, type SheetSnap } from '../components/sr/SRSheet';
 import { useMediaQuery, PHONE_QUERY, PHONE_LANDSCAPE_QUERY } from '../hooks/useMediaQuery';
@@ -11,6 +13,26 @@ import styles from './DashboardPage.module.css';
 
 const SHEET_ID = 'sr-sheet';
 const SNAP_KEY = 'rangeSheetSnap';
+const VIEW_KEY = 'dashboardView';
+
+type DashView = 'charts' | 'fno';
+
+/** The desktop view last chosen in this browser; charts when none. */
+function loadView(): DashView {
+    try {
+        return localStorage.getItem(VIEW_KEY) === 'fno' ? 'fno' : 'charts';
+    } catch {
+        return 'charts';
+    }
+}
+
+function saveView(v: DashView) {
+    try {
+        localStorage.setItem(VIEW_KEY, v);
+    } catch {
+        // blocked storage: the view just isn't remembered
+    }
+}
 
 /** Last open snap point this session; half when none or storage is blocked. */
 function lastOpenSnap(): SheetSnap {
@@ -36,6 +58,9 @@ interface DashboardPageProps {
 export function DashboardPage({ onOpenIndicators }: DashboardPageProps) {
     const tfs = useAppStore(s => s.config.tfs);
     const [layout, setLayout] = useState<ChartLayout>(() => loadLayout(tfs));
+    const [view, setView] = useState<DashView>(loadView);
+
+    useEffect(() => saveView(view), [view]);
 
     useEffect(() => saveLayout(layout), [layout]);
 
@@ -45,6 +70,8 @@ export function DashboardPage({ onOpenIndicators }: DashboardPageProps) {
     const isLandscape = useMediaQuery(PHONE_LANDSCAPE_QUERY);
     const compactUI = isPhone || isLandscape;
     const count = compactUI ? 1 : layout.count;
+    // Phones keep the chart; F&O instruments stay in Signals there.
+    const showFno = !compactUI && view === 'fno';
     const [snap, setSnap] = useState<SheetSnap>('closed');
     const peekRef = useRef<HTMLButtonElement>(null);
     const openSheet = useCallback(() => setSnap(s => (s === 'closed' ? lastOpenSnap() : 'closed')), []);
@@ -63,6 +90,21 @@ export function DashboardPage({ onOpenIndicators }: DashboardPageProps) {
         <ErrorBoundary>
             <div className={styles.page}>
                 <div className={styles.layoutBar}>
+                    <div className={styles.layoutGroup} role="tablist" aria-label="Dashboard view">
+                        {(['charts', 'fno'] as const).map(v => (
+                            <button
+                                key={v}
+                                role="tab"
+                                aria-selected={view === v}
+                                className={`${styles.layoutBtn}${view === v ? ` ${styles.layoutActive}` : ''}`}
+                                onClick={() => setView(v)}
+                            >
+                                {v === 'charts' ? 'Charts' : 'F&O instruments'}
+                            </button>
+                        ))}
+                    </div>
+                    <span className={styles.spacer} />
+                    {!showFno && (<>
                     <span className={styles.layoutLabel}>Charts</span>
                     <div className={styles.layoutGroup} role="radiogroup" aria-label="Chart layout">
                         {LAYOUTS.map(n => (
@@ -78,13 +120,20 @@ export function DashboardPage({ onOpenIndicators }: DashboardPageProps) {
                             </button>
                         ))}
                     </div>
+                    </>)}
                 </div>
-                <div className={`${styles.grid} ${styles[`grid${count}`]}`}>
-                    <TradingChart onOpenIndicators={onOpenIndicators} onOpenSR={compactUI ? openSR : undefined} />
-                    {panes.map((tf, i) => (
-                        <TradingChart key={i} compact paneTF={tf} onPaneTFChange={t => setPaneTF(i, t)} />
-                    ))}
-                </div>
+                {showFno ? (
+                    <div className={styles.fnoPane}>
+                        <FnoInstrumentsTab />
+                    </div>
+                ) : (
+                    <div className={`${styles.grid} ${styles[`grid${count}`]}`}>
+                        <TradingChart onOpenIndicators={onOpenIndicators} onOpenSR={compactUI ? openSR : undefined} />
+                        {panes.map((tf, i) => (
+                            <TradingChart key={i} compact paneTF={tf} onPaneTFChange={t => setPaneTF(i, t)} />
+                        ))}
+                    </div>
+                )}
                 {compactUI ? (
                     <>
                         <SRPeek ref={peekRef} open={snap !== 'closed'} sheetId={SHEET_ID} onOpen={openSheet} />
