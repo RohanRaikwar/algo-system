@@ -1,6 +1,6 @@
 import { useEffect, useRef, type RefObject } from 'react';
 import { X } from 'lucide-react';
-import { useSRStore } from '../../store/useSRStore';
+import { useSelectedSRView } from '../../store/useSRStore';
 import { rejectLabel } from '../signals/SRStatusCard';
 import { KIND_LABEL, REGIME_LABEL, asOf, clock, hhmm, nearestLevels, pnlPaise, points, rupees, sourceLabel, watching } from './srFormat';
 import { DayPosition } from './DayPosition';
@@ -34,7 +34,7 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
 }
 
 function SheetBody() {
-    const v = useSRStore(s => s.view);
+    const v = useSelectedSRView();
     const last = useLastNiftyPaise(v?.key);
 
     if (!v) return <p className={styles.muted}>Waiting for the strategy engine…</p>;
@@ -105,7 +105,7 @@ function SheetBody() {
 
 /** Phone bottom sheet for the S/R strategy: half (chart stays usable) or full height. */
 export function SRSheet({ id, snap, onSnap, returnFocusRef }: SRSheetProps) {
-    const v = useSRStore(s => s.view);
+    const v = useSelectedSRView();
     const sheetRef = useRef<HTMLDivElement>(null);
     const open = snap !== 'closed';
     const wasOpen = useRef(open);

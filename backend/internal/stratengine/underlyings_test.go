@@ -186,3 +186,22 @@ func TestPickExtraEntry_ShadowRecordsOnly(t *testing.T) {
 		t.Fatalf("decision = %+v", d)
 	}
 }
+
+// The SENSEX strike selection view is published keyed by its index with
+// SENSEX's own contracts and scaled view target.
+func TestExtraStrikeSel_Published(t *testing.T) {
+	svc, ex := sensexService(t)
+	svc.cfg.SREnabled = true
+	ex.res = &fakeExtraRes{}
+	ex.greeks = &fakeGreeks{chain: []orderexec.OptionContract{
+		srContract(81200, "CE", 0.52, 0.001, -20, 400, testExpiry),
+		srContract(81200, "PE", -0.50, 0.001, -20, 380, testExpiry),
+	}}
+	var got []string
+	svc.strikeSelXPublishHook = func(p string) { got = append(got, p) }
+	svc.refreshExtraStrikeSels(context.Background(), time.Date(2026, 9, 30, 10, 0, 0, 0, istSR))
+	if len(got) != 1 || !strings.Contains(got[0], `"BSE:99919000"`) || !strings.Contains(got[0], `"strategy":"SENSEX_SR"`) ||
+		!strings.Contains(got[0], `"symbol":"SENSEX81200CE"`) {
+		t.Fatalf("strikeselx = %v", got)
+	}
+}

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { SRView } from '../types/sr';
+import { useAppStore } from './useAppStore';
 
 interface SRState {
     /** NIFTY50_SR (pub:sr). */
@@ -25,6 +26,12 @@ export function useSRViewFor(key: string | null): SRView | null {
         if (s.view && s.view.key === key) return s.view;
         return s.extra[key] ?? null;
     });
+}
+
+/** The SR view of the chart's selected index; NIFTY's when that index has none. */
+export function useSelectedSRView(): SRView | null {
+    const token = useAppStore(s => s.selectedToken);
+    return useSRStore(s => (token && s.extra[token]) || s.view);
 }
 
 /** Parses a pub:sr payload (object or JSON string); null if not an SR view. */

@@ -2,6 +2,7 @@ package stratengine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -48,6 +49,8 @@ type srExtra struct {
 	noGreeksLogged atomic.Bool
 
 	optPicker *optionpicker.Picker // STRAT_PICKER_MODE shadow/on; nil when off
+
+	sel strikeSelState // strike selection view, as NIFTY's svc.strikeSel
 }
 
 // extraResolver resolves an extra underlying's contracts. Satisfied by
@@ -250,6 +253,7 @@ func (svc *Service) resolveExtraEntry(ctx context.Context, ex *srExtra, sig *str
 		log.Printf("[stratengine] %s strike %d%s (asked %d): delta=%.2f gamma=%.4f theta=%.2f premium=%.2f iv=%.1f",
 			sig.StrategyName, c.Strike, c.OptionType, sig.Strike, c.Delta, c.Gamma, c.Theta, premium(c), normIV(c.IV))
 		svc.noteEntryGreeks(sig.StrategyName, c.Delta, c.Theta)
+		svc.recordExtraPick(ex, *sig, c, premium(c), now)
 		strike, expiry = c.Strike, c.Expiry
 	} else if ex.noGreeksLogged.CompareAndSwap(false, true) {
 		log.Printf("[stratengine] ⚠️  %s: no option greeks (%v) — entries take the ATM strike on the nearest expiry without greek checks", sig.StrategyName, err)
@@ -470,4 +474,212 @@ func warmupExtras(reader model.CandleReader, extras []*srExtra, days int, now ti
 		n := ex.strat.Warmup(candles)
 		log.Printf("[stratengine] 🔥 %s warmed with %d/%d 1m candles (%d days)", ex.strat.Name(), n, len(candles), days)
 	}
+}
+
+// ── Strike selection view per extra underlying ──
+
+// Extra underlyings' strike selection views, one full-state map by index
+// key, so NIFTY's pub:strikesel stays as it was.
+const (
+	strikeSelXKey     = "strikeselx:state"
+	strikeSelXChannel = "pub:strikeselx"
+)
+
+// extraLimits are the SR greek limits with the view target scaled to ex.
+func (svc *Service) extraLimits(ex *srExtra) srGreekLimits {
+	lim := svc.srGreekLimits()
+	lim.ViewTargetMove = ex.prof.Scale(lim.ViewTargetMove)
+	return lim
+}
+
+// extraPremium is srPremium on ex's contracts.
+func (svc *Service) extraPremium(ex *srExtra, opt string) func(orderexec.OptionContract) float64 {
+	res := svc.resolverOf(ex)
+	return func(c orderexec.OptionContract) float64 {
+		if c.Premium > 0 {
+			return c.Premium
+		}
+		info, err := res.ResolveStrikeOn(c.Expiry, c.Strike, opt)
+		if err != nil {
+			return 0
+		}
+		return float64(svc.orderExecutor.GetLTP(info.Token)) / 100
+	}
+}
+
+// extraContractView is contractView resolving on ex's segment.
+func (svc *Service) extraContractView(ex *srExtra, c orderexec.OptionContract, premium float64, now time.Time) srContractView {
+	v := srContractView{
+		Strike: c.Strike, Option: string(c.OptionType), Symbol: c.Symbol, Token: c.Token,
+		Expiry: dayStart(c.Expiry).Format("2006-01-02"), DTE: int(dayStart(c.Expiry).Sub(dayStart(now)).Hours() / 24),
+		Delta: c.Delta, Gamma: c.Gamma, Theta: c.Theta, Vega: c.Vega, IV: normIV(c.IV),
+		Premium: premium, Liquidity: c.LiquidityScore,
+	}
+	if v.Token == "" || v.Symbol == "" {
+		if info, err := svc.resolverOf(ex).ResolveStrikeOn(c.Expiry, c.Strike, v.Option); err == nil {
+			v.Token, v.Symbol = info.Token, info.Symbol
+		}
+	}
+	return v
+}
+
+// recordExtraPick stores the contract bought for an extra SR entry.
+func (svc *Service) recordExtraPick(ex *srExtra, sig strategy.Signal, c orderexec.OptionContract, premium float64, now time.Time) {
+	last := &srLastPickView{
+		srContractView: svc.extraContractView(ex, c, premium, now),
+		Side:           string(sig.Side),
+		AskedStrike:    sig.Strike,
+		TS:             now.UTC().Format(time.RFC3339Nano),
+	}
+	ex.sel.mu.Lock()
+	ex.sel.view.Last = last
+	ex.sel.mu.Unlock()
+}
+
+// refreshExtraStrikeSels recomputes each extra underlying's live CE/PE pick,
+// keeps its SR-expiry ladder subscribed and publishes all views.
+func (svc *Service) refreshExtraStrikeSels(ctx context.Context, now time.Time) {
+	if !svc.cfg.SREnabled || len(svc.srExtras) == 0 {
+		return
+	}
+	for _, ex := range svc.srExtras {
+		svc.refreshExtraStrikeSel(ctx, ex, now)
+	}
+	svc.publishExtraStrikeSels(ctx, now)
+}
+
+func (svc *Service) refreshExtraStrikeSel(ctx context.Context, ex *srExtra, now time.Time) {
+	var call, put *srSideView
+	errText := ""
+	lim := svc.extraLimits(ex)
+	if chain, err := svc.extraChain(ex, now); err != nil {
+		errText = "no greeks: " + err.Error()
+	} else {
+		svc.subscribeExtraExpiryLadder(ctx, ex, chain, now)
+		side := func(opt string) *srSideView {
+			premium := svc.extraPremium(ex, opt)
+			ev, err := evalSRContracts(chain, opt, now, lim, premium)
+			if err != nil {
+				return &srSideView{Error: err.Error()}
+			}
+			v := &srSideView{Rejects: ev.Rejects}
+			if ev.Found {
+				cv := svc.extraContractView(ex, ev.Best, premium(ev.Best), now)
+				v.Pick = &cv
+			}
+			return v
+		}
+		call, put = side("CE"), side("PE")
+	}
+	if ex.optPicker != nil {
+		for opt, s := range map[string]**srSideView{"CE": &call, "PE": &put} {
+			if *s == nil {
+				*s = &srSideView{}
+			}
+			in := svc.srPickerIntent(opt, lim.ViewTargetMove)
+			in.Strategy = ex.strat.Name()
+			p, rej, err := ex.optPicker.PickSingle(in, now)
+			newPickerView(*s, p, rej, err, now)
+		}
+	}
+	params := svc.srParamsView()
+	params.ViewTargetPts = float64(lim.ViewTargetMove) / 100
+	ex.sel.mu.Lock()
+	v := &ex.sel.view
+	v.Strategy, v.Params, v.UpdatedAt = ex.strat.Name(), params, now.UTC().Format(time.RFC3339)
+	v.Call, v.Put, v.Error = call, put, errText
+	v.Picker = nil
+	if ex.optPicker != nil {
+		st := ex.optPicker.Status(now)
+		pv := &pickerView{Mode: svc.cfg.PickerMode, Streamed: st.Streamed, Spot: st.Spot, ChainError: st.ChainErr,
+			Rules: pickerRulesView{MaxSpreadPct: svc.cfg.PickMaxSpreadPct, MaxQuoteAgeS: svc.cfg.PickMaxQuoteAge.Seconds(), MaxChainAgeS: svc.cfg.PickMaxChainAge.Seconds(), Rank: pickRank(svc.cfg.PickRank)}}
+		if !st.ChainAt.IsZero() {
+			pv.ChainAt = st.ChainAt.UTC().Format(time.RFC3339)
+		}
+		if d := svc.lastPickerDecision(ex.strat.Name()); d.Strategy != "" {
+			pv.Decisions = []pickerDecision{d}
+		}
+		v.Picker = pv
+	}
+	ex.sel.mu.Unlock()
+}
+
+// subscribeExtraExpiryLadder is subscribeSRExpiryLadder for ex: when SR
+// buys a later expiry than the nearest (SRMinDTE), its strikes around spot
+// are kept streaming so they have premiums.
+func (svc *Service) subscribeExtraExpiryLadder(ctx context.Context, ex *srExtra, chain []orderexec.OptionContract, now time.Time) {
+	lim := svc.srGreekLimits()
+	if lim.MinDTE <= 1 || svc.orderExecutor == nil {
+		return
+	}
+	today := dayStart(now)
+	var nearest, srExp time.Time
+	for _, c := range chain {
+		if c.Expiry.IsZero() {
+			continue
+		}
+		d := daysBetween(today, c.Expiry)
+		if d >= 1 && (nearest.IsZero() || c.Expiry.Before(nearest)) {
+			nearest = c.Expiry
+		}
+		if d >= lim.MinDTE && (srExp.IsZero() || c.Expiry.Before(srExp)) {
+			srExp = c.Expiry
+		}
+	}
+	spot := svc.orderExecutor.GetLTP(ex.prof.IndexToken)
+	if srExp.IsZero() || sameDay(srExp, nearest) || spot <= 0 {
+		return
+	}
+	if ex.sel.ladderSubscribed == nil {
+		ex.sel.ladderSubscribed = make(map[string]bool)
+	}
+	res := svc.resolverOf(ex)
+	step := ex.prof.StrikeStep
+	atm := nearestStrike(spot, step)
+	var tokens []string
+	failures := 0
+	for i := -ladderStrikes; i <= ladderStrikes; i++ {
+		for _, opt := range [...]string{"CE", "PE"} {
+			info, err := res.ResolveStrikeOn(srExp, atm+int64(i)*step, opt)
+			if err != nil || info.Token == "" {
+				if failures++; failures >= 3 {
+					svc.subscribeOn(ctx, ex, tokens...)
+					return
+				}
+				continue
+			}
+			failures = 0
+			if !ex.sel.ladderSubscribed[info.Token] {
+				ex.sel.ladderSubscribed[info.Token] = true
+				tokens = append(tokens, info.Token)
+			}
+		}
+	}
+	svc.subscribeOn(ctx, ex, tokens...)
+}
+
+// publishExtraStrikeSels publishes {"BSE:99919000": view, …}.
+func (svc *Service) publishExtraStrikeSels(ctx context.Context, now time.Time) {
+	views := make(map[string]strikeSelView, len(svc.srExtras))
+	for _, ex := range svc.srExtras {
+		ex.sel.mu.Lock()
+		views[ex.prof.IndexKey()] = ex.sel.view
+		ex.sel.mu.Unlock()
+	}
+	b, err := json.Marshal(views)
+	if err != nil {
+		log.Printf("[stratengine] strike selection X marshal error: %v", err)
+		return
+	}
+	if svc.strikeSelXPublishHook != nil {
+		svc.strikeSelXPublishHook(string(b))
+		return
+	}
+	if svc.redisWriter == nil {
+		return
+	}
+	pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	svc.redisWriter.Client().Set(pctx, strikeSelXKey, b, 24*time.Hour)
+	svc.redisWriter.Client().Publish(pctx, strikeSelXChannel, string(b))
 }

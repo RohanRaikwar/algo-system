@@ -102,7 +102,7 @@ export class ConnectionEpochGate {
 export type ChannelKind = 'full_state' | 'latest_only' | 'stream';
 
 export function channelKind(channel: string): ChannelKind {
-    if (channel === 'pub:orders' || channel === 'pub:pnl' || channel === 'pub:strike' || channel === 'pub:sr' || channel === 'pub:srx' || channel === 'pub:refused' || channel === 'pub:strikesel' || channel.startsWith('pub:analyst:')) {
+    if (channel === 'pub:orders' || channel === 'pub:pnl' || channel === 'pub:strike' || channel === 'pub:sr' || channel === 'pub:srx' || channel === 'pub:refused' || channel === 'pub:strikesel' || channel === 'pub:strikeselx' || channel.startsWith('pub:analyst:')) {
         return 'full_state';
     }
     if (channel.startsWith('pub:tick:')) return 'latest_only';
@@ -125,6 +125,7 @@ export interface SnapshotLiveState {
     srx?: unknown;
     refused?: unknown;
     strikesel?: unknown;
+    strikeselx?: unknown;
     liveSeqs?: Record<string, number>;
 }
 
@@ -138,7 +139,7 @@ export function snapshotLiveUpdates(
     channelSeqs: Record<string, number>,
 ): Array<{ channel: string; data: unknown; seq: number }> {
     const out: Array<{ channel: string; data: unknown; seq: number }> = [];
-    const fields: Array<[string, unknown]> = [['pub:orders', snap.orders], ['pub:pnl', snap.pnl], ['pub:sr', snap.sr], ['pub:srx', snap.srx], ['pub:refused', snap.refused], ['pub:strikesel', snap.strikesel]];
+    const fields: Array<[string, unknown]> = [['pub:orders', snap.orders], ['pub:pnl', snap.pnl], ['pub:sr', snap.sr], ['pub:srx', snap.srx], ['pub:refused', snap.refused], ['pub:strikesel', snap.strikesel], ['pub:strikeselx', snap.strikeselx]];
     for (const [channel, data] of fields) {
         if (data === undefined || data === null) continue;
         const seq = snap.liveSeqs?.[channel] ?? 0;

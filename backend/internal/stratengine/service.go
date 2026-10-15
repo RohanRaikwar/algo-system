@@ -69,6 +69,7 @@ type Service struct {
 
 	srPublishHook func(payload string) // test hook for publishSRState
 	srxPublishHook func(payload string) // test hook for publishSRXState
+	strikeSelXPublishHook func(payload string) // test hook for publishExtraStrikeSels
 
 	refused            refusedLog           // today's blocked entries (refused.go)
 	refusedPublishHook func(payload string) // test hook for recordRefusedEntry

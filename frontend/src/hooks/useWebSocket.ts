@@ -22,7 +22,7 @@ import type { LiveOrdersPayload, SignalPayload } from '../types/signal';
 import { useSRStore, parseSRView, parseSRXViews } from '../store/useSRStore';
 import { useOptionLTPStore } from '../store/useOptionLTPStore';
 import { useRefusedStore, parseRefusedView } from '../store/useRefusedStore';
-import { useStrikeSelStore, parseStrikeSelView } from '../store/useStrikeSelStore';
+import { useStrikeSelStore, parseStrikeSelView, parseStrikeSelXViews } from '../store/useStrikeSelStore';
 import { listPaneSubs } from '../services/paneSubscriptions';
 
 /**
@@ -391,6 +391,11 @@ export function useWebSocket() {
                 if (view) useStrikeSelStore.getState().setView(view);
                 return;
             }
+            if (envelope.channel === 'pub:strikeselx' && envelope.data) {
+                const views = parseStrikeSelXViews(envelope.data);
+                if (views) useStrikeSelStore.getState().setExtra(views);
+                return;
+            }
 
             // ── Live Order State (pub:orders channel) ──
             if (envelope.channel === 'pub:orders' && envelope.data) {
@@ -646,6 +651,9 @@ export function useWebSocket() {
                     } else if (u.channel === 'pub:strikesel') {
                         const view = parseStrikeSelView(u.data);
                         if (view) useStrikeSelStore.getState().setView(view);
+                    } else if (u.channel === 'pub:strikeselx') {
+                        const views = parseStrikeSelXViews(u.data);
+                        if (views) useStrikeSelStore.getState().setExtra(views);
                     } else if (u.channel === 'pub:pnl') {
                         // PnL is consumed by ws:message listeners.
                         window.dispatchEvent(new CustomEvent('ws:message', {

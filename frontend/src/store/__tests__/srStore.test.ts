@@ -28,3 +28,13 @@ describe('SR views per underlying', () => {
         expect(snapshotLiveUpdates({ srx, liveSeqs: { 'pub:srx': 3 } }, {})).toEqual([{ channel: 'pub:srx', data: srx, seq: 3 }]);
     });
 });
+
+import { parseStrikeSelXViews } from '../useStrikeSelStore';
+
+describe('strike selection per underlying', () => {
+    it('parses pub:strikeselx maps', () => {
+        const views = parseStrikeSelXViews({ 'BSE:99919000': { strategy: 'SENSEX_SR', params: {}, updated_at: '' }, bad: 1 });
+        expect(Object.keys(views ?? {})).toEqual(['BSE:99919000']);
+        expect(channelKind('pub:strikeselx')).toBe('full_state');
+    });
+});
