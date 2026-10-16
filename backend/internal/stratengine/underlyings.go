@@ -198,13 +198,9 @@ func (svc *Service) extraChain(ex *srExtra, now time.Time) ([]instruments.Option
 // extraChainFresh is extraChain with an explicit TTL (the picker refreshes
 // every 15s and shares this cache, as NIFTY's picker shares optionChain).
 func (svc *Service) extraChainFresh(ex *srExtra, now time.Time, ttl time.Duration) ([]instruments.OptionContract, error) {
-	src := ex.greeks
-	if src == nil {
-		p := svc.extraPicker(ex)
-		if p.SmartConnect() == nil {
-			return nil, fmt.Errorf("no broker session for %s OptionGreek", ex.prof.OptionName)
-		}
-		src = p
+	src, err := svc.extraGreeksSource(ex)
+	if err != nil {
+		return nil, err
 	}
 	if chain, ok := ex.cachedChain(now, ttl); ok {
 		return chain, nil
@@ -226,6 +222,53 @@ func (svc *Service) extraChainFresh(ex *srExtra, now time.Time, ttl time.Duratio
 	ex.mu.Unlock()
 	return chain, nil
 }
+
+// extraGreeksSource is ex's chain source: the test hook, the broker's
+// OptionGreek, or, for an index OptionGreek does not serve, greeks computed
+// from live premiums.
+func (svc *Service) extraGreeksSource(ex *srExtra) (greeksSource, error) {
+	if ex.greeks != nil {
+		return ex.greeks, nil
+	}
+	p := svc.extraPicker(ex)
+	if !ex.prof.BrokerGreeks {
+		return localGreeks{svc, ex, p}, nil
+	}
+	if p.SmartConnect() == nil {
+		return nil, fmt.Errorf("no broker session for %s OptionGreek", ex.prof.OptionName)
+	}
+	return p, nil
+}
+
+// localGreeks builds ex's chain from the instrument master and the live
+// premiums of its strike ladder (no broker call): the premium is the
+// fresh bid/ask mid when the picker has one, else the LTP.
+type localGreeks struct {
+	svc    *Service
+	ex     *srExtra
+	picker *instruments.StrikePicker
+}
+
+func (l localGreeks) LoadOptionChain(now time.Time) ([]instruments.OptionContract, error) {
+	oe := l.svc.orderExecutor
+	quote := func(token string) (int64, int64) {
+		premium := oe.GetLTP(token)
+		var oi int64
+		if l.ex.optPicker != nil {
+			q, _ := l.ex.optPicker.Quotes().Get(token)
+			oi = q.OI
+			if bid, ask, ok := l.ex.optPicker.Quotes().BidAsk(token, now); ok {
+				premium = (bid + ask) / 2
+			}
+		}
+		return premium, oi
+	}
+	return l.picker.LocalOptionChain(now, oe.GetLTP(l.ex.prof.IndexToken), ladderStrikes, localGreeksRatePct, quote)
+}
+
+// localGreeksRatePct is the risk-free rate of locally computed greeks, as
+// the option picker's RatePct.
+const localGreeksRatePct = 6.5
 
 // cachedChain returns ex's cached chain when it is younger than maxAge.
 func (ex *srExtra) cachedChain(now time.Time, maxAge time.Duration) ([]instruments.OptionContract, bool) {
@@ -251,6 +294,10 @@ func (svc *Service) extraEntryChain(ex *srExtra, now time.Time) ([]instruments.O
 	}
 	if chain, ok := ex.cachedChain(now, maxAge); ok {
 		return chain, nil
+	}
+	if ex.greeks == nil && !ex.prof.BrokerGreeks {
+		// Local greeks make no broker call: build them now.
+		return svc.extraChainFresh(ex, now, maxAge)
 	}
 	if ex.greeks == nil && svc.extraPicker(ex).SmartConnect() == nil {
 		return nil, fmt.Errorf("no broker session for %s OptionGreek", ex.prof.OptionName)

@@ -83,3 +83,27 @@ func YearsTo(expiry, now time.Time) float64 {
 	}
 	return d.Hours() / (365 * 24)
 }
+
+// ImpliedVol solves Price(spot, strike, years, iv, rate, call) = price for
+// iv by bisection on [0.1%, 500%]. It fails when the option has no time
+// left or the price lies outside what any IV in that range gives (below
+// intrinsic, or a stale quote far above it).
+func ImpliedVol(price, spot, strike, years, rate float64, call bool) (float64, bool) {
+	const lo0, hi0 = 0.001, 5.0
+	if price <= 0 || spot <= 0 || strike <= 0 || years <= 0 {
+		return 0, false
+	}
+	lo, hi := lo0, hi0
+	if price < Price(spot, strike, years, lo, rate, call) || price > Price(spot, strike, years, hi, rate, call) {
+		return 0, false
+	}
+	for i := 0; i < 100 && hi-lo > 1e-7; i++ {
+		mid := (lo + hi) / 2
+		if Price(spot, strike, years, mid, rate, call) < price {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	return (lo + hi) / 2, true
+}

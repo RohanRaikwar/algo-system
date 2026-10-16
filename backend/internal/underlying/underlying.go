@@ -40,6 +40,11 @@ type Profile struct {
 
 	StrategyName string // SR strategy name for this underlying
 
+	// BrokerGreeks: Angel's OptionGreek serves this index's options. Without
+	// it (SENSEX answers AB9019 "No Data Available") greeks are computed
+	// locally from live premiums.
+	BrokerGreeks bool
+
 	// ScaleNum/ScaleDen convert a NIFTY-sized point parameter (in index
 	// paise) to this underlying: paise*Num/Den. Integers only.
 	ScaleNum, ScaleDen int64
@@ -68,7 +73,7 @@ var builtin = map[string]Profile{
 		Key: "NIFTY", IndexExchange: "NSE", IndexToken: "99926000", IndexExchType: 1,
 		OptionName: "NIFTY", FNOExchange: "NFO", FNOExchType: 2,
 		StrikeStep: 50, LotFallback: 65, FreezeQty: 1800, ExpiryWeekday: time.Tuesday,
-		StrategyName: "NIFTY50_SR", ScaleNum: 1, ScaleDen: 1,
+		StrategyName: "NIFTY50_SR", ScaleNum: 1, ScaleDen: 1, BrokerGreeks: true,
 	},
 	"SENSEX": {
 		Key: "SENSEX", IndexExchange: "BSE", IndexToken: "99919000", IndexExchType: 3,
