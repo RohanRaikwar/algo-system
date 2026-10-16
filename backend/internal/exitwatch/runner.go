@@ -73,18 +73,24 @@ func (t *Tracker) behindWord() string {
 	return "resistance"
 }
 
-func (t *Tracker) levelTol() int64 {
-	tol := int64(float64(t.atr) * t.m.LevelTolATR)
-	if tol < t.m.LevelTolMinPaise {
-		tol = t.m.LevelTolMinPaise
+func (t *Tracker) levelTol() int64 { return levelTolFor(t.m, t.atr) }
+
+func (t *Tracker) rejectPts() int64 { return rejectPtsFor(t.m, t.atr) }
+
+// levelTolFor is the "at the level" tolerance for a 1m ATR in paise.
+func levelTolFor(m *Model, atr int64) int64 {
+	tol := int64(float64(atr) * m.LevelTolATR)
+	if tol < m.LevelTolMinPaise {
+		tol = m.LevelTolMinPaise
 	}
 	return tol
 }
 
-func (t *Tracker) rejectPts() int64 {
-	r := int64(float64(t.atr) * t.m.RejectATR)
-	if r < t.m.RejectMinPaise {
-		r = t.m.RejectMinPaise
+// rejectPtsFor is the pullback from a peak that counts as a rejection.
+func rejectPtsFor(m *Model, atr int64) int64 {
+	r := int64(float64(atr) * m.RejectATR)
+	if r < m.RejectMinPaise {
+		r = m.RejectMinPaise
 	}
 	return r
 }

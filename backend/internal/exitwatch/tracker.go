@@ -28,6 +28,7 @@ type Assessment struct {
 	ExitText  string  // detail for the latched EXIT, e.g. which level rejected
 	NextLevel *Level  // runner target level, nil when none
 	LockLevel int64   // runner lock as index price, 0 before runner
+	PreLevel  *Level  // strong level the pre-target rejection rule watches
 	Levels    []Level // nearest 3 levels ahead and 2 behind
 }
 
@@ -98,6 +99,10 @@ type Tracker struct {
 	ghost    bool
 
 	earlyFailSent bool
+
+	pre         preReject
+	lastClose   int64     // latest closed 1m index close
+	lastCloseTS time.Time // its bar start
 }
 
 // NewTracker validates the position and returns a tracker for it.
@@ -156,6 +161,13 @@ func (t *Tracker) SetModel(m Model) { t.m = &m }
 
 // SetATR sets the 1m ATR in paise used to normalise pullbacks.
 func (t *Tracker) SetATR(atr int64) { t.atr = atr }
+
+// OnMinuteClose records a closed 1m index bar (close price, bar start).
+func (t *Tracker) OnMinuteClose(close int64, ts time.Time) {
+	if ts.After(t.lastCloseTS) {
+		t.lastClose, t.lastCloseTS = close, ts
+	}
+}
 
 // OnIndexTick feeds one index tick. ts must be the tick's canonical time.
 func (t *Tracker) OnIndexTick(price int64, ts time.Time) {
@@ -252,6 +264,7 @@ func (t *Tracker) Evaluate(now time.Time) Assessment {
 	} else {
 		premOK = t.lastMove > 0
 	}
+	t.preRejectStep(now)
 	t.runnerStep(&s, now)
 	dec, why := t.dec.step(t.m, &s, p, premOK, now.UnixNano())
 	if why == "SCORE" && t.run.phase != PhaseNormal && t.run.hasNext && t.exitText == "" &&
@@ -263,6 +276,10 @@ func (t *Tracker) Evaluate(now time.Time) Assessment {
 
 	a.P, a.Decision, a.ExitReason, a.Latched, a.Snapshot = p, dec, why, t.dec.latched, s
 	a.Phase, a.ExitText, a.Levels = t.Phase(), t.exitText, t.nearLevels()
+	if t.pre.has && t.preRejectActive() {
+		pl := t.pre.level
+		a.PreLevel = &pl
+	}
 	if t.run.phase == PhaseRunner {
 		a.LockLevel = t.levelPrice(t.run.lockMove)
 		if t.run.hasNext {
@@ -279,6 +296,37 @@ func (t *Tracker) Evaluate(now time.Time) Assessment {
 		a.SuggestedStop = t.pos.IndexEntry + t.sign*keep
 	}
 	return a
+}
+
+// preRejectActive reports whether the pre-target rejection rule applies:
+// enabled, before target, not latched, not a ghost.
+func (t *Tracker) preRejectActive() bool {
+	return t.m.PreRejectEnabled && !t.dec.latched && !t.ghost && !t.run.decided &&
+		(t.run.phase == PhaseNormal || t.run.phase == "")
+}
+
+func (t *Tracker) trendADX() float64 {
+	if t.book == nil {
+		return 0
+	}
+	return t.book.ADX()
+}
+
+// preRejectStep latches EXIT (SR_REJECT_PRE) when price rejects at a strong
+// level between entry and a far target.
+func (t *Tracker) preRejectStep(now time.Time) {
+	if !t.preRejectActive() {
+		return
+	}
+	exit, text := t.pre.step(preRejectIn{
+		levels: t.levels(), price: t.idxLTP, move: t.lastMove,
+		entry: t.pos.IndexEntry, sign: t.sign, targetMove: t.targetMove,
+		tol: t.levelTol(), rej: t.rejectPts(), breakN: t.m.breakN,
+		close: t.lastClose, closeTS: t.lastCloseTS, now: now, m: t.m, adx: t.trendADX(),
+	})
+	if exit {
+		t.latchExit(ReasonPreReject, text)
+	}
 }
 
 // earlyFailStep queues one EARLY_FAIL advice when the trade goes against us

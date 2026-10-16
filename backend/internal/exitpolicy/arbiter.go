@@ -22,6 +22,8 @@ type tracked struct {
 	indexLTP int64
 	premLTP  int64
 	premBest int64
+	bestSeen int64     // premBest at the last minute evaluation
+	bestTS   time.Time // minute bestSeen was first seen
 	streak   map[Reason]int
 	latched  bool
 }
@@ -39,7 +41,7 @@ func (a *Arbiter) Open(p Position, plan Plan) {
 	if plan.Mode == ModeOff || plan.Mode == "" || len(plan.Rules) == 0 {
 		return
 	}
-	a.pos[p.Key] = &tracked{pos: p, plan: plan, streak: make(map[Reason]int, len(plan.Rules))}
+	a.pos[p.Key] = &tracked{pos: p, plan: plan, bestSeen: p.PremEntry, bestTS: p.EntryTS, streak: make(map[Reason]int, len(plan.Rules))}
 }
 
 // Close stops tracking key.
@@ -104,7 +106,11 @@ func (a *Arbiter) OnMinute(now time.Time, armed func(Position) bool) []Decision 
 		if a.pos[t.pos.Key] != t {
 			continue // closed or reopened meanwhile
 		}
-		s := Snapshot{Now: now, IndexLTP: t.indexLTP, PremLTP: t.premLTP, PremBest: max(t.premBest, t.pos.PremEntry), ProtectArmed: arm[i]}
+		best := max(t.premBest, t.pos.PremEntry)
+		if best > t.bestSeen || t.bestTS.IsZero() {
+			t.bestSeen, t.bestTS = best, now
+		}
+		s := Snapshot{Now: now, IndexLTP: t.indexLTP, PremLTP: t.premLTP, PremBest: best, PremBestTS: t.bestTS, ProtectArmed: arm[i]}
 		for _, r := range t.plan.Rules {
 			d, fire := r.Evaluate(t.pos, s)
 			if !fire {

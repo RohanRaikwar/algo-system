@@ -64,6 +64,9 @@ type Config struct {
 	// premiums; nil = off. Needs Option.Enabled. Shadow mode only records
 	// what it would have done on each trade (Trade.ShadowExit*).
 	ExitPolicy *exitpolicy.StrategyConfig
+
+	// PreReject runs exitwatch's pre-target S/R rejection exit; nil = off.
+	PreReject *PreRejectConfig
 }
 
 // ── Trade ─────────────────────────────────────────────────────────────
@@ -685,6 +688,7 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 	var openTrade *Trade
 	tradeID := 0
 	pol := e.newBTPolicy()
+	pre := e.newBTPreReject()
 
 	// Track current trading day for EOD force-close
 	var currentDay string
@@ -718,6 +722,8 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 		if candleIST.Before(marketOpen) || candleIST.After(marketClose) {
 			continue
 		}
+		pre.advance()
+		pre.pend(candle)
 
 		// ── Force close at 15:29 (last candle before market close) ──
 		lastCandle := time.Date(candleIST.Year(), candleIST.Month(), candleIST.Day(), 15, 29, 0, 0, istLoc)
@@ -802,6 +808,24 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 			}
 		}
 
+		// exitwatch pre-target rejection (live: per tick, auto-exit strategies).
+		if openTrade != nil {
+			if exit, text := pre.step(strat, candle); exit {
+				if ex, ok := strat.(policyExiter); ok && ex.ExitRequested(openTrade.Side, "", "EXITWATCH SR_REJECT_PRE: "+text) != nil {
+					ts := candle.TS.In(istLoc)
+					openTrade.ExitTime = ts
+					openTrade.ExitPrice = candle.Close
+					openTrade.FNOExitPrice = e.exitFNO(openTrade, candle.TS)
+					openTrade.ExitReason = "EXITWATCH SR_REJECT_PRE: " + text
+					trades = append(trades, *openTrade)
+					log.Printf("[backtest] 🚪 PRE-REJECT EXIT %s @ %s: %s", openTrade.Side, ts.Format("15:04"), text)
+					openTrade = nil
+					strat.OnTFCandle(candle) // keep indicators warm
+					continue
+				}
+			}
+		}
+
 		sig := strat.OnTFCandle(candle)
 		if sig == nil {
 			continue
@@ -839,6 +863,7 @@ func (e *Engine) replayStrategy(candles []model.TFCandle) []Trade {
 			e.modelEntry(openTrade, sig.Strike, candle.TS)
 			e.armModelTicks(strat, openTrade)
 			pol.open(e, openTrade, candle, sig.TargetMove)
+			pre.open(openTrade, candle, sig.TargetMove)
 			log.Printf("[backtest] 🟢 ENTRY %s @ %s index=%d fno=%d reason=%s",
 				sig.Side, candle.TS.In(istLoc).Format("15:04"), candle.Close, openTrade.FNOEntryPrice, sig.Reason)
 

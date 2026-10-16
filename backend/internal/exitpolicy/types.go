@@ -77,6 +77,7 @@ type Snapshot struct {
 	IndexLTP     int64
 	PremLTP      int64
 	PremBest     int64
+	PremBestTS   time.Time // first minute the arbiter saw PremBest; entry time before any gain
 	ProtectArmed bool // strategy has moved its stop to protect profit
 }
 

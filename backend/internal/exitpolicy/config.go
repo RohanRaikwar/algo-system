@@ -16,6 +16,13 @@ type ThetaConfig struct {
 	FlatProgressPct     int64 `json:"flat_progress_pct"`      // flat while best gain < this % of expected gain
 	FallbackFlatPremPct int64 `json:"fallback_flat_prem_pct"` // without greeks: flat while best gain < this % of entry premium
 	ConfirmMin          int   `json:"confirm_min"`            // consecutive 1m evaluations before acting
+	// GivebackMin: a position that worked but gave its gain back (current
+	// gain under FlatProgressPct of expected) exits once its premium best
+	// is this many minutes old. 0 = off: once worked, never flat again.
+	// Off by default: SR backtest Mar–Oct 2026 lost at 45–120 min (the cut
+	// trades often recovered). It also only reaches trades the strategy
+	// has not marked breakeven (ProtectArmed).
+	GivebackMin int `json:"giveback_flat_min"`
 }
 
 // StrategyConfig is one strategy's exit policy.
@@ -90,6 +97,9 @@ func (c Config) Validate() error {
 		t := sc.Theta
 		if t.MaxFlatMin <= 0 || t.ConfirmMin <= 0 || t.DecayPctOfGain <= 0 || t.FlatProgressPct <= 0 || t.FallbackFlatPremPct <= 0 {
 			return fmt.Errorf("%s: theta settings must all be > 0: %+v", name, t)
+		}
+		if t.GivebackMin < 0 {
+			return fmt.Errorf("%s: giveback_flat_min must be >= 0", name)
 		}
 	}
 	return nil

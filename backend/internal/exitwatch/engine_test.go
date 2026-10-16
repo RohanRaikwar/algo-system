@@ -265,11 +265,11 @@ func TestParseLevelFeeds(t *testing.T) {
 	if err != nil || tok != "99926000" || len(ls) != 1 || ls[0].Type != "ANALYST:HORIZONTAL" || ls[0].Since.IsZero() {
 		t.Fatalf("analyst: %v %s %+v", err, tok, ls)
 	}
-	tok, ls, err = parseOurSRLevels([]byte(`{"key":"NSE:99926000","levels":[{"price":2405000,"touches":3,"source":"swing"}]}`))
-	if err != nil || tok != "99926000" || len(ls) != 1 || ls[0].Type != "OUR_SR:swing" || !ls[0].Since.IsZero() {
-		t.Fatalf("our sr: %v %s %+v", err, tok, ls)
+	tok, ls, adx, err := parseOurSRLevels([]byte(`{"key":"NSE:99926000","adx":31.5,"levels":[{"price":2405000,"touches":3,"source":"swing"}]}`))
+	if err != nil || tok != "99926000" || len(ls) != 1 || ls[0].Type != "OUR_SR:swing" || !ls[0].Since.IsZero() || ls[0].Touches != 3 || adx != 31.5 {
+		t.Fatalf("our sr: %v %s %+v adx=%v", err, tok, ls, adx)
 	}
-	if _, _, err := parseOurSRLevels([]byte(`{"levels":[]}`)); err == nil {
+	if _, _, _, err := parseOurSRLevels([]byte(`{"levels":[]}`)); err == nil {
 		t.Fatal("missing key must error")
 	}
 	if _, _, err := parseAnalystLevels([]byte(`nope`)); err == nil {
@@ -357,5 +357,38 @@ func TestEngineNeverAutoExitsRealOrders(t *testing.T) {
 	driveToExit(e)
 	if len(sink.exits) != 0 {
 		t.Fatalf("real-order strategy got %d exit requests", len(sink.exits))
+	}
+}
+
+func TestEngineHTFSwingDrivesPreRejectExit(t *testing.T) {
+	sink := &memSink{}
+	p := preParams()
+	p.PreRejectSources = []string{Source1h}
+	e := NewEngine(p.Compile(), sink, true)
+	e.SetATR("99926000", 1500)
+	// Previous session's 1h bars: swing high 24020 (+20 from entry).
+	for i, h := range []int64{23990, 24005, 24020, 24008, 23995} {
+		ts := time.Date(2026, 10, 2, 9+i, 15, 0, 0, ist)
+		e.OnCandle(barTF(3600, ts, h, h-30))
+	}
+	e.SetPositions([]model.PositionContext{ctxCall()}, t0)
+	for el := time.Duration(0); el <= 150*time.Second; el += 250 * time.Millisecond {
+		ts := t0.Add(el)
+		if el == 120*time.Second {
+			e.OnCandle(model1m(t0.Add(time.Minute), 24013))
+		}
+		m := touchAndFall(el)
+		e.OnTick(model.Tick{Token: "99926000", Price: entryIdx + m, EventTS: ts})
+		e.OnTick(model.Tick{Token: "OPT1", Price: entryPrem + m/2, EventTS: ts})
+	}
+	sigs := signalsWith(sink, ActionWatchExit, ReasonPreReject)
+	if len(sigs) != 1 {
+		t.Fatalf("want 1 WATCH_EXIT %s, got %+v", ReasonPreReject, sink.signals)
+	}
+	if !strings.Contains(sigs[0].Reason, LevelSwingHigh1h) || sigs[0].Price != sigs[0].CurrentFNOPrice {
+		t.Fatalf("signal should name the 1h swing and be priced at premium: %+v", sigs[0])
+	}
+	if len(sink.exits) != 0 {
+		t.Fatal("shadow strategy must not send an exit request")
 	}
 }

@@ -17,6 +17,7 @@ import (
 
 	"trading-systemv1/internal/backtest"
 	"trading-systemv1/internal/exitpolicy"
+	"trading-systemv1/internal/exitwatch"
 	"trading-systemv1/internal/strategy"
 )
 
@@ -85,7 +86,16 @@ func main() {
 	thetaExit := flag.String("theta-exit", "off", "With -option-model: exit policy theta rule off|shadow|act (shadow reports what it would have done)")
 	thetaFile := flag.String("theta-file", "config/exitpolicy.json", "Exit policy file; the strategy's entry (or defaults) supplies the theta settings")
 	thetaFlatMin := flag.Int("theta-max-flat-min", 0, "Theta rule: exit a flat trade after this many minutes (0 = from -theta-file)")
+	thetaGiveback := flag.Int("theta-giveback-min", -1, "Theta rule: exit a trade that worked and gave its gain back once its premium best is this many minutes old, 0 = off (-1 = from -theta-file)")
 	thetaDecayPct := flag.Int64("theta-decay-pct", 0, "Theta rule: exit once decay reaches this %% of the expected gain (0 = from -theta-file)")
+	preReject := flag.Bool("exitwatch-pre-reject", false, "Close a trade when exitwatch's pre-target S/R rejection (SR_REJECT_PRE) fires")
+	preFile := flag.String("exitwatch-params", "config/exitwatch.json", "exitwatch tuning file for -exitwatch-pre-reject")
+	preRoom := flag.Float64("pre-reject-room", -1, "Pre-reject: target must lie this share of the target move beyond the level (-1 = from file)")
+	preMinMove := flag.Int64("pre-reject-min-move", -1, "Pre-reject: favourable move at the touch, index points (-1 = from file)")
+	preConfirm := flag.String("pre-reject-confirm", "", "Pre-reject: need a 1m close back below the level on|off (empty = from file)")
+	preMaxADX := flag.Float64("pre-reject-max-adx", -1, "Pre-reject: off while the 15m ADX is at or above this, 0 = gate off (-1 = from file)")
+	preMinTouches := flag.Int("pre-reject-min-touches", -1, "Pre-reject: our SR levels need this many touches, 0 = off (-1 = from file)")
+	preSources := flag.String("pre-reject-sources", "", "Pre-reject: level sources, comma list of sr,5m,1h (empty = from file)")
 	flag.Parse()
 
 	cfg := backtest.Config{
@@ -111,7 +121,8 @@ func main() {
 		PutFNOToken:     *putToken,
 		FNOExchange:     *fnoExchange,
 		CandleTF:        *candleTF,
-		ExitPolicy:      thetaOverrides(*thetaExit, *thetaFile, *stratFlag, *thetaFlatMin, *thetaDecayPct),
+		ExitPolicy:      thetaOverrides(*thetaExit, *thetaFile, *stratFlag, *thetaFlatMin, *thetaDecayPct, *thetaGiveback),
+		PreReject:       preRejectConfig(*preReject, *preFile, *preRoom, *preMinMove, *preConfirm, *preSources, *preMaxADX, *preMinTouches),
 	}
 
 	engine := backtest.New(cfg)
@@ -360,7 +371,49 @@ func printWarnTally(trades []backtest.Trade) {
 
 // thetaOverrides builds the backtest's exit policy: the strategy's entry in
 // file (defaults when absent), mode from -theta-exit, then flag overrides.
-func thetaOverrides(mode, file, stratType string, flatMin int, decayPct int64) *exitpolicy.StrategyConfig {
+// preRejectConfig builds the exitwatch pre-target rejection replay; nil when off.
+func preRejectConfig(on bool, file string, room float64, minMovePts int64, confirm, sources string, maxADX float64, minTouches int) *backtest.PreRejectConfig {
+	if !on {
+		return nil
+	}
+	p, err := exitwatch.LoadParams(file)
+	if err != nil {
+		log.Printf("exitwatch params %s: %v — using defaults", file, err)
+		p = exitwatch.DefaultParams()
+	}
+	if room >= 0 {
+		p.PreRejectMinRoomPct = room
+	}
+	if minMovePts >= 0 {
+		p.PreRejectMinMovePaise = minMovePts * 100
+	}
+	if maxADX >= 0 {
+		p.PreRejectMaxADX = maxADX
+	}
+	if minTouches >= 0 {
+		p.PreRejectMinTouches = minTouches
+	}
+	switch confirm {
+	case "on":
+		p.PreRejectConfirmClose = true
+	case "off":
+		p.PreRejectConfirmClose = false
+	}
+	if sources != "" {
+		p.PreRejectSources = nil
+		for _, src := range strings.Split(sources, ",") {
+			switch src = strings.TrimSpace(src); src {
+			case exitwatch.SourceOurSR, exitwatch.Source5m, exitwatch.Source1h:
+				p.PreRejectSources = append(p.PreRejectSources, src)
+			default:
+				log.Fatalf("-pre-reject-sources: unknown source %q", src)
+			}
+		}
+	}
+	return &backtest.PreRejectConfig{Params: p}
+}
+
+func thetaOverrides(mode, file, stratType string, flatMin int, decayPct int64, givebackMin int) *exitpolicy.StrategyConfig {
 	if mode == "" || mode == string(exitpolicy.ModeOff) {
 		return nil
 	}
@@ -382,6 +435,9 @@ func thetaOverrides(mode, file, stratType string, flatMin int, decayPct int64) *
 	}
 	if decayPct > 0 {
 		sc.Theta.DecayPctOfGain = decayPct
+	}
+	if givebackMin >= 0 {
+		sc.Theta.GivebackMin = givebackMin
 	}
 	log.Printf("[stratbacktest] theta exit %s: %+v", sc.Mode, sc.Theta)
 	return &sc

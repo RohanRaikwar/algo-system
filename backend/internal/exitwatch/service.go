@@ -64,6 +64,7 @@ type levelUpdate struct {
 	token  string
 	ourSR  bool // false: analyst levels
 	levels []Level
+	adx    float64 // our SR's 15m ADX
 }
 
 // New connects to Redis and opens the recorder.
@@ -166,6 +167,7 @@ func (svc *Service) loop(ctx context.Context) {
 		case u := <-svc.levelCh:
 			if u.ourSR {
 				svc.engine.SetOurSRLevels(u.token, u.levels)
+				svc.engine.SetTrendADX(u.token, u.adx)
 			} else {
 				svc.engine.SetAnalystLevels(u.token, u.levels)
 			}
@@ -267,20 +269,33 @@ func (svc *Service) handlePositions(ctx context.Context, b []byte) {
 	}
 }
 
-// candleLoop feeds closed 1m index candles to the engine: today's candles
-// from 09:15 IST at startup, then new stream entries every candleEvery.
+// htfStreamTFs are the higher-timeframe candle streams whose swings feed
+// the level book. Redis keeps about 2 days of 5m and 30 days of 1h bars;
+// the book keeps only HTFLookbackDays sessions.
+var htfStreamTFs = []int{300, 3600}
+
+// candleLoop feeds closed index candles to the engine: today's 1m candles
+// from 09:15 IST and every 5m/1h candle Redis holds at startup, then new
+// stream entries every candleEvery.
 func (svc *Service) candleLoop(ctx context.Context) {
-	last := make(map[string]string, len(svc.cfg.IndexKeys))
+	last := make(map[string]string, len(svc.cfg.IndexKeys)*(1+len(htfStreamTFs)))
+	stream := func(tf int, key string) string { return fmt.Sprintf("candle:%ds:%s", tf, key) }
 	for _, k := range svc.cfg.IndexKeys {
 		y, m, d := time.Now().In(bookIST).Date()
 		open := time.Date(y, m, d, 9, 15, 0, 0, bookIST)
-		last[k] = fmt.Sprintf("%d-0", open.UnixMilli())
+		last[stream(60, k)] = fmt.Sprintf("%d-0", open.UnixMilli())
+		for _, tf := range htfStreamTFs {
+			last[stream(tf, k)] = "-"
+		}
 	}
 	t := time.NewTicker(candleEvery)
 	defer t.Stop()
 	for {
 		for _, k := range svc.cfg.IndexKeys {
-			last[k] = svc.readCandles(ctx, k, last[k])
+			for _, tf := range append([]int{60}, htfStreamTFs...) {
+				key := stream(tf, k)
+				last[key] = svc.readCandles(ctx, key, last[key])
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -290,13 +305,14 @@ func (svc *Service) candleLoop(ctx context.Context) {
 	}
 }
 
-// readCandles sends stream entries after from and returns the last ID read.
-func (svc *Service) readCandles(ctx context.Context, key, from string) string {
-	// from is the session open on the first read (inclusive), then
+// readCandles sends entries of a candle stream after from and returns the
+// last ID read.
+func (svc *Service) readCandles(ctx context.Context, stream, from string) string {
+	// from is the start on the first read (inclusive), then
 	// "(<last id>" (exclusive range start, Redis >= 6.2).
-	msgs, err := svc.bus.XRange(ctx, "candle:60s:"+key, from)
+	msgs, err := svc.bus.XRange(ctx, stream, from)
 	if err != nil {
-		log.Printf("[exitwatch] candle read %s: %v", key, err)
+		log.Printf("[exitwatch] candle read %s: %v", stream, err)
 		return from
 	}
 	for _, msg := range msgs {
@@ -480,9 +496,9 @@ func (svc *Service) handleSRXLevels(ctx context.Context, b []byte) {
 		log.Printf("[exitwatch] %v", err)
 		return
 	}
-	for tok, ls := range sets {
+	for tok, set := range sets {
 		select {
-		case svc.levelCh <- levelUpdate{token: tok, ourSR: true, levels: ls}:
+		case svc.levelCh <- levelUpdate{token: tok, ourSR: true, levels: set.levels, adx: set.adx}:
 		case <-ctx.Done():
 			return
 		}
@@ -490,17 +506,23 @@ func (svc *Service) handleSRXLevels(ctx context.Context, b []byte) {
 }
 
 func (svc *Service) handleLevels(ctx context.Context, ourSR bool, b []byte) {
-	parse := parseAnalystLevels
+	var (
+		tok string
+		ls  []Level
+		adx float64
+		err error
+	)
 	if ourSR {
-		parse = parseOurSRLevels
+		tok, ls, adx, err = parseOurSRLevels(b)
+	} else {
+		tok, ls, err = parseAnalystLevels(b)
 	}
-	tok, ls, err := parse(b)
 	if err != nil {
 		log.Printf("[exitwatch] %v", err)
 		return
 	}
 	select {
-	case svc.levelCh <- levelUpdate{token: tok, ourSR: ourSR, levels: ls}:
+	case svc.levelCh <- levelUpdate{token: tok, ourSR: ourSR, levels: ls, adx: adx}:
 	case <-ctx.Done():
 	}
 }

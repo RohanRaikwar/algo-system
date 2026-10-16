@@ -7,7 +7,8 @@
         "decay_pct_of_gain": 25,
         "flat_progress_pct": 30,
         "fallback_flat_prem_pct": 10,
-        "confirm_min": 2
+        "confirm_min": 2,
+        "giveback_flat_min": 0
       }
     },
     "SENSEX_SR": {
@@ -17,7 +18,8 @@
         "decay_pct_of_gain": 25,
         "flat_progress_pct": 30,
         "fallback_flat_prem_pct": 10,
-        "confirm_min": 2
+        "confirm_min": 2,
+        "giveback_flat_min": 0
       }
     }
   }

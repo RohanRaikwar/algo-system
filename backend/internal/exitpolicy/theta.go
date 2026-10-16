@@ -1,6 +1,11 @@
 package exitpolicy
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
+
+var istZone = time.FixedZone("IST", 5*3600+30*60)
 
 // ThetaRule closes a flat position that time decay is eating. The option
 // picker accepted the strike on the assumption that theta over the hold
@@ -17,6 +22,11 @@ import "fmt"
 // FallbackFlatPremPct of the entry premium) and the strategy has not armed
 // a protective stop. A flat position exits after MaxFlatMin minutes, or as
 // soon as decay reaches DecayPctOfGain of the expected gain.
+//
+// With GivebackMin set, a position that worked and gave it back is flat
+// again: current gain under FlatProgressPct of the expected gain and no new
+// premium best for GivebackMin minutes. It exits then (the 2026-10-16 SR
+// CALL: rejected twice at R1, decayed into the premium hard SL).
 type ThetaRule struct {
 	P ThetaConfig
 }
@@ -41,7 +51,7 @@ func (r ThetaRule) Evaluate(p Position, s Snapshot) (Decision, bool) {
 	}
 
 	if bestGain*100 >= g.ExpGainPaise*r.P.FlatProgressPct {
-		return Decision{}, false
+		return r.gaveBack(p, s, held)
 	}
 	modeled := g.DecayPerDayPaise * held / sessionMinutes
 	var realized int64
@@ -62,6 +72,25 @@ func (r ThetaRule) Evaluate(p Position, s Snapshot) (Decision, bool) {
 	return r.decide(p, s, held, text, map[string]int64{
 		"held_min": held, "best_gain": bestGain, "modeled": modeled, "realized": realized,
 		"decay": decay, "exp_gain": g.ExpGainPaise,
+	}), true
+}
+
+// gaveBack fires for a position that worked, then lost its gain and has
+// made no new premium best for GivebackMin minutes.
+func (r ThetaRule) gaveBack(p Position, s Snapshot, held int64) (Decision, bool) {
+	g := p.Greeks
+	if r.P.GivebackMin <= 0 || s.PremBestTS.IsZero() {
+		return Decision{}, false
+	}
+	gain := s.PremLTP - p.PremEntry
+	stale := int64(s.Now.Sub(s.PremBestTS).Minutes())
+	if gain*100 >= g.ExpGainPaise*r.P.FlatProgressPct || stale < int64(r.P.GivebackMin) {
+		return Decision{}, false
+	}
+	text := fmt.Sprintf("THETA %s gave back: best %s at %s, now %s, no new best %dm",
+		p.Side, rupees(s.PremBest), s.PremBestTS.In(istZone).Format("15:04"), rupees(s.PremLTP), stale)
+	return r.decide(p, s, held, text, map[string]int64{
+		"held_min": held, "best_gain": s.PremBest - p.PremEntry, "gain": gain, "stale_min": stale, "exp_gain": g.ExpGainPaise,
 	}), true
 }
 
