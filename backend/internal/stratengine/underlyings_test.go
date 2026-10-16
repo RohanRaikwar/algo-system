@@ -2,6 +2,7 @@ package stratengine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -207,5 +208,27 @@ func TestExtraStrikeSel_Published(t *testing.T) {
 	if len(got) != 1 || !strings.Contains(got[0], `"BSE:99919000"`) || !strings.Contains(got[0], `"strategy":"SENSEX_SR"`) ||
 		!strings.Contains(got[0], `"symbol":"SENSEX81200CE"`) {
 		t.Fatalf("strikeselx = %v", got)
+	}
+}
+
+// Angel's OptionGreek does not serve SENSEX: its chain is computed locally,
+// with no broker session, and an entry is never refused as "stale" for it.
+func TestExtraGreeksSource_SENSEXIsLocal(t *testing.T) {
+	svc, ex := sensexService(t)
+	src, err := svc.extraGreeksSource(ex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := src.(localGreeks); !ok {
+		t.Fatalf("SENSEX source = %T, want localGreeks", src)
+	}
+	_, err = svc.extraEntryChain(ex, time.Now())
+	if err == nil || errors.Is(err, errChainStale) {
+		t.Fatalf("no index LTP: want a non-stale error (ATM fallback), got %v", err)
+	}
+
+	ex.prof.BrokerGreeks = true
+	if _, err := svc.extraGreeksSource(ex); err == nil {
+		t.Fatal("broker greeks without a session accepted")
 	}
 }

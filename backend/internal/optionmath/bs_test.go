@@ -44,3 +44,29 @@ func TestYearsTo(t *testing.T) {
 		t.Fatalf("past expiry = %v", y)
 	}
 }
+
+func TestImpliedVolRoundTrip(t *testing.T) {
+	for _, call := range []bool{true, false} {
+		for _, iv := range []float64{0.08, 0.15, 0.4} {
+			for _, k := range []float64{80000, 81000, 82000} {
+				p := Price(81234, k, 6.0/365, iv, 0.065, call)
+				got, ok := ImpliedVol(p, 81234, k, 6.0/365, 0.065, call)
+				if !ok || !near(got, iv, 1e-4) {
+					t.Fatalf("call=%v k=%v iv=%v: got %v ok=%v", call, k, iv, got, ok)
+				}
+			}
+		}
+	}
+}
+
+func TestImpliedVolRejectsUnpriceable(t *testing.T) {
+	if _, ok := ImpliedVol(5, 100, 80, 0.1, 0.05, true); ok { // below intrinsic 20
+		t.Fatal("price below intrinsic must fail")
+	}
+	if _, ok := ImpliedVol(0, 100, 100, 0.1, 0.05, true); ok {
+		t.Fatal("zero price must fail")
+	}
+	if _, ok := ImpliedVol(10, 100, 100, 0, 0.05, true); ok {
+		t.Fatal("expired must fail")
+	}
+}
