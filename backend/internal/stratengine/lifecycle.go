@@ -125,6 +125,7 @@ func (svc *Service) restoreAndWire(ctx context.Context) {
 	svc.orderExecutor.SetFillListener(svc.onFill)
 	svc.wireAlerts()
 	svc.restoreState(ctx)
+	svc.wireSweepJournal()
 	svc.subscribeHeldContracts(ctx)
 	svc.orderExecutor.SetStateListener(func() { svc.saveSnapshot(ctx) })
 	svc.orderExecutor.SetIntentPersister(func() error { return svc.persistSnapshot(ctx) })
@@ -277,6 +278,12 @@ func (svc *Service) shutdown() {
 	defer cancel()
 	svc.saveSnapshot(shutCtx)
 
+	if svc.sweeps != nil {
+		for _, sr := range svc.srAll() {
+			sr.SetSweepSink(nil)
+		}
+		svc.sweeps.close()
+	}
 	svc.journal.Close()
 	svc.redisWriter.Close()
 	svc.redisReader.Close()

@@ -165,3 +165,12 @@ func (s *Nifty50SR) sweepWarning(st *nifty50SRState, side PositionSide, ts time.
 	}
 	return ""
 }
+
+// SetSweepSink sets fn to receive every new sweep kept by recordSweep,
+// with the instrument key ("exchange:token"). fn runs under the strategy
+// lock on the candle path, so it must not block.
+func (s *Nifty50SR) SetSweepSink(fn func(key string, sw SRSweep)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sweepSink = fn
+}

@@ -122,3 +122,38 @@ func TestThetaRuleText(t *testing.T) {
 		t.Fatalf("detail %v", d.Detail)
 	}
 }
+
+// Expected gain ₹50; flat line 30% = ₹15. The CALL ran to ₹120 (+₹20, so
+// it "worked") at minute 30 and gave it back.
+func TestThetaGaveBack(t *testing.T) {
+	at := func(min int) time.Time { return t0.Add(time.Duration(min) * time.Minute) }
+	p := thetaParams()
+	p.GivebackMin = 60
+	rule := ThetaRule{P: p}
+	tests := []struct {
+		name string
+		snap Snapshot
+		fire bool
+	}{
+		{"gave back, best stale", Snapshot{Now: at(95), IndexLTP: 2500000, PremLTP: 9500, PremBest: 12000, PremBestTS: at(30)}, true},
+		{"gave back, best recent", Snapshot{Now: at(80), IndexLTP: 2500000, PremLTP: 9500, PremBest: 12000, PremBestTS: at(30)}, false},
+		{"still holds the gain", Snapshot{Now: at(120), IndexLTP: 2504000, PremLTP: 11800, PremBest: 12000, PremBestTS: at(30)}, false},
+		{"no best time", Snapshot{Now: at(120), IndexLTP: 2500000, PremLTP: 9500, PremBest: 12000}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			d, fire := rule.Evaluate(callPos(), tc.snap)
+			if fire != tc.fire {
+				t.Fatalf("fire=%v want %v (%s)", fire, tc.fire, d.Text)
+			}
+			if fire && !strings.Contains(d.Text, "gave back: best ₹120.00 at 10:30, now ₹95.00, no new best 65m") {
+				t.Fatalf("text %q", d.Text)
+			}
+		})
+	}
+	// Off by default: once worked, never flat again.
+	off := ThetaRule{P: thetaParams()}
+	if _, fire := off.Evaluate(callPos(), tests[0].snap); fire {
+		t.Fatal("GivebackMin 0 must keep the old behaviour")
+	}
+}

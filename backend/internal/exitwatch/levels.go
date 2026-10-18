@@ -2,6 +2,7 @@ package exitwatch
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	"trading-systemv1/internal/model"
@@ -17,8 +18,15 @@ const (
 	LevelSwingLow  = "SWING_LOW"
 	LevelMicroHigh = "MICRO_HIGH"
 	LevelMicroLow  = "MICRO_LOW"
-	ourSRPrefix    = "OUR_SR:"
-	analystPrefix  = "ANALYST:"
+
+	// Higher-timeframe fractal swings, kept across days.
+	LevelSwingHigh5m = "SWING_HIGH_5M"
+	LevelSwingLow5m  = "SWING_LOW_5M"
+	LevelSwingHigh1h = "SWING_HIGH_1H"
+	LevelSwingLow1h  = "SWING_LOW_1H"
+
+	ourSRPrefix   = "OUR_SR:"
+	analystPrefix = "ANALYST:"
 )
 
 // Level is one support/resistance price. Side is not stored: a level above
@@ -28,34 +36,96 @@ type Level struct {
 	Price int64     `json:"price"` // paise
 	Type  string    `json:"type"`
 	Since time.Time `json:"since"` // when the book first saw this level
+
+	// Strong: a member of the merged cluster is a 5m/1h swing or one of
+	// our SR strategy's levels. The pre-target rejection rule only uses
+	// strong levels, so 1m fractal noise cannot end a trade early.
+	Strong bool   `json:"strong,omitempty"`
+	Tags   string `json:"tags,omitempty"` // member types, "+"-joined, label first
+
+	// Touches: our SR strategy's touch count (highest in the cluster).
+	Touches int `json:"touches,omitempty"`
 }
 
 // levelPriority ranks types when levels cluster: the label of the highest
 // priority member names the cluster. Our strategy's levels win.
 func levelPriority(t string) int {
 	switch {
-	case len(t) >= len(ourSRPrefix) && t[:len(ourSRPrefix)] == ourSRPrefix:
-		return 5
+	case strings.HasPrefix(t, ourSRPrefix):
+		return 50
+	case t == LevelSwingHigh1h || t == LevelSwingLow1h:
+		return 46
+	case t == LevelSwingHigh5m || t == LevelSwingLow5m:
+		return 43
 	case t == LevelSwingHigh || t == LevelSwingLow:
-		return 4
+		return 40
 	case t == LevelORBHigh || t == LevelORBLow:
-		return 3
-	case len(t) >= len(analystPrefix) && t[:len(analystPrefix)] == analystPrefix:
-		return 2
+		return 30
+	case strings.HasPrefix(t, analystPrefix):
+		return 20
 	default: // day high/low
-		return 1
+		return 10
 	}
+}
+
+// Strong level sources the pre-target rejection rule can use.
+const (
+	SourceOurSR = "sr"
+	Source5m    = "5m"
+	Source1h    = "1h"
+)
+
+// levelSource names the strong source of a level type, "" when not strong.
+func levelSource(t string) string {
+	switch t {
+	case LevelSwingHigh5m, LevelSwingLow5m:
+		return Source5m
+	case LevelSwingHigh1h, LevelSwingLow1h:
+		return Source1h
+	}
+	if strings.HasPrefix(t, ourSRPrefix) {
+		return SourceOurSR
+	}
+	return ""
+}
+
+func strongType(t string) bool { return levelSource(t) != "" }
+
+// qualifies reports whether a merged level counts for the pre-target rule:
+// a member from one of srcs, and for our SR levels at least minTouches.
+func (l Level) qualifies(srcs []string, minTouches int) bool {
+	for _, t := range strings.Split(l.Tags, "+") {
+		s := levelSource(t)
+		if s == "" || (s == SourceOurSR && l.Touches < minTouches) {
+			continue
+		}
+		for _, want := range srcs {
+			if s == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// htfSeries is one higher timeframe's closed bars and their swings.
+type htfSeries struct {
+	bars   []model.TFCandle
+	swings []Level
 }
 
 var bookIST = time.FixedZone("IST", 5*3600+30*60)
 
 // LevelBook is the merged S/R book for one index, rebuilt from today's data:
 // live day high/low, opening range, 1m fractal swings, analyst levels and
-// our SR strategy's levels. Not safe for concurrent use.
+// our SR strategy's levels, plus 5m/1h swings of the last few days.
+// Not safe for concurrent use.
 type LevelBook struct {
-	fractalBars int
-	orbMin      int
-	mergeTol    int64
+	fractalBars    int
+	htfFractalBars int
+	htfDays        int
+	orbMin         int
+	mergeTol       int64
 
 	day     string // IST date the day sources belong to
 	bars    []model.TFCandle
@@ -68,6 +138,8 @@ type LevelBook struct {
 
 	analyst []Level
 	ourSR   []Level
+	htf     map[int]*htfSeries // by TF seconds; not reset by the day roll
+	adx     float64            // our SR strategy's 15m ADX; 0 = unknown
 
 	clock   time.Time           // latest tick or candle-close time; dates new levels
 	seen    map[int64]time.Time // first-seen time per raw level price
@@ -78,7 +150,7 @@ type LevelBook struct {
 
 // NewLevelBook returns an empty book.
 func NewLevelBook(m *Model) *LevelBook {
-	b := &LevelBook{seen: map[int64]time.Time{}}
+	b := &LevelBook{seen: map[int64]time.Time{}, htf: map[int]*htfSeries{}}
 	b.configure(m)
 	return b
 }
@@ -88,6 +160,17 @@ func (b *LevelBook) configure(m *Model) {
 	if b.fractalBars < 1 {
 		b.fractalBars = 2
 	}
+	b.htfFractalBars, b.htfDays = m.HTFFractalBars, m.HTFLookbackDays
+	if b.htfFractalBars < 1 {
+		b.htfFractalBars = 2
+	}
+	if b.htfDays < 1 {
+		b.htfDays = 5
+	}
+	for tf, s := range b.htf {
+		b.trimHTF(tf, s)
+	}
+	b.dirty = true
 }
 
 // Version changes whenever the merged level set changes.
@@ -171,18 +254,7 @@ func (b *LevelBook) OnCandle(c model.TFCandle) {
 	// Fractal on the bar fractalBars back: strictly beyond its neighbours.
 	k := b.fractalBars
 	if i := len(b.bars) - 1 - k; i >= k {
-		hi, lo := true, true
-		for j := i - k; j <= i+k; j++ {
-			if j == i {
-				continue
-			}
-			if b.bars[j].High >= b.bars[i].High {
-				hi = false
-			}
-			if b.bars[j].Low <= b.bars[i].Low {
-				lo = false
-			}
-		}
+		hi, lo := fractalAt(b.bars, i, k)
 		if hi {
 			b.swings = append(b.swings, Level{Price: b.bars[i].High, Type: LevelSwingHigh, Since: c.TS})
 		}
@@ -191,6 +263,78 @@ func (b *LevelBook) OnCandle(c model.TFCandle) {
 		}
 	}
 	b.dirty = true
+}
+
+// fractalAt reports whether bar i's high (low) is strictly beyond the k
+// bars on each side. The caller ensures k <= i < len(bars)-k.
+func fractalAt(bars []model.TFCandle, i, k int) (hi, lo bool) {
+	hi, lo = true, true
+	for j := i - k; j <= i+k; j++ {
+		if j == i {
+			continue
+		}
+		if bars[j].High >= bars[i].High {
+			hi = false
+		}
+		if bars[j].Low <= bars[i].Low {
+			lo = false
+		}
+	}
+	return hi, lo
+}
+
+// OnHTFCandle adds one closed 5m or 1h candle. Its swings survive the day
+// roll and are kept for the last HTFLookbackDays sessions. Other TFs,
+// forming bars and repeats are ignored.
+func (b *LevelBook) OnHTFCandle(c model.TFCandle) {
+	hiType, _ := htfTypes(c.TF)
+	if c.Forming || hiType == "" {
+		return
+	}
+	s := b.htf[c.TF]
+	if s == nil {
+		s = &htfSeries{}
+		b.htf[c.TF] = s
+	}
+	if n := len(s.bars); n > 0 && !c.TS.After(s.bars[n-1].TS) {
+		return
+	}
+	s.bars = append(s.bars, c)
+	b.trimHTF(c.TF, s)
+	b.dirty = true
+}
+
+// htfTypes names the swing types of a higher timeframe ("" when unused).
+func htfTypes(tf int) (hi, lo string) {
+	switch tf {
+	case 300:
+		return LevelSwingHigh5m, LevelSwingLow5m
+	case 3600:
+		return LevelSwingHigh1h, LevelSwingLow1h
+	}
+	return "", ""
+}
+
+// trimHTF keeps the bars of the last htfDays sessions and recomputes the
+// series' swings. A swing is dated by the bar that confirms it.
+func (b *LevelBook) trimHTF(tf int, s *htfSeries) {
+	perDay := 375*60/tf + 1 // bars in a 09:15–15:30 session
+	if max := b.htfDays * perDay; len(s.bars) > max {
+		s.bars = append(s.bars[:0], s.bars[len(s.bars)-max:]...)
+	}
+	hiType, loType := htfTypes(tf)
+	k := b.htfFractalBars
+	s.swings = s.swings[:0]
+	for i := k; i+k < len(s.bars); i++ {
+		hi, lo := fractalAt(s.bars, i, k)
+		since := s.bars[i+k].TS.Add(time.Duration(tf) * time.Second)
+		if hi {
+			s.swings = append(s.swings, Level{Price: s.bars[i].High, Type: hiType, Since: since})
+		}
+		if lo {
+			s.swings = append(s.swings, Level{Price: s.bars[i].Low, Type: loType, Since: since})
+		}
+	}
 }
 
 // Bars returns today's closed 1m candles.
@@ -202,6 +346,12 @@ func (b *LevelBook) SetAnalyst(ls []Level) { b.analyst, b.dirty = ls, true }
 // SetOurSR replaces our SR strategy's levels.
 func (b *LevelBook) SetOurSR(ls []Level) { b.ourSR, b.dirty = ls, true }
 
+// SetTrend sets our SR strategy's 15m ADX (trend strength).
+func (b *LevelBook) SetTrend(adx float64) { b.adx = adx }
+
+// ADX is the latest 15m ADX, 0 when unknown.
+func (b *LevelBook) ADX() float64 { return b.adx }
+
 func (b *LevelBook) rebuild() {
 	if !b.dirty {
 		return
@@ -211,8 +361,8 @@ func (b *LevelBook) rebuild() {
 	if now.IsZero() {
 		now = time.Now()
 	}
-	raw := make([]Level, 0, 8+len(b.swings)+len(b.analyst)+len(b.ourSR))
-	add := func(p int64, t string, since time.Time) {
+	raw := make([]Level, 0, 8+len(b.swings)+len(b.analyst)+len(b.ourSR)+4*len(b.htf))
+	add := func(p int64, t string, since time.Time, touches int) {
 		if p <= 0 {
 			return
 		}
@@ -224,27 +374,35 @@ func (b *LevelBook) rebuild() {
 			}
 			b.seen[p] = since
 		}
-		raw = append(raw, Level{Price: p, Type: t, Since: since})
+		raw = append(raw, Level{Price: p, Type: t, Since: since, Touches: touches})
 	}
-	add(b.dayHigh, LevelDayHigh, time.Time{})
-	add(b.dayLow, LevelDayLow, time.Time{})
+	add(b.dayHigh, LevelDayHigh, time.Time{}, 0)
+	add(b.dayLow, LevelDayLow, time.Time{}, 0)
 	if b.orbDone {
-		add(b.orbHigh, LevelORBHigh, time.Time{})
-		add(b.orbLow, LevelORBLow, time.Time{})
+		add(b.orbHigh, LevelORBHigh, time.Time{}, 0)
+		add(b.orbLow, LevelORBLow, time.Time{}, 0)
 	}
 	for _, l := range b.swings {
-		add(l.Price, l.Type, l.Since)
+		add(l.Price, l.Type, l.Since, 0)
 	}
 	for _, l := range b.analyst {
-		add(l.Price, l.Type, l.Since)
+		add(l.Price, l.Type, l.Since, 0)
 	}
 	for _, l := range b.ourSR {
-		add(l.Price, l.Type, l.Since)
+		add(l.Price, l.Type, l.Since, l.Touches)
+	}
+	for _, tf := range []int{300, 3600} {
+		if s := b.htf[tf]; s != nil {
+			for _, l := range s.swings {
+				add(l.Price, l.Type, l.Since, 0)
+			}
+		}
 	}
 	sort.Slice(raw, func(i, j int) bool { return raw[i].Price < raw[j].Price })
 
 	// Cluster within mergeTol of the cluster's first price; the highest
-	// priority member names it, the oldest member dates it.
+	// priority member names it, the oldest member dates it, and any strong
+	// member makes it strong.
 	out := make([]Level, 0, len(raw))
 	for i := 0; i < len(raw); {
 		best, oldest := raw[i], raw[i].Since
@@ -258,6 +416,13 @@ func (b *LevelBook) rebuild() {
 			}
 		}
 		best.Since = oldest
+		best.Strong, best.Tags = clusterTags(raw[i:j], best.Type)
+		best.Touches = 0
+		for _, m := range raw[i:j] {
+			if m.Touches > best.Touches {
+				best.Touches = m.Touches
+			}
+		}
 		out = append(out, best)
 		i = j
 	}
@@ -267,12 +432,30 @@ func (b *LevelBook) rebuild() {
 	}
 }
 
+// clusterTags reports whether any member is strong and lists the distinct
+// member types, the label first.
+func clusterTags(ms []Level, label string) (bool, string) {
+	strong := false
+	tags := []string{label}
+	for _, m := range ms {
+		strong = strong || strongType(m.Type)
+		dup := false
+		for _, t := range tags {
+			dup = dup || t == m.Type
+		}
+		if !dup {
+			tags = append(tags, m.Type)
+		}
+	}
+	return strong, strings.Join(tags, "+")
+}
+
 func sameLevels(a, b []Level) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for i := range a {
-		if a[i].Price != b[i].Price || a[i].Type != b[i].Type {
+		if a[i].Price != b[i].Price || a[i].Type != b[i].Type || a[i].Tags != b[i].Tags || a[i].Touches != b[i].Touches {
 			return false
 		}
 	}

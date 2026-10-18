@@ -30,7 +30,7 @@ func TestParseOurSRXLevels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ls := sets["99919000"]
+	ls := sets["99919000"].levels
 	if len(ls) != 1 || ls[0].Price != 8420000 || ls[0].Type != ourSRPrefix+"pdh" {
 		t.Fatalf("levels = %+v", sets)
 	}

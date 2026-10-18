@@ -33,6 +33,7 @@ type Nifty50SR struct {
 	lastRejectTS time.Time // bucket start of the candle that was refused
 	rejectDay    string
 	barTS        time.Time // candle being evaluated
+	sweepSink    func(key string, sw SRSweep)
 }
 
 func NewNifty50SR(qty int64, cfg Nifty50SRConfig) *Nifty50SR {
@@ -223,6 +224,9 @@ func (s *Nifty50SR) OnTFCandle(candle model.TFCandle) *Signal {
 			st.recordSweep(sw, time.Duration(s.cfg.SweepCooldownMin)*time.Minute) {
 			log.Printf("[strategy] %s: sweep %s %d (%s) wick %dpts close=%d",
 				s.Name(), sw.Side, sw.Level/100, sw.Source, sw.Wick/100, sw.Close)
+			if s.sweepSink != nil {
+				s.sweepSink(candle.Key(), sw)
+			}
 		}
 	}
 	if closeMin >= s.cfg.TimeExitMin {

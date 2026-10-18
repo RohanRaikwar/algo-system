@@ -32,6 +32,7 @@ type View struct {
 	Phase         Phase              `json:"phase"`
 	NextLevel     *Level             `json:"next_level,omitempty"`
 	LockLevel     int64              `json:"lock_level,omitempty"`
+	PreLevel      *Level             `json:"pre_level,omitempty"`
 	Levels        []Level            `json:"levels"`
 	Features      map[string]float64 `json:"features"`
 	TS            time.Time          `json:"ts"`
@@ -64,7 +65,7 @@ func newView(a Assessment) View {
 		Reasons: a.Reasons, SuggestedStop: a.SuggestedStop,
 		IndexLTP: a.IndexLTP, PremiumLTP: a.PremiumLTP,
 		Progress: a.Snapshot.Progress, PeakProgress: a.Snapshot.PeakProgress,
-		Phase: a.Phase, NextLevel: a.NextLevel, LockLevel: a.LockLevel, Levels: levels,
+		Phase: a.Phase, NextLevel: a.NextLevel, LockLevel: a.LockLevel, PreLevel: a.PreLevel, Levels: levels,
 		Features: feats, TS: a.TS,
 	}
 }
@@ -209,6 +210,7 @@ func scaleModel(m Model, p underlying.Profile) Model {
 	m.EarlyFailMinPaise = p.Scale(m.EarlyFailMinPaise)
 	m.EarlyFailMaxPeakPaise = p.Scale(m.EarlyFailMaxPeakPaise)
 	m.LevelMergeTolPaise = p.Scale(m.LevelMergeTolPaise)
+	m.PreRejectMinMovePaise = p.Scale(m.PreRejectMinMovePaise)
 	return m
 }
 
@@ -235,10 +237,22 @@ func (e *Engine) SetATR(indexToken string, atr int64) {
 	}
 }
 
-// OnCandle feeds a closed 1m index candle to the level book and refreshes ATR.
+// OnCandle feeds a closed index candle to the level book. A 1m candle also
+// refreshes ATR and the trackers' last 1m close; 5m/1h candles add swings.
 func (e *Engine) OnCandle(c model.TFCandle) {
 	b := e.Book(c.Token)
+	if c.TF != 0 && c.TF != 60 {
+		b.OnHTFCandle(c)
+		return
+	}
 	b.OnCandle(c)
+	if !c.Forming {
+		for _, s := range e.slots {
+			if s.tr.Position().IndexToken == c.Token {
+				s.tr.OnMinuteClose(c.Close, c.TS)
+			}
+		}
+	}
 	bars := b.Bars()
 	if n := len(bars); n > atrPeriod {
 		bars = bars[n-atrPeriod-1:]
@@ -253,6 +267,9 @@ func (e *Engine) SetAnalystLevels(indexToken string, ls []Level) { e.Book(indexT
 
 // SetOurSRLevels replaces our SR strategy's levels for an index.
 func (e *Engine) SetOurSRLevels(indexToken string, ls []Level) { e.Book(indexToken).SetOurSR(ls) }
+
+// SetTrendADX sets our SR strategy's 15m ADX for an index.
+func (e *Engine) SetTrendADX(indexToken string, adx float64) { e.Book(indexToken).SetTrend(adx) }
 
 // Open reports the number of tracked positions, ghosts included.
 func (e *Engine) Open() int { return len(e.slots) }

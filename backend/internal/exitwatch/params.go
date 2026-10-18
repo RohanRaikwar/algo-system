@@ -69,10 +69,33 @@ type Params struct {
 	EarlyFailMinPaise     int64   `json:"early_fail_min_paise"`      // …and at least this
 	EarlyFailMaxPeakPaise int64   `json:"early_fail_max_peak_paise"` // only while the best move is below this
 
+	// Pre-target rejection: before target, a rejection at a strong level
+	// (5m/1h swing or our SR level) between entry and a far target latches
+	// EXIT with reason SR_REJECT_PRE. Uses the runner's level tolerance,
+	// rejection pullback and break hold.
+	PreRejectEnabled      bool    `json:"pre_reject_enabled"`
+	PreRejectMinRoomPct   float64 `json:"pre_reject_min_room_pct"`   // target must lie this × target move beyond the level
+	PreRejectMinMovePaise int64   `json:"pre_reject_min_move_paise"` // move at the touch must be at least this
+	PreRejectConfirmClose bool    `json:"pre_reject_confirm_close"`  // a closed 1m bar must close back below the level
+	// PreRejectSources: level sources that count, of "sr" (our SR
+	// strategy's levels), "5m", "1h". Backtest Mar–Oct 2026: sr alone beat
+	// the baseline in both halves; 5m and 1h swings fired far too often
+	// and lost.
+	PreRejectSources []string `json:"pre_reject_sources"`
+	// PreRejectMaxADX: no pre-target rejection while our SR strategy's 15m
+	// ADX is at or above this (0 = off). In a strong trend levels break:
+	// cutting there lost in the backtest.
+	PreRejectMaxADX float64 `json:"pre_reject_max_adx"`
+	// PreRejectMinTouches: our SR levels need at least this many touches
+	// (0 = off). 5m/1h swings ignore it.
+	PreRejectMinTouches int `json:"pre_reject_min_touches"`
+
 	// Day level book.
 	FractalBars        int   `json:"fractal_bars"`          // 1m bars each side for a swing high/low
 	ORBMin             int   `json:"orb_min"`               // opening range length in minutes from 09:15
 	LevelMergeTolPaise int64 `json:"level_merge_tol_paise"` // levels this close merge into one
+	HTFFractalBars     int   `json:"htf_fractal_bars"`      // 5m/1h bars each side for a swing high/low
+	HTFLookbackDays    int   `json:"htf_lookback_days"`     // sessions of 5m/1h swings kept
 }
 
 // DefaultParams returns hand-set weights. They are a starting point for
@@ -119,9 +142,19 @@ func DefaultParams() Params {
 		EarlyFailMinPaise:     800,
 		EarlyFailMaxPeakPaise: 500,
 
+		PreRejectEnabled:      true,
+		PreRejectMinRoomPct:   0.30,
+		PreRejectMinMovePaise: 1000,
+		PreRejectConfirmClose: true,
+		PreRejectSources:      []string{SourceOurSR},
+		PreRejectMaxADX:       0, // set from the backtest
+		PreRejectMinTouches:   0,
+
 		FractalBars:        2,
 		ORBMin:             15,
 		LevelMergeTolPaise: 500,
+		HTFFractalBars:     2,
+		HTFLookbackDays:    5,
 	}
 }
 

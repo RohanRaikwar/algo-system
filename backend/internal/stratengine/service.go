@@ -48,6 +48,7 @@ type Service struct {
 	redisReader   *redisstore.Reader
 	redisWriter   *redisstore.Writer
 	journal       *strategy.SignalJournal
+	sweeps        *sweepWriter // SR liquidity sweeps into journal (sweeps.go)
 	notifier      notification.Notifier
 	orderExecutor *orderexec.OrderExecutor
 	strikePicker  atomic.Pointer[instruments.StrikePicker] // swapped by the ATM goroutine

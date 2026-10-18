@@ -1,6 +1,7 @@
 package exitpolicy
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -86,5 +87,26 @@ func TestArbiterProtectArmedAndReopen(t *testing.T) {
 	a.Open(callPos(), thetaPlan(ModeAct, 1))
 	if got := a.OnMinute(t0.Add(15*time.Minute), noArm); len(got) != 0 {
 		t.Fatalf("no premium seen after reopen yet: %+v", got)
+	}
+}
+
+func TestArbiterPremBestTimeMovesOnlyOnNewBest(t *testing.T) {
+	p := thetaParams()
+	p.GivebackMin = 30
+	a := NewArbiter()
+	a.Open(callPos(), Plan{Mode: ModeAct, Rules: []Rule{ThetaRule{P: p}}})
+	a.OnTick("26000", 2500000)
+	a.OnTick("12345", 12000) // worked: +₹20 at minute 10
+	if got := a.OnMinute(t0.Add(10*time.Minute), noArm); len(got) != 0 {
+		t.Fatalf("decided while holding gain: %+v", got)
+	}
+	a.OnTick("12345", 11000) // lower, not a new best
+	a.OnTick("12345", 9500)
+	if got := a.OnMinute(t0.Add(39*time.Minute), noArm); len(got) != 0 {
+		t.Fatalf("best is 29m old, decided early: %+v", got)
+	}
+	got := a.OnMinute(t0.Add(40*time.Minute), noArm)
+	if len(got) != 1 || !strings.Contains(got[0].Text, "gave back") {
+		t.Fatalf("want gave-back exit 30m after the best, got %+v", got)
 	}
 }

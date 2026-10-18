@@ -36,7 +36,18 @@
   "early_fail_risk_pct": 0.5,
   "early_fail_min_paise": 800,
   "early_fail_max_peak_paise": 500,
+  "pre_reject_enabled": true,
+  "pre_reject_min_room_pct": 0.3,
+  "pre_reject_min_move_paise": 1000,
+  "pre_reject_confirm_close": true,
+  "pre_reject_sources": [
+    "sr"
+  ],
+  "pre_reject_max_adx": 0,
+  "pre_reject_min_touches": 0,
   "fractal_bars": 2,
   "orb_min": 15,
-  "level_merge_tol_paise": 500
+  "level_merge_tol_paise": 500,
+  "htf_fractal_bars": 2,
+  "htf_lookback_days": 5
 }

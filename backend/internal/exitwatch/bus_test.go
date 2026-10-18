@@ -157,7 +157,7 @@ func TestBus_ReadCandles(t *testing.T) {
 	fb.streams["candle:60s:NSE:99926000"] = []streamEntry{{ID: "1-0", Data: string(closed)}, {ID: "2-0", Data: string(forming)}}
 	svc := busService(fb)
 
-	next := svc.readCandles(context.Background(), "NSE:99926000", "0-0")
+	next := svc.readCandles(context.Background(), "candle:60s:NSE:99926000", "0-0")
 	if next != "(2-0" {
 		t.Fatalf("next = %q, want (2-0", next)
 	}

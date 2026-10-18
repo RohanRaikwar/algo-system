@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -155,5 +156,54 @@ func TestSRSweepOnView(t *testing.T) {
 	s.OnTFCandle(tfc(next, ohlcv{Open: pts(25000), High: pts(25030), Low: pts(24990), Close: pts(25000)}))
 	if v, _ := s.View("NSE:NIFTY"); len(v.Sweeps) != 0 {
 		t.Errorf("sweeps carried into the next day: %+v", v.Sweeps)
+	}
+}
+
+// Each new sweep reaches the sink once, with the instrument key; a repeat
+// inside the cooldown does not.
+func TestSRSweepSink(t *testing.T) {
+	cfg := DefaultNifty50SRConfig()
+	cfg.IndexToken = ""
+	s := NewNifty50SR(65, cfg)
+	var got []string
+	s.SetSweepSink(func(key string, sw SRSweep) { got = append(got, key+" "+sw.Side) })
+	t0 := time.Date(2026, 10, 15, 10, 0, 0, 0, ist)
+	bars := []ohlcv{
+		{Open: pts(25000), High: pts(25010), Low: pts(24995), Close: pts(25005)},
+		{Open: pts(25005), High: pts(25018), Low: pts(25001), Close: pts(25006)},
+		{Open: pts(25005), High: pts(25019), Low: pts(25001), Close: pts(25006)}, // same level, in cooldown
+	}
+	for i, b := range bars {
+		s.OnTFCandle(tfc(t0.Add(time.Duration(i)*time.Minute), b))
+	}
+	if len(got) != 1 || got[0] != "NSE:NIFTY HIGH" {
+		t.Fatalf("sink got %v", got)
+	}
+}
+
+func TestSignalJournalRecordSweep(t *testing.T) {
+	j, err := NewSignalJournal(filepath.Join(t.TempDir(), "signals.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	ts := time.Date(2026, 10, 15, 9, 50, 0, 0, ist)
+	sw := SRSweep{Side: SRSweepHigh, Level: pts(25010), Source: SRLevelOpening, Wick: pts(8),
+		Extreme: pts(25018), Close: pts(25006), Touches: 1, TS: ts}
+	for i := 0; i < 2; i++ { // replay is ignored
+		if err := j.RecordSweep("NIFTY50_SR", "NSE:99926000", sw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var n int
+	var day, exch, tok, barTS string
+	var level, wick int64
+	row := j.db.QueryRow(`SELECT COUNT(*), day, exchange, token, level, wick, bar_ts FROM sr_sweeps`)
+	if err := row.Scan(&n, &day, &exch, &tok, &level, &wick, &barTS); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 || day != "2026-10-15" || exch != "NSE" || tok != "99926000" ||
+		level != pts(25010) || wick != pts(8) || barTS != "2026-10-15T04:20:00Z" {
+		t.Errorf("row n=%d day=%s %s:%s level=%d wick=%d ts=%s", n, day, exch, tok, level, wick, barTS)
 	}
 }
