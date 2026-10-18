@@ -288,7 +288,8 @@ type nifty50SRState struct {
 	AdviceToday    int
 	AdviceCooldown int
 
-	// ── Liquidity sweeps today (not snapshotted, view/warning only) ──
+	// ── Liquidity sweeps today (not snapshotted, view/warning only;
+	// every new sweep is also written to the signal journal, SetSweepSink) ──
 	Sweeps  []SRSweep
 	sweepAt map[int64]time.Time // level → last sweep bar
 

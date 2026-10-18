@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,6 +49,25 @@ func NewSignalJournal(dbPath string) (*SignalJournal, error) {
 	CREATE INDEX IF NOT EXISTS idx_signals_strategy ON signals(strategy);
 	CREATE INDEX IF NOT EXISTS idx_signals_token ON signals(token, exchange);
 	CREATE INDEX IF NOT EXISTS idx_signals_candle_ts ON signals(candle_ts);
+
+	CREATE TABLE IF NOT EXISTS sr_sweeps (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		strategy   TEXT NOT NULL,
+		exchange   TEXT NOT NULL,
+		token      TEXT NOT NULL,
+		day        TEXT NOT NULL,
+		side       TEXT NOT NULL,
+		source     TEXT NOT NULL,
+		level      INTEGER NOT NULL,
+		wick       INTEGER NOT NULL,
+		extreme    INTEGER NOT NULL,
+		close      INTEGER NOT NULL,
+		touches    INTEGER NOT NULL DEFAULT 0,
+		bar_ts     TEXT NOT NULL, -- RFC3339 UTC, bucket start
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(strategy, exchange, token, side, level, bar_ts)
+	);
+	CREATE INDEX IF NOT EXISTS idx_sr_sweeps_day ON sr_sweeps(strategy, day);
 	`
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
@@ -183,6 +203,24 @@ func (j *SignalJournal) GetSignals(limit int) ([]SignalRecord, error) {
 		records = append(records, r)
 	}
 	return records, nil
+}
+
+// RecordSweep persists one liquidity sweep of strategy on the instrument
+// key ("exchange:token"). day is the sweep bar's IST date; prices are
+// paise. A replayed sweep (same level, side and bar) is ignored.
+func (j *SignalJournal) RecordSweep(strategy, key string, sw SRSweep) error {
+	exchange, token, _ := strings.Cut(key, ":")
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	_, err := j.db.Exec(
+		`INSERT OR IGNORE INTO sr_sweeps
+		 (strategy, exchange, token, day, side, source, level, wick, extreme, close, touches, bar_ts)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		strategy, exchange, token, sw.TS.In(ist).Format("2006-01-02"),
+		sw.Side, sw.Source, sw.Level, sw.Wick, sw.Extreme, sw.Close, sw.Touches,
+		sw.TS.UTC().Format(time.RFC3339),
+	)
+	return err
 }
 
 // Close closes the journal database.
