@@ -312,3 +312,31 @@ func TestBuilder_EmitDropsCountedByKind(t *testing.T) {
 		t.Fatalf("drops final=%d forming=%d, want 1/2", finalDrops, formingDrops)
 	}
 }
+
+// 30m bars start at the 09:15 open: 09:15–09:44 is one bar, 09:45 opens
+// the next (not 09:00/09:30 clock boundaries).
+func TestBuilder_30mStartsAtSessionOpen(t *testing.T) {
+	b := New([]int{1800})
+	b.StaleTolerance = 0
+	b.FlushGrace = 0
+	outCh := make(chan model.TFCandle, 5000)
+	open := time.Date(2026, 10, 19, 9, 15, 0, 0, time.FixedZone("IST", 19800)).Unix()
+
+	for i := int64(0); i < 1800; i += 60 {
+		b.process(makeCandle("NIFTY", open+i, 100, 100, 100, 100, 1), outCh)
+	}
+	b.process(makeCandle("NIFTY", open+1800, 200, 200, 200, 200, 1), outCh)
+
+	var final *model.TFCandle
+	for len(outCh) > 0 {
+		if c := <-outCh; !c.Forming {
+			final = &c
+		}
+	}
+	if final == nil {
+		t.Fatal("09:15 bar not finalized at 09:45")
+	}
+	if final.TS.Unix() != open || final.Count != 30 {
+		t.Fatalf("bar at %s with %d candles, want 09:15 with 30", final.TS.In(time.FixedZone("IST", 19800)).Format("15:04"), final.Count)
+	}
+}

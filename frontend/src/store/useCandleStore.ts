@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { IndicatorState } from '../types/chart';
-import { IST_OFFSET, CHART_MAX, CANDLE_MAX } from '../utils/helpers';
+import { IST_OFFSET, CHART_MAX, CANDLE_MAX, tfBucketSec } from '../utils/helpers';
 
 // Convert paise (int64 from backend) to rupees (float for display).
 // All candle OHLC and indicator values enter the store in paise;
@@ -79,8 +79,7 @@ export const useCandleStore = create<CandleStore>((set) => ({
         const newCandles = { ...s.candles };
 
         for (const activeTF of activeTFs) {
-            const tfMs = activeTF * 1000;
-            const bucketMs = Math.floor(candleTS / tfMs) * tfMs;
+            const bucketMs = tfBucketSec(Math.floor(candleTS / 1000), activeTF) * 1000;
             const bucketISO = new Date(bucketMs).toISOString();
 
             const tfArr = [...(newCandles[activeTF] || [])];

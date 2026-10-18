@@ -74,7 +74,7 @@ func LoadConfig() Config {
 
 	if stagingMode {
 		log.Println("[mdengine] *** STAGING MODE — using tickserver WS instead of Angel One ***")
-		c.EnabledTFs = config.ParseTFString(config.GetEnv("ENABLED_TFS", "60,120,180,300,3600"))
+		c.EnabledTFs = config.ParseTFString(config.GetEnv("ENABLED_TFS", "60,120,180,300,600,900,1800,3600"))
 	} else {
 		// Load production config (requires Angel One env vars)
 		cfg := config.Load()

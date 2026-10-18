@@ -3,7 +3,7 @@ import type { ISeriesApi } from 'lightweight-charts';
 import { useSignalStore } from '../../../store/useSignalStore';
 import { useRefusedStore } from '../../../store/useRefusedStore';
 import { buildLiveOrderKey, useLiveOrderStore } from '../../../store/useLiveOrderStore';
-import { IST_OFFSET } from '../../../utils/helpers';
+import { IST_OFFSET, tfBucketSec } from '../../../utils/helpers';
 import { reasonWarnings, sourceLabel, warnLabel } from '../../sr/srFormat';
 import { useSRViewFor } from '../../../store/useSRStore';
 import { useMediaQuery, PHONE_QUERY } from '../../../hooks/useMediaQuery';
@@ -23,8 +23,8 @@ function matchesToken(token: string, exchange: string, selectedToken: string): b
 function bucketTime(ts: string, tfSec: number): number | null {
     const ms = new Date(ts).getTime();
     if (Number.isNaN(ms)) return null;
-    const rawSec = Math.floor(ms / 1000) + IST_OFFSET;
-    return Math.floor(rawSec / tfSec) * tfSec;
+    // Bucket on UTC seconds like the candles, then shift to chart time.
+    return tfBucketSec(Math.floor(ms / 1000), tfSec) + IST_OFFSET;
 }
 
 function sideShort(side: string | undefined): string {

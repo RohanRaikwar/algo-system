@@ -4,7 +4,7 @@
 // container was down are filled for all of them.
 //
 // Only 1m candles exist upstream; every other enabled timeframe is built
-// from them with the live builder's alignment (bucket = ts - ts%tf). 1s
+// from them with the live builder's alignment (model.TFBucket). 1s
 // candles cannot be backfilled. Rows already in the database always win
 // (INSERT OR IGNORE): the live feed is never overwritten.
 package backfill
@@ -22,6 +22,7 @@ import (
 
 	"trading-systemv1/internal/archiver"
 	"trading-systemv1/internal/markethours"
+	"trading-systemv1/internal/model"
 	"trading-systemv1/internal/underlying"
 )
 
@@ -304,13 +305,13 @@ type tfCandle struct {
 }
 
 // aggregate builds tf-second bars from sorted-or-not 1m bars, aligned like
-// the live builder (bucket = ts - ts%tf).
+// the live builder (model.TFBucket).
 func aggregate(bars []candle, tf int64) []tfCandle {
 	sorted := append([]candle(nil), bars...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ts < sorted[j].ts })
 	var out []tfCandle
 	for _, c := range sorted {
-		b := c.ts - c.ts%tf
+		b := model.TFBucket(c.ts, tf)
 		if n := len(out); n > 0 && out[n-1].ts == b {
 			o := &out[n-1]
 			o.high = max(o.high, c.high)

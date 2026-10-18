@@ -106,6 +106,16 @@ func paperTarget(c strategy.Nifty50SRConfig, name string, live []string) strateg
 	return c
 }
 
+// extraQty is the signal quantity of an extra underlying's SR strategy:
+// lots × its own lot size (SENSEX 20, <KEY>_LOT_SIZE), not STRAT_QTY,
+// which is NIFTY's. The executor sizes the paper trade the same way.
+func extraQty(lots int64, p underlying.Profile) int64 {
+	if lots <= 0 {
+		lots = 1
+	}
+	return lots * int64(p.LotFallback)
+}
+
 // buildSRExtras creates one SR instance per extra underlying from NIFTY's
 // config. The strike step comes from the instrument master when it is
 // loaded.
@@ -118,7 +128,7 @@ func (svc *Service) buildSRExtras(base strategy.Nifty50SRConfig) []*srExtra {
 			p.StrikeStep = step
 		}
 		c := srExtraConfig(base, p)
-		ex := &srExtra{prof: p, strat: strategy.NewNifty50SR(svc.cfg.Qty, paperTarget(c, p.StrategyName, svc.cfg.LiveStrategies))}
+		ex := &srExtra{prof: p, strat: strategy.NewNifty50SR(extraQty(svc.cfg.LiveLots, p), paperTarget(c, p.StrategyName, svc.cfg.LiveStrategies))}
 		ex.picker = instruments.NewStrikePickerFor(nil, p)
 		ex.strat.SetExpiry(ex.picker.NextExpiry(now))
 		svc.srExtras = append(svc.srExtras, ex)
