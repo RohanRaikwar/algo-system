@@ -530,7 +530,7 @@ func (r *Reader) Subscribe1sForPeek(ctx context.Context, tfs []int, tokens []str
 			ts := c.TS.Unix()
 			for i, tf := range tfs {
 				tf64 := int64(tf)
-				bucket := ts - (ts % tf64)
+				bucket := model.TFBucket(ts, tf64)
 				// String concat instead of fmt.Sprintf
 				key := tfStrs[i] + ":" + c.Exchange + ":" + c.Token
 

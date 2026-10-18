@@ -12,6 +12,7 @@ import (
 	"trading-systemv1/internal/instruments"
 	"trading-systemv1/internal/orderexec"
 	"trading-systemv1/internal/strategy"
+	"trading-systemv1/internal/underlying"
 )
 
 // fakeExtraRes resolves SENSEX contracts as "SX<strike><opt>" with token
@@ -230,5 +231,19 @@ func TestExtraGreeksSource_SENSEXIsLocal(t *testing.T) {
 	ex.prof.BrokerGreeks = true
 	if _, err := svc.extraGreeksSource(ex); err == nil {
 		t.Fatal("broker greeks without a session accepted")
+	}
+}
+
+func TestExtraQtyUsesOwnLotSize(t *testing.T) {
+	t.Setenv("SENSEX_LOT_SIZE", "")
+	p := underlying.Get("SENSEX")
+	if got := extraQty(1, p); got != 20 {
+		t.Fatalf("SENSEX 1 lot = %d, want 20", got)
+	}
+	if got := extraQty(2, p); got != 40 {
+		t.Fatalf("SENSEX 2 lots = %d, want 40", got)
+	}
+	if got := extraQty(0, p); got != 20 {
+		t.Fatalf("unset lots = %d, want 20", got)
 	}
 }

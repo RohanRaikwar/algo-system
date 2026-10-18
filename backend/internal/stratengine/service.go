@@ -18,6 +18,7 @@ import (
 	"trading-systemv1/internal/notification"
 	"trading-systemv1/internal/optionpicker"
 	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/pnlstore"
 	"trading-systemv1/internal/portfolio"
 	redisstore "trading-systemv1/internal/store/redis"
 	"trading-systemv1/internal/strategy"
@@ -48,6 +49,8 @@ type Service struct {
 	redisReader   *redisstore.Reader
 	redisWriter   *redisstore.Writer
 	journal       *strategy.SignalJournal
+	pnlLedger     *pnlLedger      // closed-trade ledger (pnl_ledger.go); nil when off
+	pnlStore      *pnlstore.Store // its SQLite store
 	sweeps        *sweepWriter // SR liquidity sweeps into journal (sweeps.go)
 	notifier      notification.Notifier
 	orderExecutor *orderexec.OrderExecutor
@@ -228,7 +231,8 @@ func (svc *Service) buildStrategies(cfg Config) {
 	srCfg.SupportStopZonePts = cfg.SRSupportStopZonePts
 	srCfg.SweepEnabled = cfg.SRSweepMinWickPts > 0
 	srCfg.SweepMinWickPts, srCfg.SweepCooldownMin, srCfg.SweepWarnMin = cfg.SRSweepMinWickPts, cfg.SRSweepCooldownMin, cfg.SRSweepWarnMin
-	svc.srStrategy = strategy.NewNifty50SR(cfg.Qty, srCfg)
+	srCfg.FNOTargetPct = cfg.FNOTargetPct
+	svc.srStrategy = strategy.NewNifty50SR(cfg.Qty, paperTarget(srCfg, "NIFTY50_SR", cfg.LiveStrategies))
 	svc.srStrategy.SetExpiry(instruments.NewStrikePicker(nil).NextExpiry(time.Now()))
 
 	svc.syncStrategyFNOTokens(cfg.CallFNOToken, cfg.PutFNOToken)
@@ -315,6 +319,7 @@ func (svc *Service) buildExecution(cfg Config) {
 	// P&L source for the executor's daily max-loss gate on real entries.
 	svc.orderExecutor.SetPnLTracker(svc.pnlTracker)
 	svc.attachOrderJournal()
+	svc.attachPNLLedger()
 
 	// ── Global option picker (off | shadow | on) ──
 	svc.picker = svc.newPicker()
@@ -405,6 +410,11 @@ func (svc *Service) Run(ctx context.Context) error {
 	// ── exitwatch exit requests (cmd:exitwatch:exit) for ExitWatchAuto ──
 	if len(svc.cfg.ExitWatchAuto) > 0 {
 		go svc.exitRequestLoop(ctx)
+	}
+
+	// ── Dashboard position commands (cmd:position): paper SL/target/exit ──
+	if svc.cfg.SREnabled {
+		go svc.positionCommandLoop(ctx)
 	}
 
 	// ── Unified exit layer: minute evaluation + config reload ──

@@ -37,7 +37,7 @@ func main() {
 	var (
 		in             = flag.String("in", "-", "input JSONL of model.Tick (- = stdin)")
 		outPath        = flag.String("out", "-", "output file (- = stdout)")
-		tfsFlag        = flag.String("tfs", "60,120,180,300,3600", "comma-separated TF seconds (mdengine ENABLED_TFS default)")
+		tfsFlag        = flag.String("tfs", "60,120,180,300,600,900,1800,3600", "comma-separated TF seconds (mdengine ENABLED_TFS default)")
 		speed          = flag.Float64("speed", 0, "playback speed: 0 = as fast as possible, 1 = real time, 10 = 10x")
 		maxGap         = flag.Duration("max-gap", 5*time.Second, "cap on a single paced sleep before scaling (speed>0 only)")
 		closeGate      = flag.Bool("market-close-gate", false, "enable the aggregator's 15:30 IST close gate (true in mdengine production)")

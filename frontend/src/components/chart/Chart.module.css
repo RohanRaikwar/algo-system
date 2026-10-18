@@ -189,6 +189,20 @@
     pointer-events: none;
 }
 
+/* Note after dragging the SR stop/target line */
+.dragNote {
+    position: absolute;
+    right: 72px;
+    bottom: 32px;
+    z-index: 6;
+    padding: 3px 8px;
+    border-radius: var(--sg-r-ctrl);
+    background: var(--sg-raised);
+    color: var(--sg-text-2);
+    font-size: 0.75rem;
+    pointer-events: none;
+}
+
 /* ── Overlay column (top-left of plot): legend, then SR situation ── */
 
 .overlays {

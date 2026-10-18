@@ -396,6 +396,39 @@
 
 .sl-kind.trail { color: var(--sg-info); background: var(--sg-info-soft); }
 .sl-kind.hard { color: var(--sg-warn); background: var(--sg-warn-soft); }
+.sl-kind.manual { color: var(--sg-accent); background: var(--sg-accent-soft); }
+
+/* ── Position controls (SL / TGT / Exit) ───────────────────── */
+
+.pos-controls, .pos-edit { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.pos-btn {
+    padding: 2px 8px;
+    border: 1px solid var(--sg-line);
+    border-radius: var(--sg-r-ctrl);
+    background: var(--sg-raised);
+    color: var(--sg-text);
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+.pos-btn:hover { background: var(--sg-hover); }
+.pos-btn:focus-visible { outline: 2px solid var(--sg-ring); outline-offset: 1px; }
+.pos-btn.danger { color: var(--sg-loss); border-color: var(--sg-loss-soft); }
+.pos-btn.ghost { background: transparent; color: var(--sg-muted); }
+.pos-edit label { display: inline-flex; align-items: center; gap: 3px; font-size: 0.7rem; color: var(--sg-muted); }
+.pos-edit input {
+    width: 76px;
+    padding: 2px 4px;
+    border: 1px solid var(--sg-line);
+    border-radius: var(--sg-r-ctrl);
+    background: var(--sg-surface);
+    color: var(--sg-text);
+    font: inherit;
+    font-size: 0.74rem;
+}
+.pos-note { font-size: 0.68rem; color: var(--sg-muted); }
+.pos-readonly { font-size: 0.68rem; color: var(--sg-faint); }
+.lvl-sub { display: block; font-size: 0.68rem; color: var(--sg-muted); }
 
 /* ── Badges (pill) ─────────────────────────────────────────── */
 

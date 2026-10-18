@@ -64,6 +64,7 @@ type Config struct {
 	GTTStopLossPaise    int64    // GTT stop distance below entry; 0 = no SL GTT
 	GTTTargetBps        int64    // GTT target above entry in bps; 0 = no target GTT
 	OrderJournalPath    string   // SQLite order journal; real entries need it when live
+	PNLDBPath           string   // SQLite closed-trade ledger (pnlstore); "" = off
 	ProtectionMode      string   // "sl" resting stop order (default) or "gtt"
 	ExecMode            string   // "chase" marketable LIMIT (default) or "market"
 	ChaseTicks          int64    // ticks through the touch
@@ -121,6 +122,7 @@ type Config struct {
 	SRSweepMinWickPts  int64
 	SRSweepCooldownMin int
 	SRSweepWarnMin     int
+	FNOTargetPct       int64 // paper premium target above entry, % (0 = none)
 	// SR support stop: at breakeven the stop goes under the nearest strong
 	// support (≥ SRSupportStopTouches touches) by SRSupportStopZonePts
 	// instead of to entry. off | breakeven | trail.
@@ -200,6 +202,7 @@ func LoadConfig() Config {
 		GTTStopLossPaise:    config.GetEnvInt64("STRAT_GTT_SL_PAISE", 1000),
 		GTTTargetBps:        config.GetEnvInt64("STRAT_GTT_TARGET_BPS", 0),
 		OrderJournalPath:    config.GetEnv("STRAT_ORDER_JOURNAL_PATH", "data/orders.db"),
+		PNLDBPath:           config.GetEnv("STRAT_PNL_DB_PATH", "data/pnl.db"),
 		ProtectionMode:      config.GetEnv("STRAT_PROTECTION", "sl"),
 		ExecMode:            config.GetEnv("STRAT_EXEC_MODE", "chase"),
 		ChaseTicks:          config.GetEnvInt64("STRAT_CHASE_TICKS", 2),
@@ -240,6 +243,7 @@ func LoadConfig() Config {
 		SRSweepMinWickPts:     config.GetEnvInt64("STRAT_SR_SWEEP_MIN_WICK_PAISE", 500),
 		SRSweepCooldownMin:    config.GetEnvInt("STRAT_SR_SWEEP_COOLDOWN_MIN", 15),
 		SRSweepWarnMin:        config.GetEnvInt("STRAT_SR_SWEEP_WARN_MIN", 5),
+		FNOTargetPct:          config.GetEnvInt64("STRAT_FNO_TARGET_PCT", 40),
 		SRSupportStopMode:     config.GetEnv("STRAT_SR_SUPPORT_STOP", "breakeven"),
 		SRSupportStopTouches:  config.GetEnvInt("STRAT_SR_SUPPORT_STOP_TOUCHES", 3),
 		SRSupportStopZonePts:  config.GetEnvInt64("STRAT_SR_SUPPORT_STOP_ZONE_PAISE", 300),

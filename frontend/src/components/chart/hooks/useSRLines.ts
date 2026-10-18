@@ -21,12 +21,18 @@ const C = {
     stop: '#f0616d',
 };
 
+/** Stop/target held by a drag (paise) until the strategy's view catches up. */
+export interface LevelOverride {
+    stop?: number;
+    target?: number;
+}
+
 /**
  * Price lines for NIFTY50_SR's view (pure, for testing): the 3 nearest
  * supports (S1 closest) and resistances (R1 closest) around price, today's
  * high/low/open, the previous day's high/low, and SR's open position.
  */
-export function srLines(v: SRView | null, price: number | null): PriceLine[] {
+export function srLines(v: SRView | null, price: number | null, drag: LevelOverride | null = null): PriceLine[] {
     if (!v) return [];
     const out: PriceLine[] = [];
     const add = (paise: number | undefined, color: string, style: LineStyle, title: string) => {
@@ -41,9 +47,10 @@ export function srLines(v: SRView | null, price: number | null): PriceLine[] {
     add(v.prev_day_high, C.prevDay, LineStyle.Dotted, 'PDH');
     add(v.prev_day_low, C.prevDay, LineStyle.Dotted, 'PDL');
     if (v.side !== 'NONE') {
+        const tag = v.manual ? ' manual' : '';
         add(v.entry, C.entry, LineStyle.Solid, `SR ${v.side}`);
-        add(v.stop, C.stop, LineStyle.Dashed, 'SR stop');
-        add(v.target, C.target, LineStyle.Dashed, 'SR target');
+        add(drag?.stop ?? v.stop, C.stop, drag?.stop ? LineStyle.Solid : LineStyle.Dashed, `SR stop${tag}`);
+        add(drag?.target ?? v.target, C.target, drag?.target ? LineStyle.Solid : LineStyle.Dashed, `SR target${tag}`);
     }
     return out;
 }
@@ -54,6 +61,7 @@ export function useSRLines(
     selectedToken: string | null,
     price: number | null,
     enabled: boolean,
+    drag: LevelOverride | null = null,
 ) {
     const view = useSRViewFor(selectedToken);
     const drawn = useRef<IPriceLine[]>([]);
@@ -62,7 +70,7 @@ export function useSRLines(
     useEffect(() => {
         const series = candleSeries.current;
         if (!series) return;
-        const lines = enabled && view && selectedToken === view.key ? srLines(view, price) : [];
+        const lines = enabled && view && selectedToken === view.key ? srLines(view, price, drag) : [];
         const fp = lines.map(l => `${l.title}:${l.price}`).join('|');
         if (fp === fingerprint.current) return;
         fingerprint.current = fp;
@@ -70,7 +78,7 @@ export function useSRLines(
         drawn.current = lines.map(l => series.createPriceLine({
             price: l.price, color: l.color, lineWidth: 1, lineStyle: l.style, axisLabelVisible: true, title: l.title,
         }));
-    }, [candleSeries, view, selectedToken, price, enabled]);
+    }, [candleSeries, view, selectedToken, price, enabled, drag]);
 
     useEffect(() => () => {
         const series = candleSeries.current;

@@ -29,7 +29,7 @@ type Config struct {
 
 // LoadConfig reads all environment variables and returns a Config.
 func LoadConfig() Config {
-	enabledTFs := config.ParseTFString(config.GetEnv("ENABLED_TFS", "60,120,180,300,3600"))
+	enabledTFs := config.ParseTFString(config.GetEnv("ENABLED_TFS", "60,120,180,300,600,900,1800,3600"))
 	indConfigs := BuildIndicatorConfigs(enabledTFs)
 	tokenKeys := config.ParseSubscribeTokenKeys(config.IndexSubscribeTokens())
 

@@ -38,7 +38,7 @@ func main() {
 	redisAddr := getEnv("REDIS_ADDR", "localhost:6379")
 	redisPassword := getEnv("REDIS_PASSWORD", "")
 	listenAddr := getEnv("GATEWAY_ADDR", ":9090")
-	enabledTFs := getEnv("ENABLED_TFS", "60,120,180,300,3600")
+	enabledTFs := getEnv("ENABLED_TFS", "60,120,180,300,600,900,1800,3600")
 	subscribeTokens := config.IndexSubscribeTokens()
 
 	// Connect to Redis

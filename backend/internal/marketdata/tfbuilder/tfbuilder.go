@@ -16,7 +16,7 @@ import (
 
 // tfState holds the forming candle state for one (token, TF) pair.
 type tfState struct {
-	bucket  int64 // bucket start = ts - ts%tf (Unix seconds)
+	bucket  int64 // bucket start = model.TFBucket(ts, tf) (Unix seconds)
 	candle  model.TFCandle
 	started bool
 }
@@ -178,7 +178,7 @@ func (b *Builder) process(c model.Candle, outCh chan<- model.TFCandle) {
 
 	for i, tf := range b.tfs {
 		tf64 := int64(tf)
-		bucket := ts - (ts % tf64) // align to TF boundary
+		bucket := model.TFBucket(ts, tf64) // align to TF boundary (09:15 for 10m/30m/1h)
 
 		st, exists := b.states[i][key]
 

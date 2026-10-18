@@ -7,4 +7,10 @@ type LiveFNOPosition struct {
 	Token      string
 	EntryPrice int64
 	BestPrice  int64
+
+	ManualSL    int64 // premium stop set by hand, 0 = automatic
+	Target      int64 // premium target, 0 = none
+	IndexStop   int64
+	IndexTarget int64
+	Manual      bool // index levels moved by hand
 }

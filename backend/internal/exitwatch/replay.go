@@ -13,7 +13,7 @@ func OurSRLevel(price int64, source string, touches int) Level {
 
 // PreRejectReplay runs the pre-target rejection rule over closed 1m bars,
 // for the backtest. It keeps its own level book: 1m candles, 5m/1h candles
-// aggregated from them on the live TF boundaries (bucket = ts - ts%tf),
+// aggregated from them on the live TF boundaries (model.TFBucket),
 // and our SR levels set by the caller. Live, the same rule runs per tick
 // inside the Tracker.
 type PreRejectReplay struct {
@@ -46,7 +46,7 @@ func (p *PreRejectReplay) OnBar(c model.TFCandle) {
 	p.book.OnCandle(c)
 	for _, tf := range htfStreamTFs {
 		ts := c.TS.Unix()
-		start := time.Unix(ts-ts%int64(tf), 0).In(c.TS.Location())
+		start := time.Unix(model.TFBucket(ts, int64(tf)), 0).In(c.TS.Location())
 		f := p.agg[tf]
 		if f != nil && !f.TS.Equal(start) {
 			p.book.OnHTFCandle(*f)

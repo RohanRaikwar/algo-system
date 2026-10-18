@@ -49,6 +49,22 @@ export function entryKey(entry: { name: string; tf: number }): string {
 
 export const IST_OFFSET = 5.5 * 3600; // +5:30 IST offset in seconds
 
+/** 09:15 IST in seconds after 00:00 UTC. */
+const SESSION_OPEN_OF_DAY = 3 * 3600 + 45 * 60;
+/** TFs whose bars start at the 09:15 open (backend model.TFBucket). */
+const SESSION_ALIGNED_TFS = new Set([600, 1800, 3600]);
+
+/**
+ * Start (Unix seconds, UTC) of the tf-second bar holding sec — the same
+ * rule as the backend's model.TFBucket: 10m/30m/1h start at 09:15 IST,
+ * every other TF on clock boundaries.
+ */
+export function tfBucketSec(sec: number, tf: number): number {
+    if (tf <= 0) return sec;
+    const off = SESSION_ALIGNED_TFS.has(tf) ? SESSION_OPEN_OF_DAY % tf : 0;
+    return sec - ((((sec - off) % tf) + tf) % tf);
+}
+
 export function tfLabel(tf: number): string {
     if (tf < 60) return tf + 's';
     if (tf < 3600) return (tf / 60) + 'm';

@@ -2,7 +2,8 @@
 // from them) for every underlying from Angel One's historical API, into the
 // candles database. docker-entrypoint.sh runs it before the services start,
 // so a new index (SENSEX) begins with its past days and downtime gaps are
-// closed. It always exits 0: missing history must not stop trading.
+// closed. It also builds newly enabled TFs from stored 1m rows. It always
+// exits 0: missing history must not stop trading.
 //
 //	BACKFILL_DAYS=30 go run ./cmd/backfill
 package main
@@ -33,15 +34,6 @@ func main() {
 		log.Println("[backfill] disabled (BACKFILL_ENABLED=false)")
 		return
 	}
-	if strings.EqualFold(config.GetEnv("STAGING_MODE", "false"), "true") {
-		log.Println("[backfill] staging: simulated feed, nothing to backfill")
-		return
-	}
-	cfg := config.Load()
-	if cfg.AngelAPIKey == "" || cfg.AngelClientCode == "" || cfg.AngelPassword == "" || cfg.AngelTOTPSecret == "" {
-		log.Println("[backfill] no Angel credentials; skipped")
-		return
-	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -64,6 +56,30 @@ func main() {
 	defer db.Close()
 	db.SetMaxOpenConns(1)
 
+	bcfg := backfill.Config{
+		Days:  config.GetEnvInt("BACKFILL_DAYS", 30),
+		TFs:   config.ParseTFString(config.GetEnv("ENABLED_TFS", "60,120,180,300,600,900,1800,3600")),
+		Delay: time.Second, // getCandleData allows 3/s; other services share the account
+	}
+	fetch(ctx, bcfg, db)
+
+	// TFs added to ENABLED_TFS get their past days from the stored 1m rows.
+	if _, err := backfill.Rebuild(ctx, bcfg, db); err != nil {
+		log.Printf("[backfill] ❌ rebuild: %v", err)
+	}
+}
+
+// fetch fills missing 1m candles from Angel (production only).
+func fetch(ctx context.Context, bcfg backfill.Config, db *sql.DB) {
+	if strings.EqualFold(config.GetEnv("STAGING_MODE", "false"), "true") {
+		log.Println("[backfill] staging: simulated feed, nothing to fetch")
+		return
+	}
+	cfg := config.Load()
+	if cfg.AngelAPIKey == "" || cfg.AngelClientCode == "" || cfg.AngelPassword == "" || cfg.AngelTOTPSecret == "" {
+		log.Println("[backfill] no Angel credentials; fetch skipped")
+		return
+	}
 	code, err := totp.GenerateCode(cfg.AngelTOTPSecret, time.Now())
 	if err != nil {
 		log.Printf("[backfill] ❌ TOTP: %v", err)
@@ -73,12 +89,6 @@ func main() {
 	if _, err := sc.GenerateSession(cfg.AngelClientCode, cfg.AngelPassword, code); err != nil {
 		log.Printf("[backfill] ❌ Angel login: %v", err)
 		return
-	}
-
-	bcfg := backfill.Config{
-		Days:  config.GetEnvInt("BACKFILL_DAYS", 30),
-		TFs:   config.ParseTFString(config.GetEnv("ENABLED_TFS", "60,120,180,300,3600")),
-		Delay: time.Second, // getCandleData allows 3/s; other services share the account
 	}
 	if _, err := backfill.Run(ctx, bcfg, sc, db); err != nil {
 		log.Printf("[backfill] ❌ %v", err)

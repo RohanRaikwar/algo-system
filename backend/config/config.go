@@ -46,7 +46,7 @@ func Load() *Config {
 		SubscribeTokens: IndexSubscribeTokens(),
 
 		// Default TFs: 1m, 5m, 15m
-		EnabledTFs: GetEnv("ENABLED_TFS", "60,120,180,300,3600"),
+		EnabledTFs: GetEnv("ENABLED_TFS", "60,120,180,300,600,900,1800,3600"),
 	}
 }
 

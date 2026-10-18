@@ -80,6 +80,11 @@ const (
 	// (stratengine acts on them for the strategies it allows).
 	ExitRequestChannel = "cmd:exitwatch:exit"
 
+	// PositionCommandChannel carries the dashboard's hand edits of an open
+	// paper position: move its stop/target or exit it (gateway →
+	// stratengine).
+	PositionCommandChannel = "cmd:position"
+
 	// TradingConfigChannel announces a dashboard config change stored in
 	// TradingConfigKey (gateway → stratengine).
 	TradingConfigChannel = "cmd:config_update"

@@ -137,6 +137,10 @@ export interface DailyCompletedOrder {
     realized_pnl: number;
     entry_time: string;
     exit_time: string;
+    /** Exit signal reason (P&L ledger rows only) */
+    exit_reason?: string;
+    /** Broker fill, not paper (P&L ledger rows only) */
+    real?: boolean;
 }
 
 export interface DailyOrdersGroup {
@@ -305,6 +309,31 @@ export async function saveTradingConfig(cfg: StoredTradingConfig): Promise<void>
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(cfg),
+    });
+    if (!res.ok) throw new Error(await errorText(res));
+}
+
+/**
+ * Dashboard edit of an open paper position (POST /api/positions/command).
+ * Levels are paise; omitted levels stay as they are, fno_target -1 removes
+ * the premium target. stratengine refuses real-order strategies.
+ */
+export interface PositionCommand {
+    strategy: string;
+    side: string;
+    fno_token?: string;
+    action: 'set_levels' | 'exit';
+    index_stop?: number;
+    index_target?: number;
+    fno_sl?: number;
+    fno_target?: number;
+}
+
+export async function postPositionCommand(cmd: PositionCommand): Promise<void> {
+    const res = await fetch(`${BASE}/api/positions/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cmd),
     });
     if (!res.ok) throw new Error(await errorText(res));
 }
