@@ -146,6 +146,7 @@ type Nifty50SRConfig struct {
 	FNOHardSLPct     int64
 	FNOTrailStartPct int64
 	FNOTrailSLPct    int64
+	FNOTargetPct     int64 // premium target above entry, % (0 = none; stratengine sets it)
 
 	StrikeStep int64
 
@@ -268,6 +269,12 @@ type nifty50SRState struct {
 	FNOToken      string
 	FNOEntryPrice int64
 	FNOBestPrice  int64
+	FNOLastPrice  int64 // last option LTP (not snapshotted)
+
+	// ── Set by hand (dashboard) ──
+	ManualLevels bool  // index stop/target moved by hand: no auto management
+	FNOManualSL  int64 // premium stop set by hand; replaces hard/trail
+	FNOTarget    int64 // premium target, 0 = none
 
 	// ── Armed breakout awaiting its retest ──
 	PendingSide  PositionSide // SideCall = broke up, SidePut = broke down
@@ -322,6 +329,9 @@ type nifty50SRSnapshot struct {
 	FNOToken      string       `json:"fno_token"`
 	FNOEntryPrice int64        `json:"fno_entry_price"`
 	FNOBestPrice  int64        `json:"fno_best_price"`
+	ManualLevels  bool         `json:"manual_levels,omitempty"`
+	FNOManualSL   int64        `json:"fno_manual_sl,omitempty"`
+	FNOTarget     int64        `json:"fno_target,omitempty"`
 
 	PendingSide  PositionSide `json:"pending_side"`
 	PendingLevel int64        `json:"pending_level"`
@@ -355,6 +365,7 @@ func snapshotNifty50SR(key string, s *nifty50SRState) nifty50SRSnapshot {
 		SupportLvl: s.SupportLvl, BreakBars: s.BreakBars,
 		EntryTS: s.EntryTS, MaxGain: s.MaxGain,
 		Strike: s.Strike, FNOToken: s.FNOToken, FNOEntryPrice: s.FNOEntryPrice, FNOBestPrice: s.FNOBestPrice,
+		ManualLevels: s.ManualLevels, FNOManualSL: s.FNOManualSL, FNOTarget: s.FNOTarget,
 		PendingSide: s.PendingSide, PendingLevel: s.PendingLevel, PendingLeft: s.PendingLeft,
 		TradeDay: s.TradeDay, TradesToday: s.TradesToday, ConsecLosses: s.ConsecLosses,
 		DayPnLPts: s.DayPnLPts, LastSide: s.LastSide, LastADX: s.LastADX, CooldownLeft: s.CooldownLeft, LastClose: s.LastClose,
@@ -370,6 +381,7 @@ func restoreNifty50SR(cfg Nifty50SRConfig, snap nifty50SRSnapshot) *nifty50SRSta
 		SupportLvl: snap.SupportLvl, BreakBars: snap.BreakBars,
 		EntryTS: snap.EntryTS, MaxGain: snap.MaxGain,
 		Strike: snap.Strike, FNOToken: snap.FNOToken, FNOEntryPrice: snap.FNOEntryPrice, FNOBestPrice: snap.FNOBestPrice,
+		ManualLevels: snap.ManualLevels, FNOManualSL: snap.FNOManualSL, FNOTarget: snap.FNOTarget,
 		PendingSide: snap.PendingSide, PendingLevel: snap.PendingLevel, PendingLeft: snap.PendingLeft,
 		TradeDay: snap.TradeDay, TradesToday: snap.TradesToday, ConsecLosses: snap.ConsecLosses,
 		DayPnLPts: snap.DayPnLPts, LastSide: snap.LastSide, LastADX: snap.LastADX, CooldownLeft: snap.CooldownLeft, LastClose: snap.LastClose,

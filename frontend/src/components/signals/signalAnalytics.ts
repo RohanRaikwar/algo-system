@@ -17,6 +17,17 @@ export interface OpenOrder {
     short?: boolean;
     /** Traded option, e.g. NIFTY06OCT2622500PE */
     fnoSymbol?: string;
+    /** Option token held (for dashboard commands) */
+    fnoToken?: string;
+    /** Premium target, rupees */
+    targetPrice?: number | null;
+    /** Index stop / target, rupees */
+    indexStop?: number | null;
+    indexTarget?: number | null;
+    /** Index levels moved by hand */
+    manual?: boolean;
+    /** Real-order strategy: no dashboard edits */
+    real?: boolean;
 }
 
 export interface CompletedEvent {
@@ -108,6 +119,18 @@ function liveOrderKey(strategy: string, side: string, leg?: string): string {
     return leg ? `${base}|${leg}` : base;
 }
 
+const paiseToRupees = (p?: number) => (p && p > 0 ? p / 100 : null);
+
+/** Copies the live payload's exit levels and flags onto an open order. */
+function applyLiveLevels(order: OpenOrder, live: LiveOrderStatePayload) {
+    order.fnoToken = live.fno_token || order.fnoToken;
+    order.targetPrice = paiseToRupees(live.target_price);
+    order.indexStop = paiseToRupees(live.index_stop);
+    order.indexTarget = paiseToRupees(live.index_target);
+    order.manual = live.manual === true;
+    order.real = live.real === true;
+}
+
 export function buildOpenOrders(
     signals: SignalRecord[],
     liveOrdersByKey: Record<string, LiveOrderStatePayload> = {},
@@ -177,6 +200,7 @@ export function buildOpenOrders(
         if (live.stoploss_kind) {
             order.stoplossKind = live.stoploss_kind;
         }
+        applyLiveLevels(order, live);
     }
 
     // Return newest-open first

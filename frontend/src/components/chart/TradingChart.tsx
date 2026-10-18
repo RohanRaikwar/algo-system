@@ -12,6 +12,7 @@ import { useChartLazyLoad } from './hooks/useChartLazyLoad';
 import { useChartMarkers } from './hooks/useChartMarkers';
 import { useSRLines } from './hooks/useSRLines';
 import { useSRBox } from './hooks/useSRBox';
+import { useTradeLineDrag } from './hooks/useTradeLineDrag';
 import { SRSituationCard } from './SRSituationCard';
 import { ChartLegend } from './ChartLegend';
 import { StatusDot } from '../layout/StatusDot';
@@ -113,7 +114,8 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
     useChartLazyLoad(chartApi, selectedTF, selectedToken);
     useChartMarkers(candleSeries, selectedToken, selectedTF);
     const lastPaise = quote ? Math.round(quote.price * 100) : null;
-    useSRLines(candleSeries, selectedToken, lastPaise, srOverlay);
+    const lineDrag = useTradeLineDrag(chartApi, candleSeries, chartContainer, selectedToken, srOverlay);
+    useSRLines(candleSeries, selectedToken, lastPaise, srOverlay, lineDrag.override);
     useSRBox(candleSeries, selectedToken, srOverlay);
 
     const tone = !quote || quote.change === 0 ? '' : quote.change > 0 ? styles.up : styles.down;
@@ -239,6 +241,7 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
 
             <div className={styles.plot}>
                 <div ref={chartContainer} className={styles.chartContainer} />
+                {lineDrag.note && <div className={styles.dragNote} role="status">{lineDrag.note}</div>}
 
                 {!hasCandles && (
                     <div className={styles.emptyState}>

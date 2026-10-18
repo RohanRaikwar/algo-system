@@ -69,6 +69,15 @@ export interface LiveOrderStatePayload {
     best_fno_price?: number;
     stoploss_price?: number;
     stoploss_kind?: string;
+    /** Premium target, paise */
+    target_price?: number;
+    /** Index stop / target, paise */
+    index_stop?: number;
+    index_target?: number;
+    /** Index levels moved by hand */
+    manual?: boolean;
+    /** Real-order strategy: read-only on the dashboard */
+    real?: boolean;
     leg?: string;
     strike?: number;
     short?: boolean;

@@ -86,7 +86,11 @@ func (s *Nifty50SR) SetFNOEntryPrice(price int64) {
 	defer s.mu.Unlock()
 	for _, st := range s.instruments {
 		if st.Side != SideNone {
-			st.FNOEntryPrice, st.FNOBestPrice = price, price
+			st.FNOEntryPrice, st.FNOBestPrice, st.FNOLastPrice = price, price, price
+			st.FNOManualSL, st.FNOTarget = 0, 0
+			if s.cfg.FNOTargetPct > 0 {
+				st.FNOTarget = price * (100 + s.cfg.FNOTargetPct) / 100
+			}
 		}
 	}
 }
@@ -135,7 +139,8 @@ func (s *Nifty50SR) CurrentFNOPosition() *LiveFNOPosition {
 		if token == "" {
 			return nil
 		}
-		return &LiveFNOPosition{Side: st.Side, Token: token, EntryPrice: st.FNOEntryPrice, BestPrice: st.FNOBestPrice}
+		return &LiveFNOPosition{Side: st.Side, Token: token, EntryPrice: st.FNOEntryPrice, BestPrice: st.FNOBestPrice,
+			ManualSL: st.FNOManualSL, Target: st.FNOTarget, IndexStop: st.StopLevel, IndexTarget: st.TargetLevel, Manual: st.ManualLevels}
 	}
 	return nil
 }
@@ -819,7 +824,8 @@ func (s *Nifty50SR) open(candle model.TFCandle, st *nifty50SRState, ss SRState, 
 	st.Breakeven, st.SupportLvl, st.BreakBars = false, 0, 0
 	st.EntryTS, st.MaxGain = candle.TS, 0
 	st.LastSide, st.LastADX = side, ss.Range.ADX
-	st.FNOToken, st.FNOEntryPrice, st.FNOBestPrice = "", 0, 0
+	st.FNOToken, st.FNOEntryPrice, st.FNOBestPrice, st.FNOLastPrice = "", 0, 0, 0
+	st.ManualLevels, st.FNOManualSL, st.FNOTarget = false, 0, 0
 	st.Strike = atmStrike(entry, s.cfg.StrikeStep)
 	st.TradesToday++
 
@@ -939,6 +945,9 @@ func (s *Nifty50SR) evaluateExit(candle model.TFCandle, st *nifty50SRState) *Sig
 	if gain > st.MaxGain {
 		st.MaxGain = gain
 	}
+	if st.ManualLevels {
+		return s.manualExit(candle, st, close, sign)
+	}
 	support := s.supportStopOn()
 	switch {
 	case !st.Breakeven && s.cfg.BreakevenAtR > 0 && gain*100 >= st.Risk*s.cfg.BreakevenAtR:
@@ -971,6 +980,18 @@ func (s *Nifty50SR) evaluateExit(candle model.TFCandle, st *nifty50SRState) *Sig
 	case s.noProgress(candle, st):
 		return s.exit(candle.Exchange, candle.Token, st, fmt.Sprintf("SR %s NO PROGRESS %dm best=%d need=%d close=%d",
 			st.Side, s.cfg.NoProgressMin, st.MaxGain, st.Risk*s.cfg.NoProgressRPct/100, close))
+	}
+	return nil
+}
+
+// manualExit checks index levels the user set by hand on the 1m close;
+// breakeven, support-stop and no-progress management are off for them.
+func (s *Nifty50SR) manualExit(candle model.TFCandle, st *nifty50SRState, close, sign int64) *Signal {
+	switch {
+	case (close-st.StopLevel)*sign <= 0:
+		return s.exit(candle.Exchange, candle.Token, st, fmt.Sprintf("SR %s STOP stop=%d close=%d manual", st.Side, st.StopLevel, close))
+	case (close-st.TargetLevel)*sign >= 0:
+		return s.exit(candle.Exchange, candle.Token, st, fmt.Sprintf("SR %s TARGET target=%d close=%d manual", st.Side, st.TargetLevel, close))
 	}
 	return nil
 }
@@ -1096,9 +1117,17 @@ func (s *Nifty50SR) checkPremium(key string, tick model.Tick, st *nifty50SRState
 	if price > st.FNOBestPrice {
 		st.FNOBestPrice = price
 	}
+	st.FNOLastPrice = price
 	best := st.FNOBestPrice
 	var reason string
 	switch {
+	case st.FNOTarget > 0 && price >= st.FNOTarget:
+		reason = fmt.Sprintf("SR %s FNO TARGET premium=%d target=%d", st.Side, price, st.FNOTarget)
+	case st.FNOManualSL > 0:
+		if price > st.FNOManualSL {
+			return nil
+		}
+		reason = fmt.Sprintf("SR %s FNO MANUAL SL premium=%d sl=%d", st.Side, price, st.FNOManualSL)
 	case s.cfg.FNOTrailSLPct > 0 && (best-entry)*100 >= entry*s.cfg.FNOTrailStartPct &&
 		(best-price)*100 >= best*s.cfg.FNOTrailSLPct:
 		reason = fmt.Sprintf("SR %s FNO TRAIL SL premium=%d best=%d", st.Side, price, best)
@@ -1152,7 +1181,8 @@ func (s *Nifty50SR) resetPosition(st *nifty50SRState) {
 	st.IndexEntry, st.StopLevel, st.TargetLevel, st.Risk = 0, 0, 0, 0
 	st.Breakeven, st.SupportLvl, st.BreakBars = false, 0, 0
 	st.EntryTS, st.MaxGain = time.Time{}, 0
-	st.Strike, st.FNOToken, st.FNOEntryPrice, st.FNOBestPrice = 0, "", 0, 0
+	st.Strike, st.FNOToken, st.FNOEntryPrice, st.FNOBestPrice, st.FNOLastPrice = 0, "", 0, 0, 0
+	st.ManualLevels, st.FNOManualSL, st.FNOTarget = false, 0, 0
 	st.CooldownLeft = s.cfg.CooldownCandles
 }
 

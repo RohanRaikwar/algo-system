@@ -45,6 +45,11 @@ type liveOrderPayload struct {
 	BestFNOPrice    int64                 `json:"best_fno_price,omitempty"`
 	StoplossPrice   int64                 `json:"stoploss_price,omitempty"`
 	StoplossKind    string                `json:"stoploss_kind,omitempty"`
+	TargetPrice     int64                 `json:"target_price,omitempty"`
+	IndexStop       int64                 `json:"index_stop,omitempty"`
+	IndexTarget     int64                 `json:"index_target,omitempty"`
+	Manual          bool                  `json:"manual,omitempty"` // index levels moved by hand
+	Real            bool                  `json:"real,omitempty"`   // real orders: read-only on the dashboard
 	Leg             string                `json:"leg,omitempty"`
 	Strike          int64                 `json:"strike,omitempty"`
 	Short           bool                  `json:"short,omitempty"`
@@ -221,6 +226,7 @@ func (svc *Service) snapshotLiveOrdersLocked() []liveOrderPayload {
 		if hardSL, trailSL, trailStart, ok := svc.stopConfig(rt.StrategyName); ok && rt.Leg == "" {
 			payload.StoplossPrice, payload.StoplossKind = computeLiveStoploss(rt.Side, rt.EntryPrice, rt.BestPrice, hardSL, trailSL, trailStart)
 		}
+		svc.addPositionLevels(&payload)
 		orders = append(orders, payload)
 	}
 	sort.Slice(orders, func(i, j int) bool {
@@ -255,7 +261,26 @@ func (svc *Service) liveOrderPayload(strategyName string, side strategy.Position
 	if hardSL, trailSL, trailStart, ok := svc.stopConfig(rt.StrategyName); ok {
 		payload.StoplossPrice, payload.StoplossKind = computeLiveStoploss(rt.Side, rt.EntryPrice, rt.BestPrice, hardSL, trailSL, trailStart)
 	}
+	svc.addPositionLevels(&payload)
 	return payload, true
+}
+
+// addPositionLevels adds the strategy's premium target, index stop/target
+// and any hand-set premium stop to a single-leg order.
+func (svc *Service) addPositionLevels(p *liveOrderPayload) {
+	p.Real = svc.isRealStrategy(p.StrategyName)
+	sr := svc.srByName(p.StrategyName)
+	if sr == nil || p.Leg != "" {
+		return
+	}
+	pos := sr.CurrentFNOPosition()
+	if pos == nil || pos.Side != p.Side {
+		return
+	}
+	p.TargetPrice, p.IndexStop, p.IndexTarget, p.Manual = pos.Target, pos.IndexStop, pos.IndexTarget, pos.Manual
+	if pos.ManualSL > 0 {
+		p.StoplossPrice, p.StoplossKind = pos.ManualSL, "MANUAL"
+	}
 }
 
 func (svc *Service) publishLiveOrders(ctx context.Context) {

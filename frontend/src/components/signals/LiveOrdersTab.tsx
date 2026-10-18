@@ -2,6 +2,7 @@ import { PlusCircle } from 'lucide-react';
 import { useStrikeStore } from '../../store/useStrikeStore';
 import { findReversal, useAnalystStore } from '../../store/useAnalystStore';
 import type { OpenOrder } from './signalAnalytics';
+import { PositionControls } from './PositionControls';
 
 interface LiveOrdersTabProps {
     orders: OpenOrder[];
@@ -97,6 +98,18 @@ export function useOrderLivePnL(order: OpenOrder): { currentPrice: number | null
     return { currentPrice, pnl: +diff.toFixed(2) };
 }
 
+/** Index stop and target (chart levels); "manual" once moved by hand. */
+export function IndexLevels({ order }: { order: OpenOrder }) {
+    if (!order.indexStop && !order.indexTarget) return <span className="price-na">—</span>;
+    return (
+        <div className="sl-cell">
+            <span className="lvl-sub">SL {order.indexStop?.toFixed(2) ?? '—'}</span>
+            <span className="lvl-sub">TGT {order.indexTarget?.toFixed(2) ?? '—'}</span>
+            {order.manual && <span className="sl-kind manual">manual</span>}
+        </div>
+    );
+}
+
 function LiveOrderRow({ order }: { order: OpenOrder }) {
     const { currentPrice, pnl } = useOrderLivePnL(order);
     const pnlClass = pnl === null ? '' : pnl > 0 ? 'price-up' : pnl < 0 ? 'price-down' : 'price-flat';
@@ -138,12 +151,19 @@ function LiveOrderRow({ order }: { order: OpenOrder }) {
                     )
                     : <span className="price-na">Pending</span>}
             </td>
+            <td className="price-cell">
+                {order.targetPrice ? `₹${order.targetPrice.toFixed(2)}` : <span className="price-na">—</span>}
+            </td>
+            <td className="price-cell">
+                <IndexLevels order={order} />
+            </td>
             <td className={`price-cell ${pnlClass}`}>
                 {pnl !== null
                     ? `${pnl > 0 ? '+' : pnl < 0 ? '−' : ''}₹${Math.abs(pnl).toFixed(2)}`
                     : '—'}
             </td>
             <td><ExitWatchCell order={order} /></td>
+            <td><PositionControls order={order} currentPrice={currentPrice} /></td>
             <td className="signal-time" title={order.entryTime}>
                 {formatTime(order.entryTime)}
                 <span className="signal-time-sub">
@@ -175,8 +195,11 @@ export function LiveOrdersTab({ orders }: LiveOrdersTabProps) {
                         <th className="num" style={{ width: '100px' }}>Entry</th>
                         <th className="num" style={{ width: '100px' }}>Current</th>
                         <th className="num" style={{ width: '100px' }}>Stop loss</th>
+                        <th className="num" style={{ width: '90px' }}>Target</th>
+                        <th className="num" style={{ width: '110px' }}>Index SL / TGT</th>
                         <th className="num" style={{ width: '100px' }}>P&L</th>
                         <th style={{ width: '170px' }}>Exit watch</th>
+                        <th style={{ width: '170px' }}>Actions</th>
                         <th style={{ width: '120px' }}>Entry time</th>
                     </tr>
                 </thead>

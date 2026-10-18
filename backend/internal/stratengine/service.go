@@ -228,7 +228,8 @@ func (svc *Service) buildStrategies(cfg Config) {
 	srCfg.SupportStopZonePts = cfg.SRSupportStopZonePts
 	srCfg.SweepEnabled = cfg.SRSweepMinWickPts > 0
 	srCfg.SweepMinWickPts, srCfg.SweepCooldownMin, srCfg.SweepWarnMin = cfg.SRSweepMinWickPts, cfg.SRSweepCooldownMin, cfg.SRSweepWarnMin
-	svc.srStrategy = strategy.NewNifty50SR(cfg.Qty, srCfg)
+	srCfg.FNOTargetPct = cfg.FNOTargetPct
+	svc.srStrategy = strategy.NewNifty50SR(cfg.Qty, paperTarget(srCfg, "NIFTY50_SR", cfg.LiveStrategies))
 	svc.srStrategy.SetExpiry(instruments.NewStrikePicker(nil).NextExpiry(time.Now()))
 
 	svc.syncStrategyFNOTokens(cfg.CallFNOToken, cfg.PutFNOToken)
@@ -405,6 +406,11 @@ func (svc *Service) Run(ctx context.Context) error {
 	// ── exitwatch exit requests (cmd:exitwatch:exit) for ExitWatchAuto ──
 	if len(svc.cfg.ExitWatchAuto) > 0 {
 		go svc.exitRequestLoop(ctx)
+	}
+
+	// ── Dashboard position commands (cmd:position): paper SL/target/exit ──
+	if svc.cfg.SREnabled {
+		go svc.positionCommandLoop(ctx)
 	}
 
 	// ── Unified exit layer: minute evaluation + config reload ──

@@ -1,5 +1,6 @@
 import type { OpenOrder } from '../signalAnalytics';
-import { ExitWatchCell, useOrderLivePnL } from '../LiveOrdersTab';
+import { ExitWatchCell, IndexLevels, useOrderLivePnL } from '../LiveOrdersTab';
+import { PositionControls } from '../PositionControls';
 import { formatTime, getSideBadge } from '../signalFormat';
 import styles from './signalsMobile.module.css';
 
@@ -27,11 +28,14 @@ export function PositionCard({ order }: { order: OpenOrder }) {
                     <dt>Stop{order.stoplossKind ? ` · ${order.stoplossKind.toLowerCase()}` : ''}</dt>
                     <dd>{order.stoplossPrice === null ? 'Pending' : rupees(order.stoplossPrice)}</dd>
                 </div>
+                <div><dt>Target</dt><dd>{rupees(order.targetPrice ?? null)}</dd></div>
+                <div><dt>Index</dt><dd><IndexLevels order={order} /></dd></div>
             </dl>
             <div className={styles.posFoot}>
                 <span className={styles.sub}>{order.strategy} · since {formatTime(order.entryTime)}</span>
                 <ExitWatchCell order={order} />
             </div>
+            <PositionControls order={order} currentPrice={currentPrice} />
         </article>
     );
 }

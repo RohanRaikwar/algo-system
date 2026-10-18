@@ -33,6 +33,8 @@ export interface SRView {
     entry?: number;
     stop?: number;
     target?: number;
+    /** Stop/target moved by hand from the dashboard. */
+    manual?: boolean;
     strike?: number;
     block?: string;
     last_reject?: string;

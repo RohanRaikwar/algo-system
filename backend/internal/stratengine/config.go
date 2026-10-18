@@ -121,6 +121,7 @@ type Config struct {
 	SRSweepMinWickPts  int64
 	SRSweepCooldownMin int
 	SRSweepWarnMin     int
+	FNOTargetPct       int64 // paper premium target above entry, % (0 = none)
 	// SR support stop: at breakeven the stop goes under the nearest strong
 	// support (≥ SRSupportStopTouches touches) by SRSupportStopZonePts
 	// instead of to entry. off | breakeven | trail.
@@ -240,6 +241,7 @@ func LoadConfig() Config {
 		SRSweepMinWickPts:     config.GetEnvInt64("STRAT_SR_SWEEP_MIN_WICK_PAISE", 500),
 		SRSweepCooldownMin:    config.GetEnvInt("STRAT_SR_SWEEP_COOLDOWN_MIN", 15),
 		SRSweepWarnMin:        config.GetEnvInt("STRAT_SR_SWEEP_WARN_MIN", 5),
+		FNOTargetPct:          config.GetEnvInt64("STRAT_FNO_TARGET_PCT", 40),
 		SRSupportStopMode:     config.GetEnv("STRAT_SR_SUPPORT_STOP", "breakeven"),
 		SRSupportStopTouches:  config.GetEnvInt("STRAT_SR_SUPPORT_STOP_TOUCHES", 3),
 		SRSupportStopZonePts:  config.GetEnvInt64("STRAT_SR_SUPPORT_STOP_ZONE_PAISE", 300),

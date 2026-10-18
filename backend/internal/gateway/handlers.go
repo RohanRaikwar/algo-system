@@ -562,6 +562,11 @@ func RegisterRoutes(mux *http.ServeMux, hub *Hub, rdb *goredis.Client, ctx conte
 	// REST: trading configuration
 	mux.HandleFunc("/api/trading/config", makeTradingConfigHandler(rdb, ctx))
 
+	// REST: paper position commands (move SL/target, exit) → stratengine
+	mux.HandleFunc("/api/positions/command", makePositionCommandHandler(func(c context.Context, payload string) error {
+		return rdb.Publish(c, model.PositionCommandChannel, payload).Err()
+	}))
+
 	// REST: market status (holiday detection)
 	mux.HandleFunc("/api/market-status", func(w http.ResponseWriter, r *http.Request) {
 		SetCORS(w, r)
