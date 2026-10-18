@@ -100,6 +100,9 @@ func RegisterRoutes(mux *http.ServeMux, hub *Hub, rdb *goredis.Client, ctx conte
 	journalPaths := resolveSignalJournalPaths()
 	logJournalPaths := resolveSignalLogJournalPaths()
 	dailyAnalytics := NewDailyAnalyticsService(journalPaths, nil)
+	if dailyAnalytics.LedgerPath = os.Getenv("STRAT_PNL_DB_PATH"); dailyAnalytics.LedgerPath == "" {
+		dailyAnalytics.LedgerPath = "data/pnl.db"
+	}
 
 	// WebSocket endpoint
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {

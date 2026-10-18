@@ -18,6 +18,7 @@ import (
 	"trading-systemv1/internal/notification"
 	"trading-systemv1/internal/optionpicker"
 	"trading-systemv1/internal/orderexec"
+	"trading-systemv1/internal/pnlstore"
 	"trading-systemv1/internal/portfolio"
 	redisstore "trading-systemv1/internal/store/redis"
 	"trading-systemv1/internal/strategy"
@@ -48,6 +49,8 @@ type Service struct {
 	redisReader   *redisstore.Reader
 	redisWriter   *redisstore.Writer
 	journal       *strategy.SignalJournal
+	pnlLedger     *pnlLedger      // closed-trade ledger (pnl_ledger.go); nil when off
+	pnlStore      *pnlstore.Store // its SQLite store
 	sweeps        *sweepWriter // SR liquidity sweeps into journal (sweeps.go)
 	notifier      notification.Notifier
 	orderExecutor *orderexec.OrderExecutor
@@ -316,6 +319,7 @@ func (svc *Service) buildExecution(cfg Config) {
 	// P&L source for the executor's daily max-loss gate on real entries.
 	svc.orderExecutor.SetPnLTracker(svc.pnlTracker)
 	svc.attachOrderJournal()
+	svc.attachPNLLedger()
 
 	// ── Global option picker (off | shadow | on) ──
 	svc.picker = svc.newPicker()

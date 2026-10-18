@@ -342,6 +342,10 @@ func (svc *Service) onFill(f orderexec.FillReport) {
 	}
 	log.Printf("[stratengine] P&L: %s %s %s:%s leg=%q qty=%d fill=%d paise real=%v realized=%d paise",
 		sig.StrategyName, f.Direction, exchange, token, sig.Leg, qty, f.FillPricePaise, f.Real, realized)
+	if svc.pnlLedger != nil {
+		key := sig.StrategyName + "|" + exchange + ":" + token + "|" + sig.Leg
+		svc.pnlLedger.record(svc.ledgerFill(f, key, exchange, token, qty, realized, opening))
+	}
 
 	if svc.redisWriter != nil {
 		go func() {

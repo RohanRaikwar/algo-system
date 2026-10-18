@@ -291,7 +291,10 @@ export function DailyAnalyticsTab() {
                                                                 order.realized_pnl < 0 ? 'price-down' : 'price-flat';
                                                         return (
                                                             <tr key={`${day.date}-${order.strategy}-${order.instrument}-${idx}`} className="signal-row">
-                                                                <td className="strategy-cell">{order.strategy}</td>
+                                                                <td className="strategy-cell" title={order.exit_reason || undefined}>
+                                                                    {order.strategy}
+                                                                    {order.real && <span className="sl-kind hard" style={{ marginLeft: 6 }}>real</span>}
+                                                                </td>
                                                                 <td>
                                                                     <span className={order.side === 'PUT' ? 'action-badge buy-put' : 'action-badge buy-call'}>
                                                                         {order.side || '—'}

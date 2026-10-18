@@ -64,6 +64,7 @@ type Config struct {
 	GTTStopLossPaise    int64    // GTT stop distance below entry; 0 = no SL GTT
 	GTTTargetBps        int64    // GTT target above entry in bps; 0 = no target GTT
 	OrderJournalPath    string   // SQLite order journal; real entries need it when live
+	PNLDBPath           string   // SQLite closed-trade ledger (pnlstore); "" = off
 	ProtectionMode      string   // "sl" resting stop order (default) or "gtt"
 	ExecMode            string   // "chase" marketable LIMIT (default) or "market"
 	ChaseTicks          int64    // ticks through the touch
@@ -201,6 +202,7 @@ func LoadConfig() Config {
 		GTTStopLossPaise:    config.GetEnvInt64("STRAT_GTT_SL_PAISE", 1000),
 		GTTTargetBps:        config.GetEnvInt64("STRAT_GTT_TARGET_BPS", 0),
 		OrderJournalPath:    config.GetEnv("STRAT_ORDER_JOURNAL_PATH", "data/orders.db"),
+		PNLDBPath:           config.GetEnv("STRAT_PNL_DB_PATH", "data/pnl.db"),
 		ProtectionMode:      config.GetEnv("STRAT_PROTECTION", "sl"),
 		ExecMode:            config.GetEnv("STRAT_EXEC_MODE", "chase"),
 		ChaseTicks:          config.GetEnvInt64("STRAT_CHASE_TICKS", 2),

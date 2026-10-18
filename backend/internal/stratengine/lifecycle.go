@@ -285,6 +285,7 @@ func (svc *Service) shutdown() {
 		svc.sweeps.close()
 	}
 	svc.journal.Close()
+	svc.closePNLLedger()
 	svc.redisWriter.Close()
 	svc.redisReader.Close()
 	log.Println("[stratengine] shutdown complete.")

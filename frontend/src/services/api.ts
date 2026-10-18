@@ -137,6 +137,10 @@ export interface DailyCompletedOrder {
     realized_pnl: number;
     entry_time: string;
     exit_time: string;
+    /** Exit signal reason (P&L ledger rows only) */
+    exit_reason?: string;
+    /** Broker fill, not paper (P&L ledger rows only) */
+    real?: boolean;
 }
 
 export interface DailyOrdersGroup {

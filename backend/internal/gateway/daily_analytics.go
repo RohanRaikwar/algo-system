@@ -8,7 +8,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"trading-systemv1/internal/pnlstore"
 )
 
 const (
@@ -49,6 +52,8 @@ type DailyCompletedOrder struct {
 	RealizedPnL int64  `json:"realized_pnl"`
 	EntryTime   string `json:"entry_time"`
 	ExitTime    string `json:"exit_time"`
+	ExitReason  string `json:"exit_reason,omitempty"` // ledger rows only
+	Real        bool   `json:"real,omitempty"`        // a broker fill (ledger rows only)
 }
 
 // DailyOrdersGroup is one day bucket of completed orders.
@@ -66,10 +71,24 @@ type DailyOrdersResponse struct {
 	TS    string             `json:"ts"`
 }
 
-// DailyAnalyticsService reads signal journals and builds day-wise analytics.
+// DailyAnalyticsService builds day-wise analytics from the P&L ledger
+// (fill prices, from its first day) and, for older days, from BUY/EXIT
+// pairs in the signal journals.
 type DailyAnalyticsService struct {
 	JournalPaths []string
 	Location     *time.Location
+
+	// LedgerPath is the P&L ledger (STRAT_PNL_DB_PATH), written by
+	// stratengine and opened read-only here once it exists.
+	LedgerPath string
+	ledgerMu   sync.Mutex
+	ledger     ledgerReader
+}
+
+// ledgerReader reads closed trades; *pnlstore.Store satisfies it.
+type ledgerReader interface {
+	Trades(from, to time.Time, strategy string) ([]pnlstore.Trade, error)
+	FirstExit() (time.Time, bool, error)
 }
 
 // NewDailyAnalyticsService creates a new service.
@@ -109,6 +128,8 @@ type tradeKey struct {
 }
 
 type pairedTrade struct {
+	Real       bool
+	ExitReason string
 	Strategy   string
 	Side       string
 	Exchange   string
@@ -552,6 +573,8 @@ func buildDailyOrderGroups(trades []pairedTrade, loc *time.Location, days int) [
 				RealizedPnL: tr.Realized,
 				EntryTime:   tr.EntryAt.UTC().Format(time.RFC3339Nano),
 				ExitTime:    tr.ExitAt.UTC().Format(time.RFC3339Nano),
+				ExitReason:  tr.ExitReason,
+				Real:        tr.Real,
 			})
 		}
 		items = append(items, DailyOrdersGroup{
@@ -564,12 +587,29 @@ func buildDailyOrderGroups(trades []pairedTrade, loc *time.Location, days int) [
 	return items
 }
 
-// DailyPnL returns grouped day-wise realized P&L rows.
-// If strategy is non-empty, only signals for that strategy are included.
-func (svc *DailyAnalyticsService) DailyPnL(days int, strategy string) (DailyPnLResponse, error) {
+// ledgerStore opens the ledger once it exists; nil until then.
+func (svc *DailyAnalyticsService) ledgerStore() ledgerReader {
+	svc.ledgerMu.Lock()
+	defer svc.ledgerMu.Unlock()
+	if svc.ledger != nil || svc.LedgerPath == "" {
+		return svc.ledger
+	}
+	if _, err := os.Stat(svc.LedgerPath); err != nil {
+		return nil
+	}
+	if s, err := pnlstore.OpenReader(svc.LedgerPath); err == nil {
+		svc.ledger = s
+	}
+	return svc.ledger
+}
+
+// completedTrades is every closed trade: ledger rows from the ledger's
+// first day on, signal pairs before it. If strategy is non-empty, only
+// that strategy's trades.
+func (svc *DailyAnalyticsService) completedTrades(strategy string) ([]pairedTrade, error) {
 	rows, err := svc.loadSignalRows()
 	if err != nil {
-		return DailyPnLResponse{}, err
+		return nil, err
 	}
 	if strategy != "" {
 		filtered := rows[:0]
@@ -581,6 +621,54 @@ func (svc *DailyAnalyticsService) DailyPnL(days int, strategy string) (DailyPnLR
 		rows = filtered
 	}
 	trades := pairCompletedTrades(rows)
+	l := svc.ledgerStore()
+	if l == nil {
+		return trades, nil
+	}
+	first, ok, err := l.FirstExit()
+	if err != nil || !ok {
+		return trades, err
+	}
+	loc := svc.Location
+	if loc == nil {
+		loc = mustLoadIST()
+	}
+	f := first.In(loc)
+	from := time.Date(f.Year(), f.Month(), f.Day(), 0, 0, 0, 0, loc)
+	ledger, err := l.Trades(from, time.Now().Add(24*time.Hour), strategy)
+	if err != nil {
+		return nil, err
+	}
+	return mergeLedger(trades, ledger, from), nil
+}
+
+// mergeLedger keeps the signal pairs that exited before from and adds the
+// ledger's trades in their place.
+func mergeLedger(pairs []pairedTrade, ledger []pnlstore.Trade, from time.Time) []pairedTrade {
+	out := make([]pairedTrade, 0, len(pairs)+len(ledger))
+	for _, p := range pairs {
+		if p.ExitAt.Before(from) {
+			out = append(out, p)
+		}
+	}
+	for _, t := range ledger {
+		out = append(out, pairedTrade{
+			Real: t.Real, ExitReason: t.ExitReason, Strategy: t.Strategy, Side: t.Side,
+			Exchange: t.Exchange, Token: t.Token, FNOSymbol: t.FNOSymbol, Qty: t.Qty,
+			EntryPrice: t.EntryPrice, ExitPrice: t.ExitPrice, Realized: t.Realized,
+			EntryAt: t.EntryAt, ExitAt: t.ExitAt,
+		})
+	}
+	return out
+}
+
+// DailyPnL returns grouped day-wise realized P&L rows.
+// If strategy is non-empty, only that strategy's trades are included.
+func (svc *DailyAnalyticsService) DailyPnL(days int, strategy string) (DailyPnLResponse, error) {
+	trades, err := svc.completedTrades(strategy)
+	if err != nil {
+		return DailyPnLResponse{}, err
+	}
 	items := buildDailyPnLRows(trades, svc.Location, days)
 	if items == nil {
 		items = []DailyPnLItem{}
@@ -593,22 +681,12 @@ func (svc *DailyAnalyticsService) DailyPnL(days int, strategy string) (DailyPnLR
 }
 
 // DailyOrders returns grouped day-wise completed orders.
-// If strategy is non-empty, only signals for that strategy are included.
+// If strategy is non-empty, only that strategy's trades are included.
 func (svc *DailyAnalyticsService) DailyOrders(days int, strategy string) (DailyOrdersResponse, error) {
-	rows, err := svc.loadSignalRows()
+	trades, err := svc.completedTrades(strategy)
 	if err != nil {
 		return DailyOrdersResponse{}, err
 	}
-	if strategy != "" {
-		filtered := rows[:0]
-		for _, r := range rows {
-			if r.Strategy == strategy {
-				filtered = append(filtered, r)
-			}
-		}
-		rows = filtered
-	}
-	trades := pairCompletedTrades(rows)
 	items := buildDailyOrderGroups(trades, svc.Location, days)
 	if items == nil {
 		items = []DailyOrdersGroup{}
