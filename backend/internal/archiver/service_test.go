@@ -371,6 +371,47 @@ func TestRestore_RefillsEmptyVolume(t *testing.T) {
 	}
 }
 
+// MEGA was down at the first start: backfill refilled the candles but the
+// journals and manifest stayed empty. The next start restores the journals
+// without touching the candles.
+func TestRestore_JournalsWhenCandlesPresent(t *testing.T) {
+	up := &fakeUploader{dir: t.TempDir()}
+	s := newTestService(t, up)
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	c := s.cfg.CandlesPath
+	tfRows := count(t, c, `SELECT COUNT(*) FROM candles_tf`)
+	for _, p := range []string{s.cfg.JournalPaths[0], s.cfg.ManifestPath} {
+		os.Remove(p)
+		os.Remove(p + "-wal")
+		os.Remove(p + "-shm")
+	}
+	s.store = up
+	if err := s.Restore(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, s.cfg.JournalPaths[0], `SELECT COUNT(*) FROM signals`); n != 2 {
+		t.Fatalf("restored signals = %d, want 2", n)
+	}
+	if n := count(t, c, `SELECT COUNT(*) FROM candles_tf`); n != tfRows {
+		t.Fatalf("restore touched live candles: %d rows, want %d", n, tfRows)
+	}
+	if n := count(t, s.cfg.ManifestPath, `SELECT COUNT(*) FROM archived`); n == 0 {
+		t.Fatal("manifest not rebuilt")
+	}
+
+	// Candles and manifest present: no MEGA contact, even with a journal gone.
+	os.Remove(s.cfg.JournalPaths[0])
+	up.fail = true
+	if err := s.Restore(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(s.cfg.JournalPaths[0]); !os.IsNotExist(err) {
+		t.Fatalf("restore recreated journal with candles and manifest present: %v", err)
+	}
+}
+
 func TestRunOnce_FailedUploadDeletesNothing(t *testing.T) {
 	s := newTestService(t, &fakeUploader{dir: t.TempDir(), fail: true})
 	if err := s.RunOnce(context.Background()); err != nil {

@@ -20,7 +20,9 @@ import (
 
 // Restore refills a fresh volume (a new Railway account or a lost disk)
 // from MEGA. It runs before the services start. A fresh volume is one with
-// no candles; otherwise it returns at once without contacting MEGA, so a
+// no candles or an empty manifest (no restore or upload has succeeded on
+// it yet, e.g. MEGA was down at the first start while backfill refilled
+// the candles). Otherwise it returns at once without contacting MEGA, so a
 // MEGA outage never delays a normal start. On a fresh volume, each database
 // that is missing or empty is refilled: candles and exitwatch features for
 // their keep window, journals whole. Live data is never overwritten. An
@@ -31,20 +33,6 @@ func (s *Service) Restore(ctx context.Context) error {
 	fresh, err := sourceEmpty(ctx, srcs[0]) // candles
 	if err != nil {
 		return fmt.Errorf("%s: %w", srcs[0].name, err)
-	}
-	if !fresh {
-		log.Println("[archiver] restore: local candles present, nothing to restore")
-		return nil
-	}
-	var todo []daySource
-	for _, src := range srcs {
-		empty, err := sourceEmpty(ctx, src)
-		if err != nil {
-			return fmt.Errorf("%s: %w", src.name, err)
-		}
-		if empty {
-			todo = append(todo, src)
-		}
 	}
 	if err := os.MkdirAll(filepath.Dir(s.cfg.ManifestPath), 0o755); err != nil {
 		return err
@@ -57,6 +45,20 @@ func (s *Service) Restore(ctx context.Context) error {
 	manEmpty, err := man.empty(ctx)
 	if err != nil {
 		return err
+	}
+	if !fresh && !manEmpty {
+		log.Println("[archiver] restore: local candles and manifest present, nothing to restore")
+		return nil
+	}
+	var todo []daySource
+	for _, src := range srcs {
+		empty, err := sourceEmpty(ctx, src)
+		if err != nil {
+			return fmt.Errorf("%s: %w", src.name, err)
+		}
+		if empty {
+			todo = append(todo, src)
+		}
 	}
 
 	days, err := s.remoteDays(ctx)

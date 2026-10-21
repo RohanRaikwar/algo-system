@@ -3,6 +3,7 @@ package gateway
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 	"os"
 	"sort"
@@ -169,6 +170,21 @@ func resolveSignalLogJournalPaths() []string {
 	return append(resolveSignalJournalPaths(), p)
 }
 
+// journalErrs holds the last logged error text per journal path.
+var journalErrs sync.Map
+
+// logJournalErr logs a journal that could not be read. Callers skip that
+// journal and serve the rest; the log tells an unreadable journal apart
+// from an empty one. Each path logs again only when its error changes,
+// so dashboard polling does not flood the log.
+func logJournalErr(path string, err error) {
+	msg := err.Error()
+	if prev, ok := journalErrs.Swap(path, msg); ok && prev.(string) == msg {
+		return
+	}
+	log.Printf("[api_gateway] signal journal %s unreadable: %v", path, err)
+}
+
 func mustLoadIST() *time.Location {
 	loc, err := time.LoadLocation("Asia/Kolkata")
 	if err != nil {
@@ -279,11 +295,13 @@ func (svc *DailyAnalyticsService) loadSignalRows() ([]dailySignalRow, error) {
 	for _, path := range svc.JournalPaths {
 		db, err := openSignalDB(path)
 		if err != nil {
+			logJournalErr(path, err)
 			continue
 		}
 
 		rows, err := queryDailySignalRows(db)
 		if err != nil {
+			logJournalErr(path, err)
 			db.Close()
 			continue
 		}

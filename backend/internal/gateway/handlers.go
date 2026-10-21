@@ -462,10 +462,12 @@ func RegisterRoutes(mux *http.ServeMux, hub *Hub, rdb *goredis.Client, ctx conte
 		for _, jPath := range logJournalPaths {
 			db, err := openSignalDB(jPath)
 			if err != nil {
+				logJournalErr(jPath, err)
 				continue
 			}
 			rows, err := querySignalRowsForAPI(db, limit, strategyFilter)
 			if err != nil {
+				logJournalErr(jPath, err)
 				db.Close()
 				continue
 			}
