@@ -15,7 +15,13 @@ import { TradeCard } from './TradeCard';
 import { SignalDetailSheet } from './SignalDetailSheet';
 import { FilterSheet } from './FilterSheet';
 import { cn } from '@/lib/utils';
-import { cardMid, cardShell, cardTap, instrument, stack, sub } from './classes';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Empty as EmptyState } from '@/components/ui/empty';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { cardMid, instrument, stack, sub } from './classes';
 import { signalsPageBase } from '../classes';
 
 type Tab = 'log' | 'positions' | 'trades' | 'more';
@@ -91,9 +97,9 @@ export function SignalsMobile({ data }: { data: SignalsData }) {
         return (
             <div className={page}>
                 <header className="sticky top-0 z-[60] flex items-center gap-[4px] h-[calc(48px_+_env(safe-area-inset-top))] mt-[-12px] mx-[-12px] mb-[12px] pt-[env(safe-area-inset-top)] pr-[12px] pb-0 pl-[4px] bg-sg-bg border-b border-b-sg-line-soft">
-                    <button type="button" className="flex items-center justify-center w-[44px] h-[44px] border-0 rounded-pill bg-transparent text-sg-accent cursor-pointer active:bg-sg-hover" onClick={closeMore} aria-label="Back to More">
+                    <Button variant="ghost-touch" size="icon-44" tone="accent" onClick={closeMore} aria-label="Back to More">
                         <ChevronLeft size={22} />
-                    </button>
+                    </Button>
                     <h1 className="m-0 text-[17px] font-semibold">{item.label}</h1>
                 </header>
                 <div className="min-w-0">
@@ -123,47 +129,35 @@ export function SignalsMobile({ data }: { data: SignalsData }) {
             </div>
 
             <div className="sticky top-[var(--bar-h)] z-50 flex items-center gap-[8px] h-[var(--seg-h)] my-0 mx-[-12px] py-0 px-[12px] bg-sg-bg">
-                <div className="flex-1 flex p-[3px] gap-[2px] rounded-[10px] bg-sg-surface border border-solid border-sg-line" role="tablist" aria-label="Signals views">
-                    {TABS.map(t => (
-                        <button
-                            key={t.id}
-                            type="button"
-                            role="tab"
-                            aria-selected={tab === t.id}
-                            className={cn(
-                                'flex-1 inline-flex items-center justify-center gap-[5px] h-[34px] min-w-0 py-0 px-[4px] border-0 rounded-[7px] text-[13px] cursor-pointer [-webkit-tap-highlight-color:transparent] select-none',
-                                tab === t.id
-                                    ? 'bg-sg-hover text-sg-text font-semibold shadow-[inset_0_0_0_1px_var(--sg-line)]'
-                                    : 'bg-transparent text-sg-muted font-medium active:bg-sg-hover',
-                            )}
-                            onClick={() => setTab(t.id)}
-                        >
-                            {t.label}
-                            {t.id === 'positions' && data.openOrders.length > 0 && <span className="min-w-[17px] py-0 px-[5px] rounded-pill bg-sg-accent text-white text-[10px] leading-[17px]">{data.openOrders.length}</span>}
-                        </button>
-                    ))}
-                </div>
+                <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
+                    <TabsList variant="segment" className="flex-1" aria-label="Signals views">
+                        {TABS.map(t => (
+                            <TabsTrigger key={t.id} value={t.id}>
+                                {t.label}
+                                {t.id === 'positions' && data.openOrders.length > 0 && <Badge variant="count-xs">{data.openOrders.length}</Badge>}
+                            </TabsTrigger>
+                        ))}
+                    </TabsList>
+                </Tabs>
                 {showFilter && (
-                    <button
-                        type="button"
-                        className={cn(
-                            'relative shrink-0 flex items-center justify-center w-[42px] h-[42px] border border-solid rounded-[10px] bg-sg-surface cursor-pointer active:bg-sg-hover',
-                            chips.length ? 'text-sg-accent border-sg-accent' : 'text-sg-text-2 border-sg-line',
-                        )}
+                    <Button
+                        variant="segment-icon"
+                        size="icon-42"
+                        data-active={chips.length > 0}
                         onClick={() => setFiltersOpen(true)}
                         aria-label={`Filters${chips.length ? `, ${chips.length} active` : ''}`}
                     >
                         <SlidersHorizontal size={18} />
-                    </button>
+                    </Button>
                 )}
             </div>
 
             {showFilter && chips.length > 0 && (
                 <div className="flex flex-wrap gap-[6px] pt-[2px] px-0 pb-[10px]">
                     {chips.map(c => (
-                        <button key={c.key} type="button" className="inline-flex items-center gap-[4px] h-[30px] py-0 pr-[10px] pl-[12px] border-0 rounded-pill bg-sg-accent-soft text-sg-accent text-[12px] font-semibold cursor-pointer" onClick={c.clear} aria-label={`Remove filter ${c.label}`}>
+                        <Button key={c.key} variant="filter-chip" onClick={c.clear} aria-label={`Remove filter ${c.label}`}>
                             {c.label} <X size={13} />
-                        </button>
+                        </Button>
                     ))}
                 </div>
             )}
@@ -183,14 +177,14 @@ export function SignalsMobile({ data }: { data: SignalsData }) {
             {tab === 'more' && (
                 <nav className={stack} aria-label="More">
                     {MORE.map(m => (
-                        <button key={m.id} type="button" className={cn(cardShell, cardTap, 'border-sg-line-soft')} onClick={() => openMore(m.id)}>
+                        <Card key={m.id} variant="row" tap render={<button type="button" />} onClick={() => openMore(m.id)}>
                             <m.Icon size={20} className="shrink-0 text-sg-accent" />
                             <span className={cardMid}>
                                 <span className={instrument}>{m.label}</span>
                                 <span className={sub}>{m.hint}</span>
                             </span>
                             <ChevronRight size={18} className="shrink-0 text-sg-faint" />
-                        </button>
+                        </Card>
                     ))}
                     <p className="py-[8px] px-[4px] text-sg-faint text-[12px]">Account, session health and trading settings are on the Health tab.</p>
                 </nav>
@@ -204,10 +198,10 @@ export function SignalsMobile({ data }: { data: SignalsData }) {
 
 function Empty({ text }: { text: string }) {
     return (
-        <div className="flex flex-col items-center gap-[10px] py-[48px] px-[24px] text-sg-muted text-center text-[13px]">
+        <EmptyState variant="mobile">
             <Zap size={36} strokeWidth={1.5} />
             <p>{text}</p>
-        </div>
+        </EmptyState>
     );
 }
 
@@ -221,34 +215,32 @@ function LogView({ data, onOpen }: { data: SignalsData; onOpen: (s: SignalRecord
             {data.logGroups.map(group => {
                 const expanded = !!data.expandedLogDates[group.date];
                 return (
-                    <section key={group.date}>
-                        <button
-                            type="button"
-                            className={dayHead}
-                            aria-expanded={expanded}
-                            onClick={() => data.setExpandedLogDates(prev => ({ ...prev, [group.date]: !prev[group.date] }))}
-                        >
+                    <Collapsible
+                        key={group.date}
+                        render={<section />}
+                        open={expanded}
+                        onOpenChange={open => data.setExpandedLogDates(prev => ({ ...prev, [group.date]: open }))}
+                    >
+                        <CollapsibleTrigger className={dayHead}>
                             {expanded ? <ChevronDown size={16} className={dayChev} /> : <ChevronRight size={16} className={dayChev} />}
                             <span className="flex-1 min-w-0">{formatDateKey(group.date)}</span>
                             <span className={dayMeta}>{group.buys} in · {group.exits} out</span>
-                        </button>
-                        {expanded && (
-                            <div className={stack}>
-                                {group.signals.map(sig => {
-                                    const k = signalKey(sig);
-                                    return (
-                                        <SignalCard
-                                            key={k}
-                                            signal={sig}
-                                            entryPrice={data.entryPriceMap.get(k)?.price}
-                                            isNew={data.newSignalIds.has(k)}
-                                            onOpen={() => onOpen(sig)}
-                                        />
-                                    );
-                                })}
-                            </div>
-                        )}
-                    </section>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className={stack}>
+                            {group.signals.map(sig => {
+                                const k = signalKey(sig);
+                                return (
+                                    <SignalCard
+                                        key={k}
+                                        signal={sig}
+                                        entryPrice={data.entryPriceMap.get(k)?.price}
+                                        isNew={data.newSignalIds.has(k)}
+                                        onOpen={() => onOpen(sig)}
+                                    />
+                                );
+                            })}
+                        </CollapsibleContent>
+                    </Collapsible>
                 );
             })}
         </div>
@@ -263,25 +255,23 @@ function TradesView({ trades }: { trades: ReturnType<typeof useDailyOrders> }) {
             {trades.groups.map(group => {
                 const expanded = !!trades.expandedDates[group.date];
                 return (
-                    <section key={group.date}>
-                        <button
-                            type="button"
-                            className={dayHead}
-                            aria-expanded={expanded}
-                            onClick={() => trades.setExpandedDates(prev => ({ ...prev, [group.date]: !prev[group.date] }))}
-                        >
+                    <Collapsible
+                        key={group.date}
+                        render={<section />}
+                        open={expanded}
+                        onOpenChange={open => trades.setExpandedDates(prev => ({ ...prev, [group.date]: open }))}
+                    >
+                        <CollapsibleTrigger className={dayHead}>
                             {expanded ? <ChevronDown size={16} className={dayChev} /> : <ChevronRight size={16} className={dayChev} />}
                             <span className="flex-1 min-w-0">{formatDateKey(group.date)}</span>
                             <span className={dayMeta}>
                                 {group.orders.length} trades · <b className={pnlClass(group.netPnl)}>{formatSignedPaise(group.netPnl)}</b>
                             </span>
-                        </button>
-                        {expanded && (
-                            <div className={stack}>
-                                {group.orders.map((o, i) => <TradeCard key={`${o.strategy}-${o.exit_time}-${i}`} order={o} />)}
-                            </div>
-                        )}
-                    </section>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className={stack}>
+                            {group.orders.map((o, i) => <TradeCard key={`${o.strategy}-${o.exit_time}-${i}`} order={o} />)}
+                        </CollapsibleContent>
+                    </Collapsible>
                 );
             })}
         </div>

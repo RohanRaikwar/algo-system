@@ -1,7 +1,8 @@
 import type { DailyCompletedOrder } from '../../../services/api';
 import { formatPrice, formatSignedPaise, getSideBadge, pnlClass } from '../signalFormat';
 import { cn } from '@/lib/utils';
-import { cardLeft, cardMid, cardRight, cardShell, instrument, pnlText, sub, subBase } from './classes';
+import { Card } from '@/components/ui/card';
+import { cardLeft, cardMid, cardRight, instrument, pnlText, sub, subBase } from './classes';
 
 const hhmm = (ts: string) => {
     try {
@@ -15,7 +16,7 @@ const hhmm = (ts: string) => {
 export function TradeCard({ order }: { order: DailyCompletedOrder }) {
     const pts = (order.exit_price - order.entry_price) / 100;
     return (
-        <article className={cn(cardShell, 'border-sg-line-soft')}>
+        <Card variant="row" render={<article />}>
             <span className={cn(cardLeft, 'w-auto')}>
                 <span className={getSideBadge(order.side)}>{order.side}</span>
             </span>
@@ -29,6 +30,6 @@ export function TradeCard({ order }: { order: DailyCompletedOrder }) {
                 <span className={cn(pnlText, pnlClass(order.realized_pnl))}>{formatSignedPaise(order.realized_pnl)}</span>
                 <span className={cn(subBase, pnlClass(pts))}>{pts > 0 ? '+' : ''}{pts.toFixed(1)} pts</span>
             </span>
-        </article>
+        </Card>
     );
 }

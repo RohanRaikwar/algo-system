@@ -2,7 +2,13 @@ import { useEffect, useMemo, useState, useCallback } from 'react';
 import { Table2, ChevronDown, ChevronRight } from 'lucide-react';
 import { fetchDailyOrders } from '../../services/api';
 import type { DailyOrdersResponse, DailyCompletedOrder } from '../../services/api';
-import { actionBadge, cell, cellSub, dayBody, dayCard, dayDate, dayHead, dayLeft, dayList, dayMeta, dayPnl, dayRight, emptyState, pnlTone, rowMono, table, tableWrap, tabStack, th, thNum } from './classes';
+import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Empty } from '@/components/ui/empty';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { sideBadgeTone } from './signalFormat';
+import { cellSub, dayBody, dayDate, dayHead, dayLeft, dayList, dayMeta, dayPnl, dayRight, pnlTone, pnlToneKey, rowMono, tableWrap, tabStack } from './classes';
 
 interface EventPriceTabProps {
     /** Strategy filter passed from parent (SignalsPage). When 'ALL', no filter is applied. */
@@ -46,12 +52,6 @@ function formatDateKey(dateKey: string): string {
     } catch {
         return dateKey;
     }
-}
-
-function getSideBadge(side: string) {
-    if (side === 'CALL') return actionBadge('buy');
-    if (side === 'PUT') return actionBadge('put');
-    return actionBadge('none');
 }
 
 function getMoveClass(move: number | null): string {
@@ -133,18 +133,18 @@ export function EventPriceTab({ strategyFilter }: EventPriceTabProps) {
 
     if (loading) {
         return (
-            <div className={emptyState}>
+            <Empty>
                 <p>Loading trade events…</p>
-            </div>
+            </Empty>
         );
     }
 
     if (groups.length === 0) {
         return (
-            <div className={emptyState}>
+            <Empty>
                 <Table2 size={48} strokeWidth={1.5} />
                 <p>No completed trade events{activeStrategy ? ` for ${activeStrategy}` : ''}.</p>
-            </div>
+            </Empty>
         );
     }
 
@@ -162,12 +162,13 @@ export function EventPriceTab({ strategyFilter }: EventPriceTabProps) {
                     const moveClass = getMoveClass(group.netPnl);
 
                     return (
-                        <section key={group.date} className={dayCard}>
-                            <button
-                                className={dayHead}
-                                aria-expanded={expanded}
-                                onClick={() => setExpandedDates(prev => ({ ...prev, [group.date]: !prev[group.date] }))}
-                            >
+                        <Collapsible
+                            key={group.date}
+                            open={expanded}
+                            onOpenChange={() => setExpandedDates(prev => ({ ...prev, [group.date]: !prev[group.date] }))}
+                            render={<Card render={<section />} />}
+                        >
+                            <CollapsibleTrigger className={dayHead}>
                                 <span className={dayLeft}>
                                     {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                     <span className={dayDate}>{formatDateKey(group.date)}</span>
@@ -179,65 +180,63 @@ export function EventPriceTab({ strategyFilter }: EventPriceTabProps) {
                                     </span>
                                     <span className={dayMeta}>{group.orders.length} trades</span>
                                 </span>
-                            </button>
+                            </CollapsibleTrigger>
 
-                            {expanded && (
-                                <div className={dayBody}>
+                            <CollapsibleContent className={dayBody}>
                                     <div className={tableWrap({ dayBody: true, fullHeight: true })}>
-                                        <table className={table}>
-                                            <thead>
-                                                <tr>
-                                                    <th className={th} style={{ width: '140px' }}>Signal</th>
-                                                    <th className={th} style={{ width: '70px' }}>Side</th>
-                                                    <th className={th} style={{ width: '140px' }}>Instrument</th>
-                                                    <th className={thNum} style={{ width: '100px' }}>Entry</th>
-                                                    <th className={th} style={{ width: '120px' }}>Entry time</th>
-                                                    <th className={thNum} style={{ width: '100px' }}>Exit</th>
-                                                    <th className={th} style={{ width: '120px' }}>Exit time</th>
-                                                    <th className={thNum} style={{ width: '100px' }}>P&L</th>
-                                                    <th className={thNum} style={{ width: '90px' }}>Points</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
+                                        <Table>
+                                            <TableHeader>
+                                                <TableRow>
+                                                    <TableHead style={{ width: '140px' }}>Signal</TableHead>
+                                                    <TableHead style={{ width: '70px' }}>Side</TableHead>
+                                                    <TableHead style={{ width: '140px' }}>Instrument</TableHead>
+                                                    <TableHead numeric style={{ width: '100px' }}>Entry</TableHead>
+                                                    <TableHead style={{ width: '120px' }}>Entry time</TableHead>
+                                                    <TableHead numeric style={{ width: '100px' }}>Exit</TableHead>
+                                                    <TableHead style={{ width: '120px' }}>Exit time</TableHead>
+                                                    <TableHead numeric style={{ width: '100px' }}>P&L</TableHead>
+                                                    <TableHead numeric style={{ width: '90px' }}>Points</TableHead>
+                                                </TableRow>
+                                            </TableHeader>
+                                            <TableBody>
                                                 {group.orders.map((o, i) => (
-                                                    <tr key={`${group.date}-${o.strategy}-${o.instrument}-${o.exit_time}-${i}`} >
-                                                        <td className={cell(true, 'strategy')}>{o.strategy}</td>
-                                                        <td className={cell(true)}>
-                                                            <span className={getSideBadge(o.side)}>{o.side}</span>
-                                                        </td>
-                                                        <td className={cell(true)} title={o.instrument}><span className={o.fno_symbol ? rowMono : undefined}>{o.fno_symbol || o.instrument}</span></td>
-                                                        <td className={cell(true, 'price')}>
+                                                    <TableRow key={`${group.date}-${o.strategy}-${o.instrument}-${o.exit_time}-${i}`} >
+                                                        <TableCell density="compact" kind="strategy">{o.strategy}</TableCell>
+                                                        <TableCell density="compact">
+                                                            <Badge tone={sideBadgeTone(o.side)}>{o.side}</Badge>
+                                                        </TableCell>
+                                                        <TableCell density="compact" title={o.instrument}><span className={o.fno_symbol ? rowMono : undefined}>{o.fno_symbol || o.instrument}</span></TableCell>
+                                                        <TableCell density="compact" kind="price">
                                                             {formatPricePaise(o.entry_price)}
-                                                        </td>
-                                                        <td className={cell(true, 'time')} title={o.entry_time}>
+                                                        </TableCell>
+                                                        <TableCell density="compact" kind="time" title={o.entry_time}>
                                                             {formatTime(o.entry_time)}
                                                             <span className={cellSub}>
                                                                 {formatDate(o.entry_time)}
                                                             </span>
-                                                        </td>
-                                                        <td className={cell(true, 'price')}>
+                                                        </TableCell>
+                                                        <TableCell density="compact" kind="price">
                                                             {formatPricePaise(o.exit_price)}
-                                                        </td>
-                                                        <td className={cell(true, 'time')} title={o.exit_time}>
+                                                        </TableCell>
+                                                        <TableCell density="compact" kind="time" title={o.exit_time}>
                                                             {formatTime(o.exit_time)}
                                                             <span className={cellSub}>
                                                                 {formatDate(o.exit_time)}
                                                             </span>
-                                                        </td>
-                                                        <td className={cell(true, 'price', getMoveClass(o.realized_pnl))}>
+                                                        </TableCell>
+                                                        <TableCell density="compact" kind="price" tone={pnlToneKey(o.realized_pnl)}>
                                                             {formatMove(o.realized_pnl)}
-                                                        </td>
-                                                        <td className={cell(true, 'price', getMoveClass(o.exit_price - o.entry_price))}>
+                                                        </TableCell>
+                                                        <TableCell density="compact" kind="price" tone={pnlToneKey(o.exit_price - o.entry_price)}>
                                                             {((o.exit_price - o.entry_price) / 100).toFixed(1)} pts
-                                                        </td>
-                                                    </tr>
+                                                        </TableCell>
+                                                    </TableRow>
                                                 ))}
-                                            </tbody>
-                                        </table>
+                                            </TableBody>
+                                        </Table>
                                     </div>
-                                </div>
-                            )}
-                        </section>
+                            </CollapsibleContent>
+                        </Collapsible>
                     );
                 })}
             </div>

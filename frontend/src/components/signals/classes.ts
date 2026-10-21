@@ -1,5 +1,6 @@
 import { cn } from '@/lib/utils';
 import { TONE_CLASS } from '../sr/srClasses';
+import { badgeVariants, type BadgeTone } from '@/components/ui/badge';
 
 /** Utility class strings shared by the Signals tabs (desktop and phone). */
 
@@ -16,18 +17,7 @@ export function pnlTone(v: number): string {
     return TONE_CLASS[v > 0 ? 'up' : v < 0 ? 'down' : 'muted'];
 }
 
-/* ── Empty / loading states ───────────────────────────────── */
-
-export const emptyState = 'flex flex-col items-center justify-center gap-[10px] py-[56px] px-[20px] text-center text-sg-muted [&_svg]:text-sg-faint [&_p]:max-w-[52ch] [&_p]:text-[0.9rem]';
-export const errorText = 'text-sg-loss';
-export const spin = 'animate-[sg-spin_1s_linear_infinite] motion-reduce:animate-none';
-
-/* ── Buttons ──────────────────────────────────────────────── */
-
-/** Pagination and refresh buttons. */
-export const ctrlBtn = 'inline-flex items-center gap-[6px] h-[32px] py-0 px-[12px] bg-sg-raised border border-solid border-sg-line rounded-ctrl text-sg-text-2 text-[0.82rem] cursor-pointer [transition:background_0.15s,color_0.15s] hover:enabled:bg-sg-hover hover:enabled:text-sg-text disabled:opacity-[0.45] disabled:cursor-default';
-
-/* ── Tables ───────────────────────────────────────────────── */
+/* ── Tables (Table / TableHead / TableCell carry the cell looks) ── */
 
 /** Scroll box around a table; inside a day card its border is softer. */
 export function tableWrap({ dayBody = false, fullHeight = false } = {}): string {
@@ -38,116 +28,109 @@ export function tableWrap({ dayBody = false, fullHeight = false } = {}): string 
     );
 }
 
-export const table = 'w-full min-w-[880px] border-collapse table-fixed [&_tbody_tr]:border-b [&_tbody_tr]:border-b-sg-line-soft [&_tbody_tr]:[transition:background_0.12s] [&_tbody_tr:last-child]:[border-bottom:none] [&_tbody_tr:hover]:bg-sg-surface';
-
-const thBase = 'sticky top-0 z-[1] py-[10px] px-[12px] bg-sg-raised border-b border-b-sg-line text-sg-muted text-[0.78rem] font-medium whitespace-nowrap';
-export const th = `${thBase} text-left`;
-export const thNum = `${thBase} text-right`;
-
-type CellKind = 'plain' | 'strategy' | 'time' | 'price' | 'reason';
-
-const CELL_KIND: Record<CellKind, string> = {
-    plain: '',
-    strategy: 'font-semibold whitespace-nowrap',
-    time: 'tabular-nums whitespace-nowrap',
-    price: 'text-right tabular-nums font-medium whitespace-nowrap',
-    reason: 'whitespace-nowrap',
-};
-
-/**
- * Body cell of a signals table row. compact tables pad 9px, the log 10px.
- * Text is text-2 except the strategy cell; tone (a P&L colour) replaces it.
- */
-export function cell(compact: boolean, kind: CellKind = 'plain', tone?: string): string {
-    const color = kind === 'strategy' ? 'text-sg-text' : tone || 'text-sg-text-2';
-    return cn(
-        compact ? 'py-[9px]' : 'py-[10px]',
-        'px-[12px] text-[0.86rem] align-middle overflow-hidden text-ellipsis',
-        CELL_KIND[kind],
-        color,
-    );
-}
-
 /** Traded option symbol inside a table row. */
 export const rowMono = 'font-mono text-[0.92em] tracking-[-0.01em] whitespace-nowrap';
 /** Small grey line under a time or price. */
 export const cellSub = 'block mt-[2px] text-[0.74rem] text-sg-faint font-normal';
 export const priceNa = 'text-sg-faint text-[0.8rem]';
+export const errorText = 'text-sg-loss';
+
+/* ── P&L tone keys (Badge / TableCell tone props) ─────────── */
+
+export type PnlToneKey = 'profit' | 'loss' | 'muted';
+
+/** Profit / loss / flat tone for a signed value, as a component tone prop. */
+export function pnlToneKey(v: number): PnlToneKey {
+    return v > 0 ? 'profit' : v < 0 ? 'loss' : 'muted';
+}
 
 /* ── Badges ───────────────────────────────────────────────── */
-
-const pill = 'inline-flex items-center justify-center gap-[5px] py-[3px] px-[9px] rounded-pill text-[0.74rem] font-semibold leading-[1.3] whitespace-nowrap';
-const TONE_MUTED = 'text-sg-muted bg-sg-raised';
-const TONE_PROFIT = 'text-sg-profit bg-sg-profit-soft';
-const TONE_LOSS = 'text-sg-loss bg-sg-loss-soft';
-const TONE_WARN = 'text-sg-warn bg-sg-warn-soft';
-const TONE_INFO = 'text-sg-info bg-sg-info-soft';
+/*
+ * Desktop renders <Badge variant tone>; the *Tone helpers pick the tone.
+ * The class-string helpers (actionBadge, marketBadge, orderTypeBadge,
+ * slKind) are the same Badge classes for markup that still sets className
+ * (the phone views).
+ */
 
 export type ActionTone = 'none' | 'buy' | 'put' | 'exit' | 'watchHold' | 'watchTighten' | 'watchExit' | 'watchBuy';
 
-const ACTION_TONE: Record<ActionTone, string> = {
-    none: TONE_MUTED,
-    buy: TONE_PROFIT,
-    put: TONE_LOSS,
-    exit: 'text-sg-text-2 bg-sg-raised',
-    watchHold: TONE_INFO,
-    watchTighten: TONE_WARN,
-    watchExit: TONE_LOSS,
-    watchBuy: TONE_PROFIT,
+const ACTION_TONE: Record<ActionTone, BadgeTone> = {
+    none: 'muted',
+    buy: 'profit',
+    put: 'loss',
+    exit: 'exit',
+    watchHold: 'info',
+    watchTighten: 'warn',
+    watchExit: 'loss',
+    watchBuy: 'profit',
 };
 
-/** Action / side pill (BUY, EXIT, CALL, PUT, WATCH_*). */
-export function actionBadge(tone: ActionTone): string {
-    return `${pill} ${ACTION_TONE[tone]}`;
+/** Badge tone of an action / side pill (BUY, EXIT, CALL, PUT, WATCH_*). */
+export function actionTone(tone: ActionTone): BadgeTone {
+    return ACTION_TONE[tone];
 }
 
-const MARKET_TONE: Record<string, string> = {
-    TRENDING: TONE_PROFIT,
-    SIDEWAYS: TONE_WARN,
-    CHOPPY: TONE_LOSS,
-    RANGE: TONE_INFO,
+/** Action / side pill classes (BUY, EXIT, CALL, PUT, WATCH_*). */
+export function actionBadge(tone: ActionTone): string {
+    return cn(badgeVariants({ tone: ACTION_TONE[tone] }));
+}
+
+const MARKET_TONE: Record<string, BadgeTone> = {
+    TRENDING: 'profit',
+    SIDEWAYS: 'warn',
+    CHOPPY: 'loss',
+    RANGE: 'info',
 };
+
+export function marketTone(state: string): BadgeTone {
+    return MARKET_TONE[state] ?? 'muted';
+}
 
 export function marketBadge(state: string): string {
-    return `${pill} min-w-[74px] ${MARKET_TONE[state] ?? TONE_MUTED}`;
+    return cn(badgeVariants({ variant: 'market', tone: marketTone(state) }));
 }
 
-const ORDER_TYPE_TONE: Record<string, string> = {
-    paper: TONE_MUTED,
-    capped: TONE_WARN,
-    real: 'text-white bg-sg-loss',
-    shadow: TONE_INFO,
+const ORDER_TYPE_TONE: Record<string, BadgeTone> = {
+    paper: 'muted',
+    capped: 'warn',
+    real: 'solid-loss',
+    shadow: 'info',
 };
+
+export function orderTypeTone(mode: string): BadgeTone {
+    return ORDER_TYPE_TONE[mode] ?? 'muted';
+}
 
 /** Paper / Capped / Real / Shadow pill with a leading dot. */
 export function orderTypeBadge(mode: string): string {
-    return `${pill} min-w-[62px] before:content-[''] before:w-[6px] before:h-[6px] before:rounded-[50%] before:bg-current ${ORDER_TYPE_TONE[mode] ?? TONE_MUTED}`;
+    return cn(badgeVariants({ variant: 'order', tone: orderTypeTone(mode) }));
 }
 
-export const statusCompleteBadge = `${pill} ${TONE_PROFIT}`;
-
-const smallPill = 'py-[1px] px-[7px] rounded-pill text-[0.68rem] font-semibold';
-
-const SL_KIND_TONE: Record<string, string> = {
-    trail: 'text-sg-info bg-sg-info-soft',
-    hard: TONE_WARN,
-    manual: 'text-sg-accent bg-sg-accent-soft',
+const SL_KIND_TONE: Record<string, BadgeTone> = {
+    trail: 'info',
+    hard: 'warn',
+    manual: 'accent',
 };
 
-/** Stop kind tag (trail / hard / manual), also used for SHORT and real. */
+/** Stop kind tag tone (trail / hard / manual, also SHORT and real); none for other kinds. */
+export function slKindTone(kind: string): BadgeTone | undefined {
+    return SL_KIND_TONE[kind];
+}
+
+/** Stop kind tag classes (trail / hard / manual), also used for SHORT and real. */
 export function slKind(kind: string): string {
-    return cn(smallPill, 'lowercase', SL_KIND_TONE[kind]);
+    return cn(badgeVariants({ variant: 'kind', tone: slKindTone(kind) }));
 }
 
-const EW_TONE: Record<string, string> = {
-    hold: TONE_PROFIT,
-    tighten: TONE_WARN,
-    exit: TONE_LOSS,
+const EW_TONE: Record<string, BadgeTone> = {
+    hold: 'profit',
+    tighten: 'warn',
+    exit: 'loss',
 };
 
-/** Exit-watch verdict tag (hold / tighten / exit). */
-export function ewBadge(decision: string): string {
-    return cn(smallPill, EW_TONE[decision]);
+/** Exit-watch verdict tag tone (hold / tighten / exit). */
+export function ewTone(decision: string): BadgeTone | undefined {
+    return EW_TONE[decision];
 }
 
 /* ── Day groups and summary cards ─────────────────────────── */
@@ -157,7 +140,6 @@ export const sectionHeader = 'flex items-center justify-between gap-[12px]';
 export const sectionTitleText = 'flex items-center gap-[8px] text-sg-text font-semibold [&_svg]:text-sg-muted';
 export const dailyTitle = `${sectionTitleText} text-[1rem]`;
 export const dayList = 'flex flex-col gap-[8px]';
-export const dayCard = 'border border-solid border-sg-line rounded-[12px] bg-sg-bg overflow-hidden';
 export const dayHead = 'flex items-center justify-between gap-[12px] w-full py-[12px] px-[14px] bg-transparent [border:none] text-sg-text text-left cursor-pointer [transition:background_0.12s] hover:bg-sg-surface lte-640:flex-col lte-640:items-start';
 export const dayLeft = 'flex items-center gap-[8px] min-w-0 [&_svg]:text-sg-muted [&_svg]:shrink-0';
 export const dayDate = 'font-semibold text-[0.9rem] whitespace-nowrap';
@@ -171,8 +153,6 @@ export function dayPnl(tone: string, pts = false): string {
 }
 
 export const summaryGrid = 'grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-[8px]';
-export const summaryCardShell = 'py-[12px] px-[14px] border border-solid border-sg-line rounded-[12px] min-w-0';
-export const summaryCard = `${summaryCardShell} bg-sg-bg`;
 export const summaryLabel = 'flex items-center gap-[5px] mb-[4px] text-sg-muted text-[0.8rem]';
 
 /** Summary card value; tone replaces the text colour, sm is the smaller size. */
@@ -185,11 +165,9 @@ export const footerNote = 'flex items-center justify-end gap-[6px] text-sg-faint
 
 /* ── F&O cards (FnoInstrumentsTab, SRStatusCard) ──────────── */
 
-export const fnoCard = 'bg-sg-bg border border-solid border-sg-line rounded-[12px] overflow-hidden';
 const fnoHeaderBase = 'flex items-center gap-[8px] py-[12px] px-[14px] border-b border-b-sg-line-soft font-semibold';
 export const fnoAtmHeader = `${fnoHeaderBase} [&_svg]:text-sg-accent`;
 export const fnoInstHeader = fnoHeaderBase;
-export const fnoBadge = `ml-auto py-[2px] px-[9px] rounded-pill text-[0.74rem] font-semibold ${TONE_PROFIT}`;
 export const fnoAtmBody = 'grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))]';
 export const fnoAtmStat = 'flex flex-col gap-[3px] py-[12px] px-[14px] border-r border-r-sg-line-soft last:[border-right:none]';
 export const fnoLabel = 'text-sg-muted text-[0.8rem]';

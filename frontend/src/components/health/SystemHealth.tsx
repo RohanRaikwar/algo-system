@@ -6,6 +6,13 @@ import type { SystemMetrics } from '../../types/ws';
 import { Sparkline } from './Sparkline';
 import { SERVICE_LABELS, collectIssues, isStale, isTicking } from './healthStatus';
 import { cn } from '@/lib/utils';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Alert } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Card as UICard } from '@/components/ui/card';
+import { Empty } from '@/components/ui/empty';
+import { Progress } from '@/components/ui/progress';
+import { Separator } from '@/components/ui/separator';
 
 type Tone = 'ok' | 'warn' | 'bad' | 'idle';
 
@@ -24,19 +31,11 @@ const DOT_BG: Record<Tone, string> = {
     idle: 'bg-sg-faint',
 };
 
-const FILL_BG: Record<Tone, string> = {
-    ok: 'bg-sg-accent',
-    warn: 'bg-sg-warn',
-    bad: 'bg-sg-loss',
-    idle: 'bg-sg-faint',
-};
+/** Meter fill tone per health tone. */
+const FILL_TONE = { ok: 'accent', warn: 'warn', bad: 'loss', idle: 'faint' } as const;
 
-const BANNER_TONE: Record<Tone, string> = {
-    ok: 'border-l-sg-profit [&>svg]:text-sg-profit',
-    warn: 'border-l-sg-warn [&>svg]:text-sg-warn',
-    bad: 'border-l-sg-loss [&>svg]:text-sg-loss',
-    idle: '',
-};
+/** Banner left-border tone; idle has none. */
+const BANNER_TONE = { ok: 'profit', warn: 'warn', bad: 'loss', idle: undefined } as const;
 
 function dot(tone: Tone, opts: { lg?: boolean; pulse?: boolean } = {}): string {
     return cn(
@@ -54,9 +53,7 @@ const serviceCls = 'inline-flex items-center gap-[8px] text-[0.86rem] whitespace
 const serviceName = 'text-sg-text-2 font-medium';
 const heroCls = 'flex items-center gap-[10px] mb-[10px]';
 const heroValue = 'text-[1.9rem] font-semibold tracking-[-0.02em] leading-[1.1] tabular-nums';
-const divider = 'h-[1px] my-[8px] mx-0 bg-sg-line-soft';
 const note = 'text-sg-faint text-[0.8rem] leading-[1.5] mt-[2px] mb-[4px] mx-0';
-const unavailable = 'py-[18px] px-[14px] border border-dashed border-sg-line rounded-[10px] text-sg-muted text-[0.86rem] leading-[1.5] text-center';
 
 function fmtCount(n: number | undefined): string {
     if (n === undefined || n === null) return '—';
@@ -105,13 +102,13 @@ function useNow(): number {
 
 function Card({ title, meta, children }: { title: string; meta?: ReactNode; children: ReactNode }) {
     return (
-        <section className="flex flex-col p-[16px] bg-sg-surface border border-solid border-sg-line rounded-panel min-w-0">
+        <UICard variant="panel" render={<section />}>
             <header className="flex items-center justify-between gap-[10px] mb-[12px]">
                 <h2 className="text-sg-text text-[0.95rem] font-semibold">{title}</h2>
                 {meta && <span className="text-sg-faint text-[0.78rem]">{meta}</span>}
             </header>
             {children}
-        </section>
+        </UICard>
     );
 }
 
@@ -120,7 +117,13 @@ function Row({ label, value, tone, hint }: { label: string; value: ReactNode; to
     const alert = tone === 'warn' || tone === 'bad' || tone === 'idle' ? TONE_TEXT[tone] : 'text-sg-text';
     return (
         <div className="flex items-baseline justify-between gap-[12px] py-[6px] px-0 text-[0.86rem]">
-            <span className={cn('text-sg-muted', hint && 'cursor-help underline decoration-dotted decoration-sg-faint underline-offset-[3px]')} title={hint}>{label}</span>
+            {hint ? (
+                <Tooltip>
+                    <TooltipTrigger render={<span className="text-sg-muted cursor-help underline decoration-dotted decoration-sg-faint underline-offset-[3px]" />}>{label}</TooltipTrigger>
+                    {/* Hints are sentences: wrap like the native title did. */}
+                    <TooltipContent className="whitespace-normal max-w-[min(280px,calc(100vw_-_32px))]">{hint}</TooltipContent>
+                </Tooltip>
+            ) : <span className="text-sg-muted">{label}</span>}
             <span className={cn('font-medium tabular-nums whitespace-pre text-right', alert)}>{value}</span>
         </div>
     );
@@ -128,17 +131,15 @@ function Row({ label, value, tone, hint }: { label: string; value: ReactNode; to
 
 function Meter({ pct, tone }: { pct: number; tone: Tone }) {
     return (
-        <div className="h-[6px] mt-[2px] mb-[8px] mx-0 rounded-pill bg-sg-raised overflow-hidden" role="presentation">
-            <span className={cn('block h-full rounded-[inherit] transition-[width] duration-400 ease-[ease] motion-reduce:transition-none', FILL_BG[tone])} style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
-        </div>
+        <Progress variant="meter" tone={FILL_TONE[tone]} className="mt-[2px] mb-[8px]" aria-hidden value={Math.max(0, Math.min(100, pct))} />
     );
 }
 
 function NotReporting({ service }: { service: string }) {
     return (
-        <p className={unavailable}>
+        <Empty variant="unavailable" render={<p />}>
             {service} hasn't published stats recently. Check that the service is running.
-        </p>
+        </Empty>
     );
 }
 
@@ -161,7 +162,7 @@ export function SystemHealth() {
         return (
             <div className={pageCls}>
                 <h1 className={pageTitle}>System health</h1>
-                <div className="py-[48px] px-[20px] border border-dashed border-sg-line rounded-panel text-sg-muted text-center">Waiting for the first metrics update from the gateway…</div>
+                <Empty variant="panel">Waiting for the first metrics update from the gateway…</Empty>
             </div>
         );
     }
@@ -213,7 +214,7 @@ export function SystemHealth() {
                 </span>
             </div>
 
-            <div className={cn('flex items-start gap-[12px] py-[14px] px-[16px] bg-sg-surface border border-solid border-sg-line border-l-[3px] rounded-[12px] [&>svg]:shrink-0 [&>svg]:mt-[1px]', BANNER_TONE[worst])} role="status">
+            <Alert variant="status" tone={BANNER_TONE[worst]} role="status">
                 {stale ? <WifiOff size={20} /> : worst === 'ok' ? <CheckCircle2 size={20} /> : <AlertTriangle size={20} />}
                 <div>
                     <div className="text-sg-text font-semibold">
@@ -234,7 +235,7 @@ export function SystemHealth() {
                         </ul>
                     )}
                 </div>
-            </div>
+            </Alert>
 
             <div className={cn('flex flex-col gap-[14px] transition-opacity duration-200 ease-[ease] motion-reduce:transition-none', stale && 'opacity-[0.45] [filter:grayscale(0.6)]')}>
                 {/* Services: one compact row */}
@@ -264,7 +265,7 @@ export function SystemHealth() {
                         {/* Market data pipeline */}
                         <Card
                             title="Market data pipeline"
-                            meta={p && <span className={cn('py-[2px] px-[9px] rounded-pill text-[0.76rem] font-medium', p.market_open ? 'bg-sg-profit-soft text-sg-profit' : 'bg-sg-raised text-sg-muted')}>{p.market_open ? 'Market open' : 'Market closed'}</span>}
+                            meta={p && <Badge variant="status" tone={p.market_open ? 'profit' : undefined}>{p.market_open ? 'Market open' : 'Market closed'}</Badge>}
                         >
                             {!p ? <NotReporting service="mdengine" /> : (
                                 <>
@@ -277,7 +278,7 @@ export function SystemHealth() {
                                         points={history.map(h => ({ at: h.at, value: h.tickRate }))}
                                         format={v => `${fmtRate(v)}/s`}
                                     />
-                                    <div className={divider} />
+                                    <Separator variant="soft" />
                                     <Row label="Ticks received" value={fmtCount(p.ticks_total)} />
                                     <Row label="1s candles built" value={fmtCount(p.candles_total)} />
                                     {problems.length === 0 ? (
@@ -287,7 +288,7 @@ export function SystemHealth() {
                                     ) : problems.map(c => (
                                         <Row key={c.key} label={c.label} value={fmtCount(p[c.key] as number)} tone="warn" hint={c.hint} />
                                     ))}
-                                    <div className={divider} />
+                                    <Separator variant="soft" />
                                     {p.feed_conns_wanted !== undefined && p.feed_conns_wanted > 0 && (
                                         <Row
                                             label="Feed sockets"
@@ -343,7 +344,7 @@ export function SystemHealth() {
                                 {legacy ? '. Shown after the stack restarts; the old gateway measured candle age instead.'
                                     : samples > 0 ? `, last ${fmtCount(samples)} ticks.` : '. No ticks measured yet.'}
                             </p>
-                            <div className={divider} />
+                            <Separator variant="soft" />
                             <Row label="Browser round trip" value={fmtMs(wsDelay, 0)} tone={levelTone(wsDelay, 200, 1000)} hint="Ping from this browser to the gateway and back" />
                             <Row
                                 label="Indicator compute"
@@ -369,7 +370,7 @@ export function SystemHealth() {
                                         tone={orders.cb_failures > 0 ? 'warn' : undefined}
                                         hint="The breaker opens after 3 failed broker calls in a row"
                                     />
-                                    <div className={divider} />
+                                    <Separator variant="soft" />
                                     <Row label="Real entries in the last 60s" value={`${fmtCount(orders.rl_count)} of ${fmtCount(orders.rl_max)}`} tone={rlTone === 'ok' || rlTone === 'idle' ? undefined : rlTone} />
                                     <Meter pct={rlPct} tone={rlTone} />
                                     <p className={note}>Real entries only. New entries are refused at the limit; exits are never blocked.</p>
@@ -380,7 +381,7 @@ export function SystemHealth() {
                         {/* Order-status socket */}
                         <Card title="Order-status socket" meta="stratengine">
                             {!orders ? <NotReporting service="stratengine" /> : !ows || !owsState ? (
-                                <p className={unavailable}>The running stratengine does not report the order-status socket. Restart it to load the new build.</p>
+                                <Empty variant="unavailable" render={<p />}>The running stratengine does not report the order-status socket. Restart it to load the new build.</Empty>
                             ) : (
                                 <>
                                     <div className={heroCls}>
@@ -428,7 +429,7 @@ export function SystemHealth() {
                                 hint={`1, 5 and 15 minute load averages. Above ${cores} (the core count) means work is queueing.`}
                             />
                             <Row label="Cores" value={cores} />
-                            <div className={divider} />
+                            <Separator variant="soft" />
                             <Row label="Memory" value={`${(m.mem_used_mb / 1024).toFixed(1)} of ${(m.mem_total_mb / 1024).toFixed(1)} GB`} tone={memTone} />
                             <Meter pct={m.mem_percent} tone={memTone} />
                         </Card>

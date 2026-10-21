@@ -4,13 +4,12 @@ import { KIND_LABEL, REGIME_LABEL, asOf, clock, hhmm, nearestLevels, pnlPaise, p
 import { DayPosition } from './DayPosition';
 import { useLastNiftyPaise } from './useLastNiftyPaise';
 import { cn } from '@/lib/utils';
-import { REGIME_CLASS } from './srClasses';
+import { Badge } from '@/components/ui/badge';
+import { REGIME_TONE } from './srClasses';
 
 const panel = 'shrink-0 border-t border-t-sg-line bg-sg-surface pt-[10px] px-[14px] pb-[8px] text-[13px] text-sg-text-2';
 const header = 'flex items-center gap-[8px] flex-wrap mb-[8px]';
 const title = 'mt-0 mr-[4px] mb-0 ml-0 text-[13px] font-semibold text-sg-text';
-const pill = 'py-[2px] px-[8px] rounded-pill text-[11px] font-semibold tracking-[0.02em]';
-const paper = 'text-sg-muted bg-sg-line-soft';
 const block = 'min-w-0 py-[8px] px-[10px] rounded-ctrl bg-sg-raised';
 const blockTitle = 'mt-0 mx-0 mb-[6px] text-[11px] font-semibold uppercase tracking-[0.06em] text-sg-muted';
 const stats = 'flex flex-wrap gap-x-[16px] gap-y-[6px]';
@@ -38,7 +37,7 @@ export function SRPanel() {
             <section className={panel} aria-label="S/R strategy">
                 <div className={header}>
                     <h2 className={title}>S/R strategy</h2>
-                    <span className={cn(pill, paper)}>Paper</span>
+                    <Badge variant="mobile" className="shrink">Paper</Badge>
                 </div>
                 <p className="m-0 text-sg-muted">Waiting for the strategy engine…</p>
             </section>
@@ -59,15 +58,15 @@ export function SRPanel() {
         <section className={panel} aria-label="S/R strategy">
             <div className={header}>
                 <h2 className={title}>S/R strategy</h2>
-                <span className={cn(pill, REGIME_CLASS[v.regime])} title={`15m ADX ${v.adx.toFixed(1)}`}>
+                <Badge variant="mobile" tone={REGIME_TONE[v.regime]} className="shrink" title={`15m ADX ${v.adx.toFixed(1)}`}>
                     {REGIME_LABEL[v.regime] ?? v.regime}
-                </span>
-                <span className={cn(pill, paper)} title="The executor only sends real orders for NIFTY50_FNO">Paper</span>
+                </Badge>
+                <Badge variant="mobile" className="shrink" title="The executor only sends real orders for NIFTY50_FNO">Paper</Badge>
                 {sweep && (
-                    <span className={cn(pill, 'text-sg-warn bg-sg-line-soft')}
+                    <Badge variant="mobile" className="shrink text-sg-warn"
                         title={`Liquidity sweep: wick through the level, closed back inside. ${sweep.side === 'HIGH' ? 'CALL' : 'PUT'} entries in the next ${v.sweep_warn_min ?? 5} min are flagged.`}>
                         ⚠ {sweepLabel(sweep)} · {clock(sweep.ts)}
-                    </span>
+                    </Badge>
                 )}
                 {updated && <span className="ml-auto text-[11px] text-sg-faint lte-900:ml-0">as of {updated} IST</span>}
             </div>
@@ -111,7 +110,7 @@ export function SRPanel() {
                     {inPosition ? (
                         <>
                             <div className="flex items-center gap-[8px] mb-[6px] flex-wrap">
-                                <span className={cn('py-[1px] px-[7px] rounded-pill text-[11px] font-bold', v.side === 'CALL' ? 'text-sg-profit bg-sg-profit-soft' : 'text-sg-loss bg-sg-loss-soft')}>{v.side}</span>
+                                <Badge variant="side" tone={v.side === 'CALL' ? 'profit' : 'loss'} className="px-[7px]">{v.side}</Badge>
                                 <span className="text-sg-text font-medium">{kindLabel}</span>
                                 {v.strike ? <span className="text-sg-muted tabular-nums">{v.strike} {v.side === 'CALL' ? 'CE' : 'PE'}</span> : null}
                                 {pnlPts !== null && (

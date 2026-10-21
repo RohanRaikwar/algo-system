@@ -2,7 +2,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { TrendingUp, TrendingDown, Trophy, Target, Activity, BarChart3 } from 'lucide-react';
 import { fetchPnLSummary, type PnLSummary } from '../../services/api';
 import { cn } from '@/lib/utils';
-import { emptyState, footerNote } from './classes';
+import { Empty } from '@/components/ui/empty';
+import { footerNote } from './classes';
 
 const card = 'grid grid-cols-[auto_1fr] grid-rows-[auto_auto] gap-x-[10px] py-[12px] px-[14px] bg-sg-bg border border-solid border-sg-line rounded-[12px]';
 const iconBase = '[grid-row:span_2] flex items-center justify-center w-[34px] h-[34px] rounded-[10px]';
@@ -54,9 +55,9 @@ export function PnLSummaryTab() {
 
     if (loading) {
         return (
-            <div className={emptyState}>
+            <Empty>
                 <p>Loading P&L data…</p>
-            </div>
+            </Empty>
         );
     }
 

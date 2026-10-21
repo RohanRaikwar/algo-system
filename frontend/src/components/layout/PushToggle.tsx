@@ -1,13 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Bell, BellOff, BellRing, Send } from 'lucide-react';
 import { disablePush, enablePush, sendTestPush, type PushState } from '../../services/push';
 import { usePushStore } from '../../store/usePushStore';
-import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Popover, PopoverContent } from '@/components/ui/popover';
 
-/* Header status pill as a button. Font comes from the parent (font: inherit
-   in the old CSS), so the pill's own size/weight do not apply here. */
-const pushBtn = 'inline-flex items-center gap-[5px] h-[28px] px-[9px] rounded-pill bg-sg-raised whitespace-nowrap min-w-0 border-none cursor-pointer leading-[inherit] phone-land:h-[26px] hover:enabled:bg-sg-hover focus-visible:outline-none focus-visible:shadow-ring disabled:opacity-60 disabled:cursor-progress';
-const popover = 'absolute top-[calc(100%_+_6px)] right-0 z-[50] bg-sg-raised border border-solid border-sg-line rounded-ctrl shadow-[0_8px_24px_rgba(0,0,0,0.35)]';
+/* The bell and Test buttons are Button variant="pill" (font inherited from the header).
+   Menu and note open 6px below the bell + Test group, right aligned. */
 
 const HINT: Record<PushState, string> = {
     'unsupported': 'This browser does not support push notifications',
@@ -27,15 +27,6 @@ export function PushToggle() {
     const [note, setNote] = useState('');
     const ref = useRef<HTMLDivElement>(null);
 
-    useEffect(() => {
-        if (!menu) return;
-        const close = (e: MouseEvent) => {
-            if (!ref.current?.contains(e.target as Node)) setMenu(false);
-        };
-        document.addEventListener('mousedown', close);
-        return () => document.removeEventListener('mousedown', close);
-    }, [menu]);
-
     if (state === null || state === 'unsupported') return null;
 
     const run = async (fn: () => Promise<PushState | void>) => {
@@ -51,9 +42,10 @@ export function PushToggle() {
         }
     };
 
+    // 'on' opens the menu (DropdownMenuTrigger); other states act on click.
     const onClick = () => {
-        if (state === 'on') setMenu(m => !m);
-        else if (state === 'off' || state === 'disabled') run(enablePush);
+        if (state === 'on') return;
+        if (state === 'off' || state === 'disabled') run(enablePush);
         else setNote(HINT[state]);
     };
 
@@ -64,44 +56,58 @@ export function PushToggle() {
     });
 
     const Icon = state === 'on' ? BellRing : state === 'off' ? Bell : BellOff;
-    const tone = state === 'on' ? 'text-sg-profit' : 'text-sg-text-2';
+    const tone = state === 'on' ? 'profit' : 'text-2';
+
+    const bell = (
+        <Button
+            variant="pill"
+            tone={tone}
+            onClick={onClick}
+            disabled={busy}
+            title={HINT[state]}
+            aria-label={HINT[state]}
+        >
+            <Icon size={14} aria-hidden />
+        </Button>
+    );
 
     return (
         <div className="relative flex gap-[6px] shrink-0" ref={ref}>
-            <button
-                type="button"
-                className={cn(pushBtn, tone)}
-                onClick={onClick}
-                disabled={busy}
-                title={HINT[state]}
-                aria-label={HINT[state]}
-                aria-expanded={state === 'on' ? menu : undefined}
-            >
-                <Icon size={14} aria-hidden />
-            </button>
+            {state === 'on' ? (
+                <DropdownMenu open={menu} onOpenChange={setMenu}>
+                    <DropdownMenuTrigger render={bell} disabled={busy} />
+                    <DropdownMenuContent anchor={ref} align="end" sideOffset={6}>
+                        <DropdownMenuItem disabled={busy} onClick={() => run(async () => { setMenu(false); return disablePush(); })}>
+                            Turn off alerts
+                        </DropdownMenuItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
+            ) : bell}
             {state === 'on' && (
-                <button
-                    type="button"
-                    className={cn(pushBtn, 'text-sg-text-2')}
+                <Button
+                    variant="pill"
+                    tone="text-2"
                     onClick={sendTest}
                     disabled={busy}
                     title="Send a test alert to this device"
                 >
                     <Send size={13} aria-hidden /> Test
-                </button>
+                </Button>
             )}
-            {menu && (
-                <div className={cn(popover, 'flex flex-col min-w-[170px] p-[4px]')} role="menu">
-                    <button type="button" role="menuitem" disabled={busy}
-                        className="py-[8px] px-[10px] border-none rounded-[6px] bg-transparent text-sg-text leading-[inherit] text-[0.82rem] text-left cursor-pointer hover:enabled:bg-sg-hover"
-                        onClick={() => run(async () => { setMenu(false); return disablePush(); })}>
-                        Turn off alerts
-                    </button>
-                </div>
-            )}
-            {note && (
-                <div className={cn(popover, 'w-max max-w-[min(280px,calc(100vw_-_32px))] py-[8px] px-[10px] text-sg-text-2 text-[0.78rem] leading-[1.4] cursor-pointer')} role="status" onClick={() => setNote('')}>{note}</div>
-            )}
+            {/* Note: stays until clicked (or Esc); never takes focus. */}
+            <Popover open={note !== ''} onOpenChange={(open, d) => { if (!open && d.reason === 'escape-key') setNote(''); }}>
+                <PopoverContent
+                    anchor={ref}
+                    align="end"
+                    role="status"
+                    initialFocus={false}
+                    finalFocus={false}
+                    className="cursor-pointer"
+                    onClick={() => setNote('')}
+                >
+                    {note}
+                </PopoverContent>
+            </Popover>
         </div>
     );
 }

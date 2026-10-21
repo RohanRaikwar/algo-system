@@ -4,6 +4,8 @@ import { useMarketFeedStatus, type Tone } from '../../hooks/useMarketFeedStatus'
 import { SignalBadge } from '../signals/SignalBadge';
 import { PushToggle } from './PushToggle';
 import { cn } from '@/lib/utils';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Badge } from '@/components/ui/badge';
 
 /** Pill text colour per tone (only "down" recolours the pill itself). */
 const TONE_TEXT: Record<Tone, string> = {
@@ -27,8 +29,7 @@ const navClass = ({ isActive }: { isActive: boolean }) => cn(
         : 'text-sg-muted',
 );
 
-/** Status pill; display and colours come from the caller. */
-const pill = 'items-center gap-[7px] h-[28px] px-[11px] rounded-pill text-[0.8rem] font-medium whitespace-nowrap min-w-0 lte-640:h-[28px] lte-640:px-[10px] lte-640:text-[12px] phone-land:h-[26px] phone-land:text-[12px]';
+/* Status pills are Badge variant="header"; display comes from the caller. */
 const widePill = 'inline-flex lte-640:hidden phone-land:hidden';
 const compactPill = 'hidden lte-640:inline-flex phone-land:inline-flex';
 const dot = 'w-[7px] h-[7px] rounded-[50%] shrink-0';
@@ -37,7 +38,7 @@ const dotLive = 'animate-[layout-header-pulse_2s_ease-out_infinite] motion-reduc
 export function Header() {
     const st = useMarketFeedStatus();
     const { marketTone, feedTone, marketLabel, nextOpen, feedLabel, connected, compactLabel } = st;
-    const compactBg = st.open ? 'bg-sg-profit-soft' : st.holiday ? 'bg-sg-warn-soft' : 'bg-sg-raised';
+    const compactBg = st.open ? 'bg-profit' : st.holiday ? 'bg-warn' : 'bg-raised';
 
     return (
         <header className="sticky top-0 z-[100] flex items-center gap-[20px] h-[52px] px-[16px] bg-sg-surface border-b border-b-sg-line shrink-0 lte-640:h-[44px] lte-640:gap-[10px] lte-640:px-[12px] phone-land:h-[40px] phone-land:gap-[12px] phone-land:px-[12px]">
@@ -60,23 +61,37 @@ export function Header() {
 
             <div className="flex items-center gap-[8px] ml-auto min-w-0 lte-640:gap-[6px]">
                 <PushToggle />
-                <span className={cn(pill, widePill, 'bg-sg-raised', TONE_TEXT[marketTone])} title={nextOpen || marketLabel}>
-                    <span className={cn(dot, TONE_DOT[marketTone])} aria-hidden />
-                    {marketLabel}
-                    {nextOpen && <span className="text-sg-faint font-normal overflow-hidden text-ellipsis lte-900:hidden">{nextOpen}</span>}
-                </span>
-                <span className={cn(pill, widePill, 'bg-sg-raised', TONE_TEXT[feedTone])} title="Price feed connection">
-                    <span className={cn(dot, TONE_DOT[feedTone], connected && dotLive)} aria-hidden />
-                    {feedLabel}
-                </span>
-                <span
-                    className={cn(pill, compactPill, compactBg, TONE_TEXT[feedTone])}
-                    title={st.summary}
-                    aria-label={`${marketLabel}${nextOpen ? `, ${nextOpen}` : ''}. Price feed ${feedLabel.toLowerCase()}.`}
-                >
-                    <span className={cn(dot, TONE_DOT[feedTone], connected && dotLive)} aria-hidden />
-                    {compactLabel}
-                </span>
+                <Tooltip>
+                    <TooltipTrigger render={<Badge variant="header" tone="bg-raised" className={cn(widePill, TONE_TEXT[marketTone])} />}>
+                        <span className={cn(dot, TONE_DOT[marketTone])} aria-hidden />
+                        {marketLabel}
+                        {nextOpen && <span className="text-sg-faint font-normal overflow-hidden text-ellipsis lte-900:hidden">{nextOpen}</span>}
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">{nextOpen || marketLabel}</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                    <TooltipTrigger render={<Badge variant="header" tone="bg-raised" className={cn(widePill, TONE_TEXT[feedTone])} />}>
+                        <span className={cn(dot, TONE_DOT[feedTone], connected && dotLive)} aria-hidden />
+                        {feedLabel}
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">Price feed connection</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                    <TooltipTrigger
+                        render={(
+                            <Badge
+                                variant="header"
+                                tone={compactBg}
+                                className={cn(compactPill, TONE_TEXT[feedTone])}
+                                aria-label={`${marketLabel}${nextOpen ? `, ${nextOpen}` : ''}. Price feed ${feedLabel.toLowerCase()}.`}
+                            />
+                        )}
+                    >
+                        <span className={cn(dot, TONE_DOT[feedTone], connected && dotLive)} aria-hidden />
+                        {compactLabel}
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">{st.summary}</TooltipContent>
+                </Tooltip>
             </div>
         </header>
     );

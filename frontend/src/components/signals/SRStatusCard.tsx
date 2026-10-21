@@ -1,7 +1,9 @@
 import { Activity } from 'lucide-react';
 import { useSelectedSRView } from '../../store/useSRStore';
 import type { SRView } from '../../types/sr';
-import { fnoAtmBody, fnoAtmHeader, fnoAtmStat, fnoBadge, fnoCard, fnoInstBody, fnoInstRow, fnoLabel, fnoParam, fnoValue } from './classes';
+import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
+import { fnoAtmBody, fnoAtmHeader, fnoAtmStat, fnoInstBody, fnoInstRow, fnoLabel, fnoParam, fnoValue } from './classes';
 
 const pts = (v?: number) => (v && v > 0 ? (v / 100).toFixed(2) : '—');
 const hm = (min: number) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
@@ -74,11 +76,11 @@ export function SRStatusCard() {
     ];
     const rejects = topRejects(v.rejects);
     return (
-        <div className={fnoCard}>
+        <Card>
             <div className={fnoAtmHeader}>
                 <Activity size={16} />
                 <span>{v.strategy} status</span>
-                <span className={fnoBadge}>{fmtTime(v.ts)}</span>
+                <Badge variant="fno" className="ml-auto">{fmtTime(v.ts)}</Badge>
             </div>
             <div className={fnoInstBody}>
                 <div className={fnoInstRow}><span className={fnoValue}>{srStatus(v)}</span></div>
@@ -99,6 +101,6 @@ export function SRStatusCard() {
                     </span>
                 </div>
             </div>
-        </div>
+        </Card>
     );
 }

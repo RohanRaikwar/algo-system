@@ -1,6 +1,7 @@
 import type { SignalRecord } from '../../types/signal';
-import { isWatchAction, watchBadgeClass, watchExitPricedAtPremium } from './watch';
-import { actionBadge, marketBadge, pnlTone } from './classes';
+import type { BadgeTone } from '@/components/ui/badge';
+import { isWatchAction, watchBadgeClass, watchBadgeTone, watchExitPricedAtPremium } from './watch';
+import { actionBadge, actionTone, marketBadge, pnlTone, type ActionTone } from './classes';
 
 /** Display helpers shared by the desktop signal table and the phone cards. */
 
@@ -40,16 +41,35 @@ export function relativeTime(ts: string, now = Date.now()): string {
     }
 }
 
+function actionKind(action: string): ActionTone {
+    if (action === 'EXIT') return 'exit';
+    return 'buy';
+}
+
+function sideKind(side: string): ActionTone {
+    if (side === 'CALL') return 'buy';
+    if (side === 'PUT') return 'put';
+    return 'none';
+}
+
+/** Badge tone of an action pill (BUY / EXIT / WATCH_*). */
+export function actionBadgeTone(action: string): BadgeTone {
+    if (isWatchAction(action)) return watchBadgeTone(action);
+    return actionTone(actionKind(action));
+}
+
+/** Badge tone of a side pill (CALL / PUT / other). */
+export function sideBadgeTone(side: string): BadgeTone {
+    return actionTone(sideKind(side));
+}
+
 export function getActionBadge(action: string): string {
     if (isWatchAction(action)) return watchBadgeClass(action);
-    if (action === 'EXIT') return actionBadge('exit');
-    return actionBadge('buy');
+    return actionBadge(actionKind(action));
 }
 
 export function getSideBadge(side: string): string {
-    if (side === 'CALL') return actionBadge('buy');
-    if (side === 'PUT') return actionBadge('put');
-    return actionBadge('none');
+    return actionBadge(sideKind(side));
 }
 
 export function normalizeMarketState(marketState?: string, reason?: string): string {

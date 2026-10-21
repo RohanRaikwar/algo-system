@@ -3,7 +3,11 @@ import { useStrikeStore } from '../../store/useStrikeStore';
 import { findReversal, useAnalystStore } from '../../store/useAnalystStore';
 import type { OpenOrder } from './signalAnalytics';
 import { PositionControls } from './PositionControls';
-import { actionBadge, cell, cellSub, emptyState, ewBadge, pnlTone, priceNa, rowMono, slKind, table, tableWrap, th, thNum } from './classes';
+import { Badge } from '@/components/ui/badge';
+import { Empty } from '@/components/ui/empty';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { sideBadgeTone } from './signalFormat';
+import { cellSub, ewTone, pnlToneKey, priceNa, rowMono, slKindTone, tableWrap } from './classes';
 
 interface LiveOrdersTabProps {
     orders: OpenOrder[];
@@ -34,12 +38,6 @@ function formatDate(ts: string): string {
     } catch {
         return '';
     }
-}
-
-function getSideBadge(side: string) {
-    if (side === 'CALL') return actionBadge('buy');
-    if (side === 'PUT') return actionBadge('put');
-    return actionBadge('none');
 }
 
 /**
@@ -76,7 +74,7 @@ export function ExitWatchCell({ order }: { order: OpenOrder }) {
     ].filter(Boolean).join('\n');
     return (
         <div className="flex items-center gap-[6px]" title={title}>
-            <span className={ewBadge(view.decision.toLowerCase())}>{view.decision}</span>
+            <Badge variant="tag" tone={ewTone(view.decision.toLowerCase())}>{view.decision}</Badge>
             <span className="w-[44px] h-[4px] rounded-pill bg-sg-line overflow-hidden"><span className="block h-full bg-sg-muted" style={{ width: `${pct}%` }} /></span>
             <span className="text-[0.72rem] text-sg-text-2 tabular-nums">{pct}%</span>
             {view.phase === 'RUNNER' && (
@@ -109,110 +107,110 @@ export function IndexLevels({ order }: { order: OpenOrder }) {
         <div className={slCell}>
             <span className={lvlSub}>SL {order.indexStop?.toFixed(2) ?? '—'}</span>
             <span className={lvlSub}>TGT {order.indexTarget?.toFixed(2) ?? '—'}</span>
-            {order.manual && <span className={slKind('manual')}>manual</span>}
+            {order.manual && <Badge variant="kind" tone={slKindTone('manual')}>manual</Badge>}
         </div>
     );
 }
 
 function LiveOrderRow({ order }: { order: OpenOrder }) {
     const { currentPrice, pnl } = useOrderLivePnL(order);
-    const tone = pnl === null ? undefined : pnlTone(pnl);
+    const tone = pnl === null ? undefined : pnlToneKey(pnl);
 
     return (
-        <tr>
-            <td className={cell(true, 'strategy')}>{order.strategy}</td>
-            <td className={cell(true)}>
-                <span className={getSideBadge(order.side)}>{order.side}</span>
-            </td>
-            <td className={cell(true)} title={order.instrument}>
+        <TableRow>
+            <TableCell density="compact" kind="strategy">{order.strategy}</TableCell>
+            <TableCell density="compact">
+                <Badge tone={sideBadgeTone(order.side)}>{order.side}</Badge>
+            </TableCell>
+            <TableCell density="compact" title={order.instrument}>
                 <span className={rowMono}>{order.fnoSymbol || order.instrument}</span>
                 {order.leg && (
                     <span className={cellSub}>
                         {order.leg.replace('_', ' ')}{order.strike ? ` ${order.strike}` : ''}
-                        {order.short && <span className={slKind('hard')} style={{ marginLeft: 6 }}>SHORT</span>}
+                        {order.short && <Badge variant="kind" tone={slKindTone('hard')} style={{ marginLeft: 6 }}>SHORT</Badge>}
                     </span>
                 )}
-            </td>
-            <td className={cell(true, 'price')}>
+            </TableCell>
+            <TableCell density="compact" kind="price">
                 {order.buyPrice !== null ? `₹${order.buyPrice.toFixed(2)}` : '—'}
-            </td>
-            <td className={cell(true, 'price')}>
+            </TableCell>
+            <TableCell density="compact" kind="price">
                 {currentPrice !== null
                     ? <span className="text-sg-accent">₹{currentPrice.toFixed(2)}</span>
                     : <span className={priceNa}>—</span>}
-            </td>
-            <td className={cell(true, 'price')}>
+            </TableCell>
+            <TableCell density="compact" kind="price">
                 {order.stoplossPrice !== null
                     ? (
                         <div className={slCell}>
                             <span className="text-sg-warn font-medium">₹{order.stoplossPrice.toFixed(2)}</span>
                             {order.stoplossKind && (
-                                <span className={slKind(order.stoplossKind.toLowerCase())}>
+                                <Badge variant="kind" tone={slKindTone(order.stoplossKind.toLowerCase())}>
                                     {order.stoplossKind}
-                                </span>
+                                </Badge>
                             )}
                         </div>
                     )
                     : <span className={priceNa}>Pending</span>}
-            </td>
-            <td className={cell(true, 'price')}>
+            </TableCell>
+            <TableCell density="compact" kind="price">
                 {order.targetPrice ? `₹${order.targetPrice.toFixed(2)}` : <span className={priceNa}>—</span>}
-            </td>
-            <td className={cell(true, 'price')}>
+            </TableCell>
+            <TableCell density="compact" kind="price">
                 <IndexLevels order={order} />
-            </td>
-            <td className={cell(true, 'price', tone)}>
+            </TableCell>
+            <TableCell density="compact" kind="price" tone={tone}>
                 {pnl !== null
                     ? `${pnl > 0 ? '+' : pnl < 0 ? '−' : ''}₹${Math.abs(pnl).toFixed(2)}`
                     : '—'}
-            </td>
-            <td className={cell(true)}><ExitWatchCell order={order} /></td>
-            <td className={cell(true)}><PositionControls order={order} currentPrice={currentPrice} /></td>
-            <td className={cell(true, 'time')} title={order.entryTime}>
+            </TableCell>
+            <TableCell density="compact"><ExitWatchCell order={order} /></TableCell>
+            <TableCell density="compact"><PositionControls order={order} currentPrice={currentPrice} /></TableCell>
+            <TableCell density="compact" kind="time" title={order.entryTime}>
                 {formatTime(order.entryTime)}
                 <span className={cellSub}>
                     {formatDate(order.entryTime)}
                 </span>
-            </td>
-        </tr>
+            </TableCell>
+        </TableRow>
     );
 }
 
 export function LiveOrdersTab({ orders }: LiveOrdersTabProps) {
     if (orders.length === 0) {
         return (
-            <div className={emptyState}>
+            <Empty>
                 <PlusCircle size={48} strokeWidth={1.5} />
                 <p>No open positions. New entries show here with live P&amp;L until they exit.</p>
-            </div>
+            </Empty>
         );
     }
 
     return (
         <div className={tableWrap()}>
-            <table className={table}>
-                <thead>
-                    <tr>
-                        <th className={th} style={{ width: '140px' }}>Strategy</th>
-                        <th className={th} style={{ width: '70px' }}>Side</th>
-                        <th className={th} style={{ width: '140px' }}>Instrument</th>
-                        <th className={thNum} style={{ width: '100px' }}>Entry</th>
-                        <th className={thNum} style={{ width: '100px' }}>Current</th>
-                        <th className={thNum} style={{ width: '100px' }}>Stop loss</th>
-                        <th className={thNum} style={{ width: '90px' }}>Target</th>
-                        <th className={thNum} style={{ width: '110px' }}>Index SL / TGT</th>
-                        <th className={thNum} style={{ width: '100px' }}>P&L</th>
-                        <th className={th} style={{ width: '170px' }}>Exit watch</th>
-                        <th className={th} style={{ width: '170px' }}>Actions</th>
-                        <th className={th} style={{ width: '120px' }}>Entry time</th>
-                    </tr>
-                </thead>
-                <tbody>
+            <Table>
+                <TableHeader>
+                    <TableRow>
+                        <TableHead style={{ width: '140px' }}>Strategy</TableHead>
+                        <TableHead style={{ width: '70px' }}>Side</TableHead>
+                        <TableHead style={{ width: '140px' }}>Instrument</TableHead>
+                        <TableHead numeric style={{ width: '100px' }}>Entry</TableHead>
+                        <TableHead numeric style={{ width: '100px' }}>Current</TableHead>
+                        <TableHead numeric style={{ width: '100px' }}>Stop loss</TableHead>
+                        <TableHead numeric style={{ width: '90px' }}>Target</TableHead>
+                        <TableHead numeric style={{ width: '110px' }}>Index SL / TGT</TableHead>
+                        <TableHead numeric style={{ width: '100px' }}>P&L</TableHead>
+                        <TableHead style={{ width: '170px' }}>Exit watch</TableHead>
+                        <TableHead style={{ width: '170px' }}>Actions</TableHead>
+                        <TableHead style={{ width: '120px' }}>Entry time</TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
                     {orders.map((o, i) => (
                         <LiveOrderRow key={`${o.strategy}-${o.instrument}-${i}`} order={o} />
                     ))}
-                </tbody>
-            </table>
+                </TableBody>
+            </Table>
         </div>
     );
 }

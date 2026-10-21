@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react';
 import { Activity, CheckCircle, AlertTriangle, XCircle, RefreshCw, Clock, Shield } from 'lucide-react';
 import { fetchAllSessionsHealth, type AllSessionsHealth, type SessionHealth } from '../../services/api';
 import { cn } from '@/lib/utils';
-import { dayCard, emptyState, errorText, footerNote, spin, summaryCardShell, summaryGrid, summaryLabel, summaryValue } from './classes';
+import { Card } from '@/components/ui/card';
+import { Empty } from '@/components/ui/empty';
+import { Spinner } from '@/components/ui/spinner';
+import { errorText, footerNote, summaryGrid, summaryLabel, summaryValue } from './classes';
 
-/* Summary cards on a session card sit on the surface colour. */
-const detailCard = `${summaryCardShell} bg-sg-surface`;
 const STATUS_TONE: Record<string, string> = {
     healthy: 'text-sg-profit bg-sg-profit-soft',
     unhealthy: 'text-sg-loss bg-sg-loss-soft',
@@ -39,19 +40,19 @@ export function SessionHealthPanel() {
 
     if (loading) {
         return (
-            <div className={emptyState}>
-                <RefreshCw size={48} className={spin} strokeWidth={1.5} />
+            <Empty>
+                <Spinner size={48} strokeWidth={1.5} />
                 <p>Loading session health…</p>
-            </div>
+            </Empty>
         );
     }
 
     if (error || !health) {
         return (
-            <div className={emptyState}>
+            <Empty>
                 <XCircle size={48} strokeWidth={1.5} />
                 <p className={errorText}>{error || 'No session data returned by the gateway.'}</p>
-            </div>
+            </Empty>
         );
     }
 
@@ -61,7 +62,7 @@ export function SessionHealthPanel() {
         const statusClass = isHealthy ? 'healthy' : isConfigured ? 'unhealthy' : 'unknown';
 
         return (
-            <div className={cn(dayCard, 'p-[14px]')}>
+            <Card className="p-[14px]">
                 {/* Header */}
                 <div className="flex items-center justify-between gap-[10px]">
                     <div className="flex items-center gap-[8px] [&_svg]:text-sg-muted">
@@ -93,14 +94,14 @@ export function SessionHealthPanel() {
                 {/* Details Grid */}
                 {isConfigured && session.healthy !== undefined && (
                     <div className={cn(summaryGrid, 'mt-[12px]')}>
-                        <div className={detailCard}>
+                        <Card variant="summary-surface">
                             <div className={summaryLabel}>Session valid</div>
                             <div className={summaryValue(session.valid ? 'text-sg-profit' : 'text-sg-loss')}>
                                 {session.valid ? 'Yes' : 'No'}
                             </div>
-                        </div>
+                        </Card>
 
-                        <div className={detailCard}>
+                        <Card variant="summary-surface">
                             <div className={summaryLabel}>
                                 <Clock size={12} />
                                 Session age
@@ -108,9 +109,9 @@ export function SessionHealthPanel() {
                             <div className={summaryValue(undefined, true)}>
                                 {session.age_minutes?.toFixed(1)} min
                             </div>
-                        </div>
+                        </Card>
 
-                        <div className={detailCard}>
+                        <Card variant="summary-surface">
                             <div className={summaryLabel}>
                                 <RefreshCw size={12} />
                                 Next refresh
@@ -118,9 +119,9 @@ export function SessionHealthPanel() {
                             <div className={summaryValue(undefined, true)}>
                                 {session.time_until_refresh || 'N/A'}
                             </div>
-                        </div>
+                        </Card>
 
-                        <div className={detailCard}>
+                        <Card variant="summary-surface">
                             <div className={summaryLabel}>
                                 <Shield size={12} />
                                 Circuit breaker
@@ -128,26 +129,26 @@ export function SessionHealthPanel() {
                             <div className={summaryValue(session.circuit_breaker_open ? 'text-sg-loss' : 'text-sg-profit')}>
                                 {session.circuit_breaker_open ? 'OPEN' : 'Closed'}
                             </div>
-                        </div>
+                        </Card>
 
-                        <div className={detailCard}>
+                        <Card variant="summary-surface">
                             <div className={summaryLabel}>Total refreshes</div>
                             <div className={summaryValue()}>
                                 {session.total_refreshes || 0}
                             </div>
-                        </div>
+                        </Card>
 
-                        <div className={detailCard}>
+                        <Card variant="summary-surface">
                             <div className={summaryLabel}>Success rate</div>
                             <div className={summaryValue('text-sg-profit')}>
                                 {session.total_refreshes && session.total_refreshes > 0 ? 
                                     `${((session.successful_refreshes || 0) / session.total_refreshes * 100).toFixed(1)}%` : 
                                     'N/A'}
                             </div>
-                        </div>
+                        </Card>
 
                         {session.last_refresh && (
-                            <div className={cn(detailCard, '[grid-column:span_2] lte-640:[grid-column:auto]')}>
+                            <Card variant="summary-surface" className="[grid-column:span_2] lte-640:[grid-column:auto]">
                                 <div className={summaryLabel}>Last refresh</div>
                                 <div className={summaryValue(undefined, true)}>
                                     {new Date(session.last_refresh).toLocaleString('en-IN', {
@@ -158,11 +159,11 @@ export function SessionHealthPanel() {
                                         timeZone: 'Asia/Kolkata'
                                     })}
                                 </div>
-                            </div>
+                            </Card>
                         )}
                     </div>
                 )}
-            </div>
+            </Card>
         );
     };
 

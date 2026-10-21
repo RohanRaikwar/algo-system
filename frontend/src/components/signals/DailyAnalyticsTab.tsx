@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarDays, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
+import { CalendarDays, ChevronDown, ChevronRight } from 'lucide-react';
 import {
     fetchDailyOrders,
     fetchDailyPnL,
@@ -8,8 +8,14 @@ import {
 } from '../../services/api';
 import { useSignalStore } from '../../store/useSignalStore';
 import { computeDailyWindowStats, createOrdersByDateMap } from './dailyAnalytics';
-import { cn } from '@/lib/utils';
-import { actionBadge, cell, ctrlBtn, dailyTitle, dayBody, dayCard, dayDate, dayHead, dayLeft, dayList, dayMeta, dayPnl, dayRight, emptyState, pnlTone, rowMono, sectionHeader, slKind, spin, summaryCard, summaryGrid, summaryLabel, summaryValue, table, tableWrap, tabStack, th, thNum } from './classes';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Empty } from '@/components/ui/empty';
+import { Spinner } from '@/components/ui/spinner';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { actionTone, dailyTitle, dayBody, dayDate, dayHead, dayLeft, dayList, dayMeta, dayPnl, dayRight, pnlTone, pnlToneKey, rowMono, sectionHeader, slKindTone, summaryGrid, summaryLabel, summaryValue, tableWrap, tabStack } from './classes';
 
 const DEFAULT_DAYS = 30;
 const IST_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
@@ -160,9 +166,9 @@ export function DailyAnalyticsTab() {
 
     if (loading && todayPnLRows.length === 0) {
         return (
-            <div className={emptyState}>
+            <Empty>
                 <p>Loading today&apos;s P&amp;L…</p>
-            </div>
+            </Empty>
         );
     }
 
@@ -176,17 +182,17 @@ export function DailyAnalyticsTab() {
                         <CalendarDays size={16} />
                         Today's realized P&amp;L
                     </div>
-                    <button
-                        className={ctrlBtn}
+                    <Button
+                        variant="outline"
                         onClick={() => void load(true)}
                         disabled={loading}
                         title="Refresh daily analytics"
                     >
-                        <RefreshCw size={14} className={loading ? spin : ''} />
+                        <Spinner size={14} spinning={loading} />
                         Refresh
-                    </button>
+                    </Button>
                 </div>
-                <div className={cn(emptyState, 'border border-dashed border-sg-line rounded-[12px]')}>
+                <Empty variant="dashed">
                     <CalendarDays size={48} strokeWidth={1.5} />
                     <p>No completed trades for today ({todayKey}).</p>
                     <p className="text-sg-faint">
@@ -199,7 +205,7 @@ export function DailyAnalyticsTab() {
                             <span>{latestCompletedDay.trades} trades</span>
                         </div>
                     )}
-                </div>
+                </Empty>
             </div>
         );
     }
@@ -213,34 +219,34 @@ export function DailyAnalyticsTab() {
                     <CalendarDays size={16} />
                     Today's realized P&amp;L
                 </div>
-                <button
-                    className={ctrlBtn}
+                <Button
+                    variant="outline"
                     onClick={() => void load(true)}
                     disabled={loading}
                     title="Refresh daily analytics"
                 >
-                    <RefreshCw size={14} className={loading ? spin : ''} />
+                    <Spinner size={14} spinning={loading} />
                     Refresh
-                </button>
+                </Button>
             </div>
 
             <div className={summaryGrid}>
-                <div className={summaryCard}>
+                <Card variant="summary">
                     <div className={summaryLabel}>Date (IST)</div>
                     <div className={summaryValue()}>{formatDayDate(todayKey)}</div>
-                </div>
-                <div className={summaryCard}>
+                </Card>
+                <Card variant="summary">
                     <div className={summaryLabel}>Realized P&amp;L</div>
                     <div className={summaryValue(netClass)}>{formatINR(windowStats.pnl)}</div>
-                </div>
-                <div className={summaryCard}>
+                </Card>
+                <Card variant="summary">
                     <div className={summaryLabel}>Completed trades</div>
                     <div className={summaryValue()}>{windowStats.trades}</div>
-                </div>
-                <div className={summaryCard}>
+                </Card>
+                <Card variant="summary">
                     <div className={summaryLabel}>Win rate</div>
                     <div className={summaryValue()}>{windowStats.winRate.toFixed(1)}%</div>
-                </div>
+                </Card>
             </div>
 
             <div className={dayList}>
@@ -250,8 +256,13 @@ export function DailyAnalyticsTab() {
                     const pnlClass = pnlTone(day.pnl);
 
                     return (
-                        <section key={day.date} className={dayCard}>
-                            <button className={dayHead} aria-expanded={expanded} onClick={() => toggleDay(day.date)}>
+                        <Collapsible
+                            key={day.date}
+                            open={expanded}
+                            onOpenChange={() => toggleDay(day.date)}
+                            render={<Card render={<section />} />}
+                        >
+                            <CollapsibleTrigger className={dayHead}>
                                 <span className={dayLeft}>
                                     {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                     <span className={dayDate}>{formatDayDate(day.date)}</span>
@@ -262,59 +273,57 @@ export function DailyAnalyticsTab() {
                                     <span className={dayMeta}>W {day.wins} / L {day.losses}</span>
                                     <span className={dayMeta}>{day.win_rate.toFixed(1)}%</span>
                                 </span>
-                            </button>
+                            </CollapsibleTrigger>
 
-                            {expanded && (
-                                <div className={dayBody}>
+                            <CollapsibleContent className={dayBody}>
                                     {orders.length === 0 ? (
                                         <div className="p-[14px] text-sg-muted text-[0.85rem]">No completed trade pairs for this day.</div>
                                     ) : (
                                         <div className={tableWrap({ dayBody: true })}>
-                                            <table className={table}>
-                                                <thead>
-                                                    <tr>
-                                                        <th className={th} style={{ width: '140px' }}>Strategy</th>
-                                                        <th className={th} style={{ width: '70px' }}>Side</th>
-                                                        <th className={th} style={{ width: '130px' }}>Instrument</th>
-                                                        <th className={thNum} style={{ width: '60px' }}>Qty</th>
-                                                        <th className={thNum} style={{ width: '100px' }}>Entry</th>
-                                                        <th className={th} style={{ width: '120px' }}>Entry time</th>
-                                                        <th className={thNum} style={{ width: '100px' }}>Exit</th>
-                                                        <th className={th} style={{ width: '120px' }}>Exit time</th>
-                                                        <th className={thNum} style={{ width: '110px' }}>Realized P&amp;L</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
+                                            <Table>
+                                                <TableHeader>
+                                                    <TableRow>
+                                                        <TableHead style={{ width: '140px' }}>Strategy</TableHead>
+                                                        <TableHead style={{ width: '70px' }}>Side</TableHead>
+                                                        <TableHead style={{ width: '130px' }}>Instrument</TableHead>
+                                                        <TableHead numeric style={{ width: '60px' }}>Qty</TableHead>
+                                                        <TableHead numeric style={{ width: '100px' }}>Entry</TableHead>
+                                                        <TableHead style={{ width: '120px' }}>Entry time</TableHead>
+                                                        <TableHead numeric style={{ width: '100px' }}>Exit</TableHead>
+                                                        <TableHead style={{ width: '120px' }}>Exit time</TableHead>
+                                                        <TableHead numeric style={{ width: '110px' }}>Realized P&amp;L</TableHead>
+                                                    </TableRow>
+                                                </TableHeader>
+                                                <TableBody>
                                                     {orders.map((order, idx) => {
-                                                        const orderClass = pnlTone(order.realized_pnl);
+                                                        const orderTone = pnlToneKey(order.realized_pnl);
                                                         return (
-                                                            <tr key={`${day.date}-${order.strategy}-${order.instrument}-${idx}`} >
-                                                                <td className={cell(true, 'strategy')} title={order.exit_reason || undefined}>
+                                                            <TableRow key={`${day.date}-${order.strategy}-${order.instrument}-${idx}`} >
+                                                                <TableCell density="compact" kind="strategy" title={order.exit_reason || undefined}>
                                                                     {order.strategy}
-                                                                    {order.real && <span className={slKind('hard')} style={{ marginLeft: 6 }}>real</span>}
-                                                                </td>
-                                                                <td className={cell(true)}>
-                                                                    <span className={actionBadge(order.side === 'PUT' ? 'put' : 'buy')}>
+                                                                    {order.real && <Badge variant="kind" tone={slKindTone('hard')} style={{ marginLeft: 6 }}>real</Badge>}
+                                                                </TableCell>
+                                                                <TableCell density="compact">
+                                                                    <Badge tone={actionTone(order.side === 'PUT' ? 'put' : 'buy')}>
                                                                         {order.side || '—'}
-                                                                    </span>
-                                                                </td>
-                                                                <td className={cell(true)} title={order.instrument}><span className={order.fno_symbol ? rowMono : undefined}>{order.fno_symbol || order.instrument}</span></td>
-                                                                <td className={cell(true, 'price')}>{order.qty}</td>
-                                                                <td className={cell(true, 'price')}>{formatINR(order.entry_price)}</td>
-                                                                <td className={cell(true, 'time')}>{formatTime(order.entry_time)}</td>
-                                                                <td className={cell(true, 'price')}>{formatINR(order.exit_price)}</td>
-                                                                <td className={cell(true, 'time')}>{formatTime(order.exit_time)}</td>
-                                                                <td className={cell(true, 'price', orderClass)}>{formatINR(order.realized_pnl)}</td>
-                                                            </tr>
+                                                                    </Badge>
+                                                                </TableCell>
+                                                                <TableCell density="compact" title={order.instrument}><span className={order.fno_symbol ? rowMono : undefined}>{order.fno_symbol || order.instrument}</span></TableCell>
+                                                                <TableCell density="compact" kind="price">{order.qty}</TableCell>
+                                                                <TableCell density="compact" kind="price">{formatINR(order.entry_price)}</TableCell>
+                                                                <TableCell density="compact" kind="time">{formatTime(order.entry_time)}</TableCell>
+                                                                <TableCell density="compact" kind="price">{formatINR(order.exit_price)}</TableCell>
+                                                                <TableCell density="compact" kind="time">{formatTime(order.exit_time)}</TableCell>
+                                                                <TableCell density="compact" kind="price" tone={orderTone}>{formatINR(order.realized_pnl)}</TableCell>
+                                                            </TableRow>
                                                         );
                                                     })}
-                                                </tbody>
-                                            </table>
+                                                </TableBody>
+                                            </Table>
                                         </div>
                                     )}
-                                </div>
-                            )}
-                        </section>
+                            </CollapsibleContent>
+                        </Collapsible>
                     );
                 })}
             </div>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { WifiOff } from 'lucide-react';
 import { useWSStore } from '../../store/useWSStore';
+import { Alert } from '@/components/ui/alert';
 
 export function ReconnectBanner() {
     const connected = useWSStore(s => s.connected);
@@ -21,11 +22,8 @@ export function ReconnectBanner() {
     if (!visible) return null;
 
     return (
-        <div
-            role="alert"
-            className="fixed top-0 left-0 right-0 z-[200] bg-[linear-gradient(90deg,rgba(239,68,68,0.95),rgba(220,38,38,0.95))] text-white text-center py-[10px] px-[20px] text-[0.85rem] font-semibold tracking-[0.3px] [backdrop-filter:blur(8px)] flex items-center justify-center gap-[8px]"
-        >
+        <Alert variant="banner" role="alert" className="fixed top-0 left-0 right-0 z-[200]">
             <WifiOff size={16} /> Connection lost — reconnecting (attempt #{reconnectAttempts})…
-        </div>
+        </Alert>
     );
 }

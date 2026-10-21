@@ -1,4 +1,4 @@
-import { Fragment, useState, type KeyboardEvent } from 'react';
+import { Fragment, useState } from 'react';
 import { ClipboardList, CircleDot, BarChart3, Zap, ChevronDown, ChevronRight, TrendingUp, CalendarDays, User, Settings, Activity, type LucideIcon } from 'lucide-react';
 import { SignalRow } from '../components/signals/SignalRow';
 import { LiveOrdersTab } from '../components/signals/LiveOrdersTab';
@@ -12,7 +12,17 @@ import { formatDateKey, signalKey, useSignalsData, type SignalsData } from '../c
 import { SignalsMobile } from '../components/signals/mobile/SignalsMobile';
 import { PHONE_PORTRAIT_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
 import { cn } from '@/lib/utils';
-import { ctrlBtn, dayBody, dayCard, dayDate, dayHead, dayLeft, dayList, dayMeta, dayRight, emptyState, signalsPage, table, tableWrap, th, thNum } from '../components/signals/classes';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Empty } from '@/components/ui/empty';
+import { Input } from '@/components/ui/input';
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
+import { Separator } from '@/components/ui/separator';
+import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { dayBody, dayDate, dayHead, dayLeft, dayList, dayMeta, dayRight, signalsPage, tableWrap } from '../components/signals/classes';
 
 type SignalTab = 'LOG' | 'LIVE' | 'EVENT_PRICE' | 'DAILY' | 'PNL' | 'ACCOUNT' | 'SETTINGS' | 'SESSION';
 
@@ -23,7 +33,6 @@ const TAB_GROUPS: TabGroup[] = ['activity', 'performance', 'system'];
 const stat = 'flex flex-col justify-center gap-[2px] min-w-[104px] py-[8px] px-[18px] border-r border-r-sg-line-soft last:[border-right:none] lte-640:min-w-0 lte-640:px-[12px] lte-640:nth-[3n]:[border-right:none]';
 const statLabel = 'text-[0.78rem] text-sg-muted whitespace-nowrap lte-640:overflow-hidden lte-640:text-ellipsis';
 const statValue = 'inline-flex items-center gap-[8px] text-[1.6rem] font-semibold leading-[1.15] tracking-[-0.02em] tabular-nums lte-640:text-[1.3rem]';
-const filterField = 'h-[34px] py-0 px-[10px] bg-sg-bg border border-solid border-sg-line rounded-ctrl text-sg-text [font-family:inherit] text-[0.85rem] [transition:border-color_0.15s] hover:border-sg-faint lte-640:flex-[1_1_140px] lte-640:min-w-0';
 
 const TABS: { id: SignalTab; label: string; Icon: LucideIcon; group: TabGroup }[] = [
     { id: 'LOG', label: 'Signal log', Icon: ClipboardList, group: 'activity' },
@@ -52,19 +61,6 @@ function SignalsDesktop({ data }: { data: SignalsData }) {
         openOrders, entryPriceMap, todayCount, buyCount, exitCount,
     } = data;
     const [activeTab, setActiveTab] = useState<SignalTab>('LOG');
-
-    const onTabKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
-        if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft' && e.key !== 'Home' && e.key !== 'End') return;
-        e.preventDefault();
-        const idx = TABS.findIndex(t => t.id === activeTab);
-        let next = idx;
-        if (e.key === 'ArrowRight') next = (idx + 1) % TABS.length;
-        if (e.key === 'ArrowLeft') next = (idx - 1 + TABS.length) % TABS.length;
-        if (e.key === 'Home') next = 0;
-        if (e.key === 'End') next = TABS.length - 1;
-        setActiveTab(TABS[next].id);
-        document.getElementById(`signals-tab-${TABS[next].id}`)?.focus();
-    };
 
     return (
         <div className={signalsPage}>
@@ -96,66 +92,50 @@ function SignalsDesktop({ data }: { data: SignalsData }) {
                 </div>
             </header>
 
-            <nav className="flex items-center gap-[4px] p-[4px] bg-sg-surface border border-solid border-sg-line rounded-panel overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="tablist" aria-label="Signals views">
+            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as SignalTab)}>
+            <TabsList variant="line" activateOnFocus render={<nav />} aria-label="Signals views">
                 {TAB_GROUPS.map((group, gi) => (
                     <Fragment key={group}>
-                        {gi > 0 && <span className="w-[1px] h-[20px] my-0 mx-[6px] bg-sg-line shrink-0" aria-hidden="true" />}
+                        {gi > 0 && <Separator variant="group" orientation="vertical" aria-hidden="true" />}
                         <div className="flex gap-[2px] shrink-0">
-                            {TABS.filter(t => t.group === group).map(({ id, label, Icon }) => {
-                                const selected = activeTab === id;
-                                return (
-                                    <button
-                                        key={id}
-                                        id={`signals-tab-${id}`}
-                                        role="tab"
-                                        aria-selected={selected}
-                                        aria-controls="signals-panel"
-                                        tabIndex={selected ? 0 : -1}
-                                        className={cn(
-                                            'inline-flex items-center gap-[7px] py-[8px] px-[12px] [border:none] rounded-[10px] text-[0.86rem] font-medium whitespace-nowrap cursor-pointer [transition:background_0.15s,color_0.15s]',
-                                            selected
-                                                ? 'text-sg-text bg-sg-hover shadow-[inset_0_0_0_1px_var(--sg-line)] focus-visible:aria-selected:shadow-[inset_0_0_0_1px_var(--sg-line)] [&_svg]:text-sg-accent'
-                                                : 'bg-transparent text-sg-muted hover:text-sg-text hover:bg-sg-raised',
-                                        )}
-                                        onClick={() => setActiveTab(id)}
-                                        onKeyDown={onTabKeyDown}
-                                    >
-                                        <Icon size={15} /> {label}
-                                        {id === 'LIVE' && openOrders.length > 0 && (
-                                            <span className="min-w-[18px] py-[1px] px-[6px] rounded-pill bg-sg-accent text-white text-[0.7rem] font-semibold text-center tabular-nums">{openOrders.length}</span>
-                                        )}
-                                    </button>
-                                );
-                            })}
+                            {TABS.filter(t => t.group === group).map(({ id, label, Icon }) => (
+                                <TabsTrigger key={id} value={id} id={`signals-tab-${id}`}>
+                                    <Icon size={15} /> {label}
+                                    {id === 'LIVE' && openOrders.length > 0 && (
+                                        <Badge variant="count-tab">{openOrders.length}</Badge>
+                                    )}
+                                </TabsTrigger>
+                            ))}
                         </div>
                     </Fragment>
                 ))}
-            </nav>
+            </TabsList>
 
-            <section
+            <TabsContent
+                value={activeTab}
                 id="signals-panel"
+                render={<section />}
                 className="flex flex-col gap-[12px] min-w-0 p-[14px] bg-sg-surface border border-solid border-sg-line rounded-panel lte-640:p-[10px]"
-                role="tabpanel"
-                aria-labelledby={`signals-tab-${activeTab}`}
             >
             {(activeTab === 'LOG' || activeTab === 'LIVE' || activeTab === 'EVENT_PRICE') && (
                 <div className="flex items-center gap-[8px] flex-wrap">
-                    <select className={filterField} value={stratFilter} onChange={e => setStratFilter(e.target.value)} aria-label="Strategy">
-                        <option value="ALL">All strategies</option>
+                    <NativeSelect variant="filter" value={stratFilter} onChange={e => setStratFilter(e.target.value)} aria-label="Strategy">
+                        <NativeSelectOption value="ALL">All strategies</NativeSelectOption>
                         {strategyNames.map(name => (
-                            <option key={name} value={name}>{name}</option>
+                            <NativeSelectOption key={name} value={name}>{name}</NativeSelectOption>
                         ))}
-                    </select>
+                    </NativeSelect>
                     {activeTab === 'LOG' && (
                         <>
-                            <select className={filterField} value={actionFilter} onChange={e => setActionFilter(e.target.value)} aria-label="Action">
-                                <option value="ALL">All actions</option>
-                                <option value="BUY">Entries (BUY)</option>
-                                <option value="EXIT">Exits (EXIT)</option>
-                                <option value="WATCH">Exit watch (WATCH_*)</option>
-                            </select>
-                            <input
-                                className={cn(filterField, 'min-w-[200px] placeholder:text-sg-faint')}
+                            <NativeSelect variant="filter" value={actionFilter} onChange={e => setActionFilter(e.target.value)} aria-label="Action">
+                                <NativeSelectOption value="ALL">All actions</NativeSelectOption>
+                                <NativeSelectOption value="BUY">Entries (BUY)</NativeSelectOption>
+                                <NativeSelectOption value="EXIT">Exits (EXIT)</NativeSelectOption>
+                                <NativeSelectOption value="WATCH">Exit watch (WATCH_*)</NativeSelectOption>
+                            </NativeSelect>
+                            <Input
+                                variant="filter"
+                                className="min-w-[200px]"
                                 type="search"
                                 placeholder="Filter by token, e.g. NFO:43521"
                                 aria-label="Filter by token"
@@ -163,12 +143,12 @@ function SignalsDesktop({ data }: { data: SignalsData }) {
                                 onChange={e => setTokenFilter(e.target.value)}
                             />
                             {filtersActive && (
-                                <button
-                                    className="h-[34px] py-0 px-[10px] bg-transparent [border:none] rounded-ctrl text-sg-accent text-[0.85rem] cursor-pointer hover:bg-sg-accent-soft"
+                                <Button
+                                    variant="link"
                                     onClick={() => { setStratFilter('ALL'); setActionFilter('ALL'); setTokenFilter(''); }}
                                 >
                                     Clear filters
-                                </button>
+                                </Button>
                             )}
                         </>
                     )}
@@ -179,30 +159,31 @@ function SignalsDesktop({ data }: { data: SignalsData }) {
             {activeTab === 'LOG' && (
                 <>
                     {loading ? (
-                        <div className={emptyState}>
+                        <Empty>
                             <p>Loading signals…</p>
-                        </div>
+                        </Empty>
                     ) : filtered.length === 0 ? (
-                        <div className={emptyState}>
+                        <Empty>
                             <Zap size={48} strokeWidth={1.5} />
                             <p>
                                 {filtersActive
                                     ? 'No signals match these filters. Clear filters to see all signals.'
                                     : 'No signals yet. They appear here as soon as a strategy triggers.'}
                             </p>
-                        </div>
+                        </Empty>
                     ) : (
                         <div className={dayList}>
                             {logGroups.map((group) => {
                                 const expanded = !!expandedLogDates[group.date];
 
                                 return (
-                                    <section key={group.date} className={dayCard}>
-                                        <button
-                                            className={dayHead}
-                                            aria-expanded={expanded}
-                                            onClick={() => setExpandedLogDates(prev => ({ ...prev, [group.date]: !prev[group.date] }))}
-                                        >
+                                    <Collapsible
+                                        key={group.date}
+                                        open={expanded}
+                                        onOpenChange={() => setExpandedLogDates(prev => ({ ...prev, [group.date]: !prev[group.date] }))}
+                                        render={<Card render={<section />} />}
+                                    >
+                                        <CollapsibleTrigger className={dayHead}>
                                             <span className={dayLeft}>
                                                 {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                                 <span className={dayDate}>{formatDateKey(group.date)}</span>
@@ -211,26 +192,25 @@ function SignalsDesktop({ data }: { data: SignalsData }) {
                                                 <span className={dayMeta}>{group.signals.length} signals</span>
                                                 <span className={dayMeta}>{group.buys} entries · {group.exits} exits</span>
                                             </span>
-                                        </button>
+                                        </CollapsibleTrigger>
 
-                                        {expanded && (
-                                            <div className={dayBody}>
+                                        <CollapsibleContent className={dayBody}>
                                                 <div className={tableWrap({ dayBody: true, fullHeight: true })}>
-                                                    <table className={table}>
-                                                        <thead>
-                                                            <tr>
-                                                                <th className={th} style={{ width: '130px' }}>Time</th>
-                                                                <th className={th} style={{ width: '76px' }}>Action</th>
-                                                                <th className={th} style={{ width: '70px' }}>Side</th>
-                                                                <th className={th} style={{ width: '112px' }}>Market</th>
-                                                                <th className={th} style={{ width: '130px' }}>Strategy</th>
-                                                                <th className={th} style={{ width: '104px' }}>Mode</th>
-                                                                <th className={th} style={{ width: '140px' }}>Instrument</th>
-                                                                <th className={thNum} style={{ width: '110px' }}>Price</th>
-                                                                <th className={th}>Reason</th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody>
+                                                    <Table>
+                                                        <TableHeader>
+                                                            <TableRow>
+                                                                <TableHead style={{ width: '130px' }}>Time</TableHead>
+                                                                <TableHead style={{ width: '76px' }}>Action</TableHead>
+                                                                <TableHead style={{ width: '70px' }}>Side</TableHead>
+                                                                <TableHead style={{ width: '112px' }}>Market</TableHead>
+                                                                <TableHead style={{ width: '130px' }}>Strategy</TableHead>
+                                                                <TableHead style={{ width: '104px' }}>Mode</TableHead>
+                                                                <TableHead style={{ width: '140px' }}>Instrument</TableHead>
+                                                                <TableHead numeric style={{ width: '110px' }}>Price</TableHead>
+                                                                <TableHead>Reason</TableHead>
+                                                            </TableRow>
+                                                        </TableHeader>
+                                                        <TableBody>
                                                             {group.signals.map((sig) => {
                                                                 const entry = entryPriceMap.get(signalKey(sig));
                                                                 return (
@@ -243,12 +223,11 @@ function SignalsDesktop({ data }: { data: SignalsData }) {
                                                                     />
                                                                 );
                                                             })}
-                                                        </tbody>
-                                                    </table>
+                                                        </TableBody>
+                                                    </Table>
                                                 </div>
-                                            </div>
-                                        )}
-                                    </section>
+                                        </CollapsibleContent>
+                                    </Collapsible>
                                 );
                             })}
                         </div>
@@ -259,8 +238,8 @@ function SignalsDesktop({ data }: { data: SignalsData }) {
                             {filtered.length} signals
                             <span className="text-sg-faint"> over {logGroups.length} day{logGroups.length === 1 ? '' : 's'}</span>
                         </span>
-                        <button
-                            className={ctrlBtn}
+                        <Button
+                            variant="outline"
                             onClick={() => setExpandedLogDates(
                                 logGroups.reduce<Record<string, boolean>>((acc, g) => {
                                     acc[g.date] = true;
@@ -270,14 +249,14 @@ function SignalsDesktop({ data }: { data: SignalsData }) {
                             disabled={logGroups.length === 0 || logGroups.every(g => expandedLogDates[g.date])}
                         >
                             Expand all
-                        </button>
-                        <button
-                            className={ctrlBtn}
+                        </Button>
+                        <Button
+                            variant="outline"
                             onClick={() => setExpandedLogDates({})}
                             disabled={Object.keys(expandedLogDates).length === 0}
                         >
                             Collapse all
-                        </button>
+                        </Button>
                     </div>
                 </>
             )}
@@ -295,7 +274,8 @@ function SignalsDesktop({ data }: { data: SignalsData }) {
             {activeTab === 'SESSION' && <SessionHealthTab />}
 
             {activeTab === 'SETTINGS' && <TradingSettingsTab />}
-            </section>
+            </TabsContent>
+            </Tabs>
         </div>
     );
 }

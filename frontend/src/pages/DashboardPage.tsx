@@ -9,11 +9,9 @@ import { useMediaQuery, PHONE_QUERY, PHONE_LANDSCAPE_QUERY } from '../hooks/useM
 import { useAppStore } from '../store/useAppStore';
 import { loadLayout, saveLayout, LAYOUTS, type ChartLayout } from './dashboardLayout';
 import { cn } from '@/lib/utils';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 
-const layoutGroup = 'inline-flex p-[2px] gap-[2px] rounded-ctrl bg-sg-raised';
-const layoutBtn = 'min-w-[26px] py-[2px] px-[8px] border-0 rounded-[6px] text-[12px] font-semibold cursor-pointer hover:text-sg-text focus-visible:outline-none focus-visible:shadow-ring';
-const layoutBtnOn = 'bg-sg-hover text-sg-text';
-const layoutBtnOff = 'bg-transparent text-sg-muted';
 const GRID_COLS: Record<number, string> = {
     1: 'grid-cols-[minmax(0,1fr)] lte-640:grid-rows-[minmax(0,1fr)] phone-land:grid-rows-[minmax(0,1fr)]',
     2: 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)]',
@@ -99,36 +97,34 @@ export function DashboardPage({ onOpenIndicators }: DashboardPageProps) {
         <ErrorBoundary>
             <div className="relative flex flex-col flex-[1_1_auto] min-w-0 min-h-0">
                 <div className="flex items-center justify-end gap-[8px] py-[4px] px-[12px] border-b border-b-sg-line bg-sg-surface shrink-0 lte-640:hidden phone-land:hidden">
-                    <div className={layoutGroup} role="tablist" aria-label="Dashboard view">
-                        {(['charts', 'fno'] as const).map(v => (
-                            <button
-                                key={v}
-                                role="tab"
-                                aria-selected={view === v}
-                                className={cn(layoutBtn, view === v ? layoutBtnOn : layoutBtnOff)}
-                                onClick={() => setView(v)}
-                            >
-                                {v === 'charts' ? 'Charts' : 'F&O instruments'}
-                            </button>
-                        ))}
-                    </div>
+                    <Tabs value={view} onValueChange={v => setView(v as DashView)}>
+                        <TabsList variant="compact" aria-label="Dashboard view">
+                            {(['charts', 'fno'] as const).map(v => (
+                                <TabsTrigger key={v} value={v}>
+                                    {v === 'charts' ? 'Charts' : 'F&O instruments'}
+                                </TabsTrigger>
+                            ))}
+                        </TabsList>
+                    </Tabs>
                     <span className="flex-[1_1_auto]" />
                     {!showFno && (<>
                     <span className="text-[11px] text-sg-muted">Charts</span>
-                    <div className={layoutGroup} role="radiogroup" aria-label="Chart layout">
+                    <ToggleGroup
+                        variant="compact"
+                        aria-label="Chart layout"
+                        value={[String(layout.count)]}
+                        onValueChange={v => v[0] && setLayout(l => ({ ...l, count: Number(v[0]) as ChartLayout['count'] }))}
+                    >
                         {LAYOUTS.map(n => (
-                            <button
+                            <ToggleGroupItem
                                 key={n}
-                                role="radio"
-                                aria-checked={layout.count === n}
-                                className={cn(layoutBtn, layout.count === n ? layoutBtnOn : layoutBtnOff)}
-                                onClick={() => setLayout(l => ({ ...l, count: n }))}
+                                value={String(n)}
                                 title={n === 1 ? 'One chart' : `${n} charts, each with its own timeframe`}
                             >
                                 {n}
-                            </button>
+                            </ToggleGroupItem>
                         ))}
-                    </div>
+                    </ToggleGroup>
                     </>)}
                 </div>
                 {showFno ? (

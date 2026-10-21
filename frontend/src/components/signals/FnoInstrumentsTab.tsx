@@ -6,8 +6,10 @@ import { fetchStrikeSel } from '../../services/api';
 import type { SRContract, SRRejects, SRSide, StrikeSelView, PickerDecision, PickerView, PickerLivePick } from '../../types/strikesel';
 import { Target, TrendingUp, TrendingDown, Clock, SlidersHorizontal, History } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
 import {
-    fnoAtmBody, fnoAtmHeader, fnoAtmStat, fnoBadge, fnoCard, fnoInstBody, fnoInstHeader, fnoInstRow, fnoLabel, fnoNa,
+    fnoAtmBody, fnoAtmHeader, fnoAtmStat, fnoInstBody, fnoInstHeader, fnoInstRow, fnoLabel, fnoNa,
     fnoParam, fnoValue, fnoValueLtp, fnoValueLtpLive, fnoValueMono,
 } from './classes';
 
@@ -18,11 +20,10 @@ const VALUE_CLASS: Record<string, string> = {
     'ltp live': fnoValueLtpLive,
 };
 
-const decBadgeBase = 'py-[2px] px-[9px] rounded-pill text-[0.74rem] font-semibold';
 const DEC_BADGE_TONE = {
-    agree: 'text-sg-profit bg-sg-profit-soft',
-    disagree: 'text-sg-loss bg-sg-loss-soft',
-    none: 'text-sg-muted bg-sg-raised',
+    agree: 'profit',
+    disagree: 'loss',
+    none: 'muted',
 } as const;
 const decSymbol = 'font-mono text-[0.82rem] [overflow-wrap:anywhere]';
 const decCol = 'flex flex-col gap-[4px] min-w-0 py-[10px] px-[12px]';
@@ -222,7 +223,7 @@ function NewPickRows({ side, params }: { side: SRSide; params?: Params }) {
                 <span className="text-[0.8rem] font-semibold text-sg-text-2">New picker</span>
                 <span className={fnoValue}>
                     {p ? `${p.strike} ${p.option}` : 'refused'}
-                    {cmp !== 'none' && <span className={cn(decBadgeBase, 'ml-[8px]', DEC_BADGE_TONE[cmp])}>{COMPARISON_LABEL[cmp]}</span>}
+                    {cmp !== 'none' && <Badge variant="fno" tone={DEC_BADGE_TONE[cmp]} className="ml-[8px]">{COMPARISON_LABEL[cmp]}</Badge>}
                 </span>
             </div>
             {p ? (
@@ -284,7 +285,7 @@ function DecisionCard({ d }: { d: PickerDecision }) {
             <div className="flex items-center gap-[8px] py-[9px] px-[12px] border-b border-b-sg-line-soft">
                 <span className="font-semibold">{d.strategy}</span>
                 <span className={fnoNa}>{fmtTime(d.ts)}</span>
-                <span className={cn(decBadgeBase, 'ml-auto', DEC_BADGE_TONE[cmp])}>{COMPARISON_LABEL[cmp]}</span>
+                <Badge variant="fno" tone={DEC_BADGE_TONE[cmp]} className="ml-auto">{COMPARISON_LABEL[cmp]}</Badge>
             </div>
             <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                 <div className={decCol}>
@@ -303,11 +304,11 @@ function DecisionCard({ d }: { d: PickerDecision }) {
 function PickerCard({ p }: { p: PickerView }) {
     const decisions = p.decisions ?? [];
     return (
-        <div className={fnoCard}>
+        <Card>
             <div className={fnoAtmHeader}>
                 <Target size={16} />
                 <span>Global option picker · {p.mode}</span>
-                <span className={fnoBadge}>{p.streamed} streamed</span>
+                <Badge variant="fno" className="ml-auto">{p.streamed} streamed</Badge>
             </div>
             <div className={fnoAtmBody}>
                 <div className={fnoAtmStat}><span className={fnoLabel}>Greeks (chain)</span>
@@ -328,14 +329,14 @@ function PickerCard({ p }: { p: PickerView }) {
                     {decisions.map(d => <DecisionCard key={d.strategy} d={d} />)}
                 </div>
             )}
-        </div>
+        </Card>
     );
 }
 
 function SideCard({ title, kind, side, chainError, params }: { title: string; kind: 'call' | 'put'; side?: SRSide; chainError?: string; params?: Params }) {
     const Icon = kind === 'call' ? TrendingUp : TrendingDown;
     return (
-        <div className={fnoCard}>
+        <Card>
             <div className={cn(fnoInstHeader, kind === 'call' ? 'text-sg-profit' : 'text-sg-loss')}>
                 <Icon size={16} />
                 <span>{title}</span>
@@ -359,7 +360,7 @@ function SideCard({ title, kind, side, chainError, params }: { title: string; ki
                 )}
                 {side && (side.new_pick || side.new_error) && <NewPickRows side={side} params={params} />}
             </div>
-        </div>
+        </Card>
     );
 }
 
@@ -392,11 +393,11 @@ export function FnoInstrumentsTab() {
         <div className="flex flex-col gap-[12px]">
             <SRStatusCard />
             {view.picker && <PickerCard p={view.picker} />}
-            <div className={fnoCard}>
+            <Card>
                 <div className={fnoAtmHeader}>
                     <SlidersHorizontal size={16} />
                     <span>{view.strategy || 'NIFTY50_SR'} strike selection (greeks)</span>
-                    <span className={fnoBadge}><Clock size={11} /> {fmtTime(view.updated_at)}</span>
+                    <Badge variant="fno" className="ml-auto"><Clock size={11} /> {fmtTime(view.updated_at)}</Badge>
                 </div>
                 <div className={fnoAtmBody}>
                     {paramRows(view.params).map(([label, value]) => (
@@ -406,14 +407,14 @@ export function FnoInstrumentsTab() {
                         </div>
                     ))}
                 </div>
-            </div>
+            </Card>
 
             <div className="grid grid-cols-[repeat(2,minmax(0,1fr))] gap-[12px] lte-900:grid-cols-[minmax(0,1fr)]">
                 <SideCard title="CALL pick now" kind="call" side={view.call} chainError={view.error} params={view.params} />
                 <SideCard title="PUT pick now" kind="put" side={view.put} chainError={view.error} params={view.params} />
             </div>
 
-            <div className={fnoCard}>
+            <Card>
                 <div className={fnoInstHeader}>
                     <History size={16} />
                     <span>Last picked for an entry</span>
@@ -424,7 +425,7 @@ export function FnoInstrumentsTab() {
                         <div className={fnoInstRow}><span className={fnoNa}>No SR entry signal yet</span></div>
                     )}
                 </div>
-            </div>
+            </Card>
         </div>
     );
 }

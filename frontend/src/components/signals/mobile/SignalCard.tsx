@@ -5,7 +5,8 @@ import {
     orderMode, pnlClass, signalPnL, type OrderMode,
 } from '../signalFormat';
 import { cn } from '@/lib/utils';
-import { cardLeft, cardMid, cardRight, cardShell, cardTap, instrument, pnlText, sub } from './classes';
+import { Card } from '@/components/ui/card';
+import { cardLeft, cardMid, cardRight, instrument, pnlText, sub } from './classes';
 
 interface SignalCardProps {
     signal: SignalRecord;
@@ -31,7 +32,7 @@ export function SignalCard({ signal, entryPrice, isNew, onOpen }: SignalCardProp
     const pnl = signalPnL(signal, entryPrice);
 
     return (
-        <button type="button" className={cn(cardShell, cardTap, isNew ? 'border-sg-accent' : 'border-sg-line-soft')} onClick={onOpen}>
+        <Card variant="row" tap tone={isNew ? 'accent' : undefined} render={<button type="button" />} onClick={onOpen}>
             <span className={cn(cardLeft, 'w-[96px]')}>
                 <span className="text-sg-muted text-[11.5px] tabular-nums">{formatTime(signal.created_at)}</span>
                 <span className="flex gap-[4px]">
@@ -50,6 +51,6 @@ export function SignalCard({ signal, entryPrice, isNew, onOpen }: SignalCardProp
                 <span className="text-[13px] font-semibold">{formatPrice(signal.price)}</span>
                 {pnl !== null && <span className={cn(pnlText, pnlClass(pnl))}>{formatSignedPaise(pnl)}</span>}
             </span>
-        </button>
+        </Card>
     );
 }

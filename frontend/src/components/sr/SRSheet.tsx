@@ -10,16 +10,16 @@ import { FLICK_SPEED, useSheetDrag } from '../../hooks/useSheetDrag';
 import { useBackToClose } from '../../hooks/useBackToClose';
 import { haptic } from '../../utils/haptic';
 import { cn } from '@/lib/utils';
-import { REGIME_CLASS, mobilePill, sheetHandle } from './srClasses';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { REGIME_TONE, sheetHandle } from './srClasses';
 
 const navH = '[--nav-h:calc(56px+env(safe-area-inset-bottom))] phone-land:[--nav-h:0px]';
-const card = 'py-[10px] px-[12px] rounded-ctrl bg-sg-raised';
 const cardTitle = 'mt-0 mx-0 mb-[6px] text-sg-muted text-[11px] font-semibold tracking-[0.06em] uppercase';
 const stats = 'grid grid-cols-[repeat(3,minmax(0,1fr))] gap-x-[10px] gap-y-[12px]';
 const note = 'mt-[10px] mx-0 mb-0 text-sg-muted text-[12px]';
-const chip = 'py-[4px] px-[10px] rounded-pill text-[12px] tabular-nums';
-const chipOff = 'bg-sg-line-soft text-sg-muted';
-const chipOn = 'bg-sg-profit-soft text-sg-profit';
 const sheetBase = `${navH} fixed left-0 right-0 bottom-[var(--nav-h)] z-[90] flex flex-col border-t border-t-sg-line rounded-t-panel bg-sg-surface shadow-[0_-12px_32px_rgba(0,0,0,0.4)] text-sg-text-2 text-[13px] focus:outline-none motion-reduce:[transition:none] phone-land:left-auto phone-land:top-0 phone-land:w-[min(420px,45vw)] phone-land:h-auto phone-land:rounded-tr-none phone-land:rounded-bl-panel`;
 const sheetOpenT = '[transition:transform_0.2s_ease-out,height_0.2s_ease-out,visibility_0s_linear_0s]';
 const sheetClosed = 'invisible [transform:translateY(calc(100%_+_var(--nav-h)))] phone-land:[transform:translateX(100%)]';
@@ -65,9 +65,9 @@ function SheetBody() {
     return (
         <>
             {inPosition && (
-                <section className={card} aria-label="Position">
+                <Card variant="sub" render={<section />} aria-label="Position">
                     <div className="flex items-center flex-wrap gap-[8px] mb-[10px]">
-                        <span className={cn('py-[1px] px-[8px] rounded-pill text-[11px] font-bold', v.side === 'CALL' ? 'text-sg-profit bg-sg-profit-soft' : 'text-sg-loss bg-sg-loss-soft')}>{v.side}</span>
+                        <Badge variant="side" tone={v.side === 'CALL' ? 'profit' : 'loss'}>{v.side}</Badge>
                         <span className="text-sg-text font-medium">{kindLabel}</span>
                         {v.strike ? <span className="text-sg-muted">{v.strike} {v.side === 'CALL' ? 'CE' : 'PE'}</span> : null}
                         {pnl !== null && <span className={cn('ml-auto text-[18px] font-semibold tabular-nums', pnl >= 0 ? 'text-sg-profit' : 'text-sg-loss')}>{points(pnl, true)}</span>}
@@ -77,18 +77,18 @@ function SheetBody() {
                         <Stat label="Stop" value={rupees(v.stop)} sub={last && v.stop ? points(Math.abs(last - v.stop)) : undefined} />
                         <Stat label="Target" value={rupees(v.target)} sub={last && v.target ? points(Math.abs(v.target - last)) : undefined} />
                     </div>
-                </section>
+                </Card>
             )}
 
-            <section className={card} aria-label="Watching">
+            <Card variant="sub" render={<section />} aria-label="Watching">
                 <h3 className={cardTitle}>Watching</h3>
                 <p className={cn('m-0 leading-[1.45]', watch.kind === 'pending' && 'text-sg-warn')}>{watch.text}</p>
                 {!inPosition && v.last_reject && (
                     <p className={note}>Last refused{rejectAt ? ` ${rejectAt}` : ''}: {rejectLabel(v.last_reject)}</p>
                 )}
-            </section>
+            </Card>
 
-            <section className={card} aria-label="Situation">
+            <Card variant="sub" render={<section />} aria-label="Situation">
                 <h3 className={cardTitle}>Situation</h3>
                 <div className={stats}>
                     <Stat label="15m ADX" value={v.adx.toFixed(1)} />
@@ -103,16 +103,16 @@ function SheetBody() {
                 <DayPosition v={v} price={price} />
                 {!support && !resistance && <p className={note}>No S/R levels yet</p>}
                 {!inPosition && <p className={note}>Position: Flat</p>}
-            </section>
+            </Card>
 
             <div className="flex flex-wrap gap-[6px]">
-                <span className={cn(chip, chipOff)}>Trades {v.trades_today}/{v.max_trades}</span>
-                <span className={cn(chip, chipOff)}>Day {points(v.day_pnl_pts, true)}</span>
-                {v.cooldown_left > 0 && <span className={cn(chip, chipOff)}>Cooldown {v.cooldown_left}m</span>}
-                <span className={cn(chip, chipOff)}>Entries {hhmm(v.entry_from_min)}–{hhmm(v.entry_to_min)} on {v.entry_tf}m</span>
-                <span className={cn(chip, v.fade ? chipOn : chipOff)}>Fade</span>
-                <span className={cn(chip, v.retest ? chipOn : chipOff)}>Retest</span>
-                <span className={cn(chip, v.pullback ? chipOn : chipOff)}>Pullback</span>
+                <Badge variant="chip">Trades {v.trades_today}/{v.max_trades}</Badge>
+                <Badge variant="chip">Day {points(v.day_pnl_pts, true)}</Badge>
+                {v.cooldown_left > 0 && <Badge variant="chip">Cooldown {v.cooldown_left}m</Badge>}
+                <Badge variant="chip">Entries {hhmm(v.entry_from_min)}–{hhmm(v.entry_to_min)} on {v.entry_tf}m</Badge>
+                <Badge variant="chip" tone={v.fade ? 'profit' : undefined}>Fade</Badge>
+                <Badge variant="chip" tone={v.retest ? 'profit' : undefined}>Retest</Badge>
+                <Badge variant="chip" tone={v.pullback ? 'profit' : undefined}>Pullback</Badge>
             </div>
         </>
     );
@@ -196,28 +196,27 @@ export function SRSheet({ id, snap, onSnap, returnFocusRef }: SRSheetProps) {
                     <span className={sheetHandle} aria-hidden />
                     <div className="flex items-center gap-[8px] min-w-0">
                         <h2 className="m-0 text-sg-text text-[15px] font-semibold whitespace-nowrap">S/R strategy</h2>
-                        {v && <span className={cn(mobilePill, REGIME_CLASS[v.regime])}>{REGIME_LABEL[v.regime] ?? v.regime}</span>}
-                        <span className={cn(mobilePill, REGIME_CLASS.WARMING)} title="The executor only sends real orders for NIFTY50_FNO">Paper</span>
+                        {v && <Badge variant="mobile" tone={REGIME_TONE[v.regime]}>{REGIME_LABEL[v.regime] ?? v.regime}</Badge>}
+                        <Badge variant="mobile" tone={REGIME_TONE.WARMING} title="The executor only sends real orders for NIFTY50_FNO">Paper</Badge>
                         {updated && <span className="ml-auto text-sg-muted text-[11px] whitespace-nowrap">as of {updated} IST</span>}
-                        <button type="button" className="inline-flex items-center justify-center shrink-0 w-[40px] h-[40px] mr-[-8px] border-0 rounded-ctrl bg-transparent text-sg-muted cursor-pointer focus-visible:outline-none focus-visible:shadow-ring" onClick={() => onSnap('closed')} aria-label="Close strategy details">
+                        <Button variant="ghost-quiet" size="icon-40" className="mr-[-8px]" onClick={() => onSnap('closed')} aria-label="Close strategy details">
                             <X size={18} />
-                        </button>
+                        </Button>
                     </div>
-                    <div className="flex gap-[4px] pt-[6px] px-0 pb-[2px]" role="tablist" aria-label="Sheet view">
-                        {(['sr', 'fno'] as const).map(t => (
-                            <button
-                                key={t}
-                                type="button"
-                                role="tab"
-                                aria-selected={tab === t}
-                                className={cn('flex-[1_1_0] min-h-[36px] border-0 rounded-[8px] text-[13px] font-semibold focus-visible:outline-none focus-visible:shadow-ring', tab === t ? 'bg-sg-hover text-sg-text' : 'bg-sg-raised text-sg-muted')}
-                                onPointerDown={e => e.stopPropagation()}
-                                onClick={() => { haptic(); setTab(t); if (t === 'fno' && snap === 'half') onSnap('full'); }}
-                            >
-                                {t === 'sr' ? 'S/R strategy' : 'F&O instruments'}
-                            </button>
-                        ))}
-                    </div>
+                    <Tabs value={tab} onValueChange={(t) => setTab(t as SheetTab)}>
+                        <TabsList variant="sheet" aria-label="Sheet view">
+                            {(['sr', 'fno'] as const).map(t => (
+                                <TabsTrigger
+                                    key={t}
+                                    value={t}
+                                    onPointerDown={e => e.stopPropagation()}
+                                    onClick={() => { haptic(); setTab(t); if (t === 'fno' && snap === 'half') onSnap('full'); }}
+                                >
+                                    {t === 'sr' ? 'S/R strategy' : 'F&O instruments'}
+                                </TabsTrigger>
+                            ))}
+                        </TabsList>
+                    </Tabs>
                 </div>
                 <div className="flex-1 min-h-0 flex flex-col gap-[10px] pt-[12px] px-[12px] pb-[16px] overflow-y-auto overscroll-contain">
                     {tab === 'sr' ? <SheetBody /> : <FnoInstrumentsTab />}

@@ -1,11 +1,13 @@
 import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
+import { TableCell, TableRow } from '@/components/ui/table';
 import type { SignalRecord } from '../../types/signal';
 import { inferSide } from './signalAnalytics';
 import {
-    formatDate, formatPrice, formatSignedPaise, formatTime, getActionBadge, getMarketBadge,
-    getSideBadge, instrumentLabel, normalizeMarketState, orderMode, pnlClass, relativeTime, signalPnL,
+    actionBadgeTone, formatDate, formatPrice, formatSignedPaise, formatTime,
+    instrumentLabel, normalizeMarketState, orderMode, pnlClass, relativeTime, sideBadgeTone, signalPnL,
 } from './signalFormat';
-import { cell, cellSub, orderTypeBadge, rowMono } from './classes';
+import { cellSub, marketTone, orderTypeTone, rowMono } from './classes';
 
 interface SignalRowProps {
     signal: SignalRecord;
@@ -24,40 +26,40 @@ export function SignalRow({ signal, isNew, entryPrice, entryTime }: SignalRowPro
     const mode = orderMode(signal);
 
     return (
-        <tr className={isNew ? 'animate-[signal-pulse_1.6s_ease-out] motion-reduce:animate-none' : undefined}>
-            <td className={cell(false, 'time')} title={signal.created_at}>
+        <TableRow className={isNew ? 'animate-[signal-pulse_1.6s_ease-out] motion-reduce:animate-none' : undefined}>
+            <TableCell kind="time" title={signal.created_at}>
                 {formatTime(signal.created_at)}
                 <span className={cellSub}>
                     {formatDate(signal.created_at)}, {relativeTime(signal.created_at)}
                 </span>
-            </td>
-            <td className={cell(false)}>
-                <span className={getActionBadge(signal.action)}>
+            </TableCell>
+            <TableCell>
+                <Badge tone={actionBadgeTone(signal.action)}>
                     {signal.action}
-                </span>
-            </td>
-            <td className={cell(false)}>
-                <span className={getSideBadge(side)}>
+                </Badge>
+            </TableCell>
+            <TableCell>
+                <Badge tone={sideBadgeTone(side)}>
                     {side}
-                </span>
-            </td>
-            <td className={cell(false)}>
-                <span className={getMarketBadge(marketState)}>
+                </Badge>
+            </TableCell>
+            <TableCell>
+                <Badge variant="market" tone={marketTone(marketState)}>
                     {marketState}
-                </span>
-            </td>
-            <td className={cell(false, 'strategy')} title={signal.strategy}>
+                </Badge>
+            </TableCell>
+            <TableCell kind="strategy" title={signal.strategy}>
                 {signal.strategy}
-            </td>
-            <td className={cell(false)}>
-                <span className={orderTypeBadge(mode.mode)} title={mode.title}>
+            </TableCell>
+            <TableCell>
+                <Badge variant="order" tone={orderTypeTone(mode.mode)} title={mode.title}>
                     {mode.text}
-                </span>
-            </td>
-            <td className={cell(false)} title={`${signal.exchange}:${signal.token}`}>
+                </Badge>
+            </TableCell>
+            <TableCell title={`${signal.exchange}:${signal.token}`}>
                 <span className={signal.fno_symbol ? rowMono : undefined}>{instrumentLabel(signal)}</span>
-            </td>
-            <td className={cell(false, 'price')}>
+            </TableCell>
+            <TableCell kind="price">
                 {formatPrice(signal.price)}
                 {pnl !== null && (
                     <>
@@ -69,8 +71,8 @@ export function SignalRow({ signal, isNew, entryPrice, entryTime }: SignalRowPro
                         </span>
                     </>
                 )}
-            </td>
-            <td className={cell(false, 'reason')} title={signal.reason}>{signal.reason}</td>
-        </tr>
+            </TableCell>
+            <TableCell kind="reason" title={signal.reason}>{signal.reason}</TableCell>
+        </TableRow>
     );
 }

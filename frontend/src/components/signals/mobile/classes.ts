@@ -1,9 +1,6 @@
 /** Utility class strings shared by the phone Signals cards. */
 
-/** Signal / trade / More row shell. */
-export const cardShell = 'flex items-center gap-[12px] w-full min-h-[60px] py-[10px] px-[12px] border border-solid rounded-[12px] bg-sg-surface text-sg-text leading-[inherit] text-left';
-/** Tappable rows (signal card, More item). */
-export const cardTap = 'cursor-pointer [-webkit-tap-highlight-color:transparent] active:bg-sg-raised';
+/* Row shell and tap state are the Card variant "row" (tap) in components/ui/card.tsx. */
 export const cardLeft = 'flex flex-col items-start gap-[4px] shrink-0';
 export const cardMid = 'flex flex-col gap-[3px] flex-1 min-w-0';
 export const cardRight = 'flex flex-col items-end gap-[3px] shrink-0 tabular-nums';
