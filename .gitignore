@@ -48,3 +48,9 @@ deploy/*.pem
 
 # Added by code-review-graph
 .code-review-graph/
+
+# Agent skills installed locally
+.agents/
+skills-lock.json
+.claude/skills/shadcn
+.claude/skills/migrate-radix-to-base
