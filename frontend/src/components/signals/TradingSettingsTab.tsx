@@ -1,6 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle, Octagon, RefreshCw } from 'lucide-react';
 import { fetchTradingConfig, saveTradingConfig, type StoredTradingConfig } from '../../services/api';
+import { Alert } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Empty } from '@/components/ui/empty';
+import { Spinner } from '@/components/ui/spinner';
+import { Switch } from '@/components/ui/switch';
+import { errorText } from './classes';
+
+const cardTitle = 'text-[1rem] font-semibold';
+const cardDesc = 'mt-[4px] max-w-[60ch] text-sg-muted text-[0.86rem] leading-[1.5]';
+const code = 'font-mono text-[0.8rem] text-sg-text-2 bg-sg-raised py-[1px] px-[6px] rounded-[5px]';
+const listItem = 'flex items-center justify-between gap-[16px] py-[11px] px-0 border-b border-b-sg-line-soft text-[0.88rem] last:[border-bottom:none] [&_span]:text-sg-text-2';
 
 function nowIST(): string {
     return new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
@@ -67,98 +79,96 @@ export function TradingSettingsTab() {
 
     if (loading) {
         return (
-            <div className="signals-empty">
-                <RefreshCw size={32} className="spin" strokeWidth={1.5} />
+            <Empty>
+                <Spinner size={32} strokeWidth={1.5} />
                 <p>Loading settings…</p>
-            </div>
+            </Empty>
         );
     }
 
     if (!config) {
         return (
-            <div className="signals-empty">
+            <Empty>
                 <AlertTriangle size={40} strokeWidth={1.5} />
-                <p className="error-text">{error}</p>
-                <button className="daily-refresh-btn" onClick={() => void load()}>
+                <p className={errorText}>{error}</p>
+                <Button variant="outline" onClick={() => void load()}>
                     <RefreshCw size={14} /> Retry
-                </button>
-            </div>
+                </Button>
+            </Empty>
         );
     }
 
     const blocked = config.killSwitch;
 
     return (
-        <div className="settings-wrap">
-            <section className={`settings-card${blocked ? ' blocked' : ''}`} aria-labelledby="kill-switch-title">
-                <div className="settings-card-head">
+        <div className="flex flex-col gap-[12px] max-w-[760px]">
+            <Card variant="settings" tone={blocked ? 'danger' : undefined} render={<section />} aria-labelledby="kill-switch-title">
+                <div className="flex items-start justify-between gap-[16px]">
                     <div>
-                        <h3 id="kill-switch-title" className="settings-card-title">Entry kill switch</h3>
-                        <p className="settings-card-desc">
+                        <h3 id="kill-switch-title" className={cardTitle}>Entry kill switch</h3>
+                        <p className={cardDesc}>
                             Stops the strategy engine from opening new positions. Exits, stop losses and
                             end-of-day square-off keep running, so open positions can always close.
                         </p>
                     </div>
-                    <button
-                        type="button"
-                        role="switch"
-                        className="switch"
-                        aria-checked={blocked}
+                    <Switch
+                        variant="danger"
+                        checked={blocked}
+                        onCheckedChange={onToggle}
                         aria-labelledby="kill-switch-title"
-                        onClick={onToggle}
                         disabled={saving || confirmResume}
                     />
                 </div>
 
-                <div className={`settings-state ${blocked ? 'blocked' : 'ok'}`} role="status">
+                <Alert variant="soft" tone={blocked ? 'loss' : 'profit'} className="mt-[14px]" role="status">
                     {blocked
                         ? <><Octagon size={16} /> New entries blocked. Open positions still exit normally.</>
                         : <><CheckCircle size={16} /> New entries allowed.</>}
-                </div>
+                </Alert>
 
                 {confirmResume && (
-                    <div className="settings-confirm">
-                        <p>Allow the strategy engine to open new positions again?</p>
-                        <button className="settings-btn" onClick={() => setConfirmResume(false)} disabled={saving}>
+                    <div className="flex items-center gap-[10px] flex-wrap mt-[12px] p-[12px] border border-solid border-sg-line rounded-ctrl bg-sg-surface text-[0.86rem]">
+                        <p className="flex-[1_1_260px] text-sg-text-2">Allow the strategy engine to open new positions again?</p>
+                        <Button variant="secondary" size="md" onClick={() => setConfirmResume(false)} disabled={saving}>
                             Keep blocked
-                        </button>
-                        <button className="settings-btn primary" onClick={() => void setKillSwitch(false)} disabled={saving}>
+                        </Button>
+                        <Button variant="default" size="md" className="border border-solid border-transparent" onClick={() => void setKillSwitch(false)} disabled={saving}>
                             {saving ? 'Allowing…' : 'Allow entries'}
-                        </button>
+                        </Button>
                     </div>
                 )}
 
                 {error && (
-                    <div className="settings-message error" role="alert">
+                    <Alert variant="inline" tone="loss" className="mt-[12px]">
                         <AlertTriangle size={14} /> {error}
-                    </div>
+                    </Alert>
                 )}
                 {!error && savedAt && (
-                    <div className="settings-message success">
+                    <Alert variant="inline" tone="muted" className="mt-[12px]" role={undefined}>
                         <CheckCircle size={14} /> Saved at {savedAt} IST
-                    </div>
+                    </Alert>
                 )}
 
-                <p className="settings-note">
-                    If <code>STRAT_KILL_SWITCH=true</code> is set on the server, entries stay blocked
+                <p className="mt-[10px] text-sg-faint text-[0.8rem]">
+                    If <code className={code}>STRAT_KILL_SWITCH=true</code> is set on the server, entries stay blocked
                     whatever this switch shows.
                 </p>
-            </section>
+            </Card>
 
-            <section className="settings-card" aria-labelledby="server-settings-title">
-                <h3 id="server-settings-title" className="settings-card-title">Set on the server</h3>
-                <p className="settings-card-desc">
+            <Card variant="settings" render={<section />} aria-labelledby="server-settings-title">
+                <h3 id="server-settings-title" className={cardTitle}>Set on the server</h3>
+                <p className={cardDesc}>
                     These can't be changed from the dashboard. Edit the stratengine env file and
                     restart the service.
                 </p>
-                <ul className="settings-list">
-                    <li><span>Live or paper orders</span><code>STRAT_LIVE_ORDERS</code></li>
-                    <li><span>Quantity (lots)</span><code>STRAT_QTY</code></li>
-                    <li><span>NIFTY50_SR on/off</span><code>STRAT_SR_ENABLED</code></li>
-                    <li><span>End-of-day exit time</span><code>STRAT_EOD_EXIT_TIME</code></li>
-                    <li><span>Targets and stop losses</span><span>Defined in strategy code</span></li>
+                <ul className="mt-[12px] list-none">
+                    <li className={listItem}><span>Live or paper orders</span><code className={code}>STRAT_LIVE_ORDERS</code></li>
+                    <li className={listItem}><span>Quantity (lots)</span><code className={code}>STRAT_QTY</code></li>
+                    <li className={listItem}><span>NIFTY50_SR on/off</span><code className={code}>STRAT_SR_ENABLED</code></li>
+                    <li className={listItem}><span>End-of-day exit time</span><code className={code}>STRAT_EOD_EXIT_TIME</code></li>
+                    <li className={listItem}><span>Targets and stop losses</span><span>Defined in strategy code</span></li>
                 </ul>
-            </section>
+            </Card>
         </div>
     );
 }

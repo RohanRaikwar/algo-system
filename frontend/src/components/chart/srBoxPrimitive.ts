@@ -8,6 +8,7 @@ import type {
 } from 'lightweight-charts';
 import { IST_OFFSET } from '../../utils/helpers';
 import type { SRView } from '../../types/sr';
+import { CHART } from '../../styles/palette';
 
 /** The sideways box in chart units: IST-shifted seconds and rupees. */
 export interface SRBox {
@@ -32,8 +33,8 @@ export function srBox(v: SRView | null): SRBox | null {
     };
 }
 
-const FILL = { boxed: 'rgba(229, 162, 58, 0.14)', moving: 'rgba(138, 148, 166, 0.06)' };
-const EDGE = { boxed: 'rgba(229, 162, 58, 0.7)', moving: 'rgba(138, 148, 166, 0.35)' };
+const FILL = CHART.boxFill;
+const EDGE = CHART.boxEdge;
 
 interface Rect { x: number; y: number; w: number; h: number; boxed: boolean }
 

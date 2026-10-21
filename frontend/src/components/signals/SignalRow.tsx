@@ -1,9 +1,13 @@
+import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
+import { TableCell, TableRow } from '@/components/ui/table';
 import type { SignalRecord } from '../../types/signal';
 import { inferSide } from './signalAnalytics';
 import {
-    formatDate, formatPrice, formatSignedPaise, formatTime, getActionBadge, getMarketBadge,
-    getSideBadge, instrumentLabel, normalizeMarketState, orderMode, pnlClass, relativeTime, signalPnL,
+    actionBadgeTone, formatDate, formatPrice, formatSignedPaise, formatTime,
+    instrumentLabel, normalizeMarketState, orderMode, pnlClass, relativeTime, sideBadgeTone, signalPnL,
 } from './signalFormat';
+import { cellSub, marketTone, orderTypeTone, rowMono } from './classes';
 
 interface SignalRowProps {
     signal: SignalRecord;
@@ -22,53 +26,53 @@ export function SignalRow({ signal, isNew, entryPrice, entryTime }: SignalRowPro
     const mode = orderMode(signal);
 
     return (
-        <tr className={`signal-row${isNew ? ' new-signal' : ''}`}>
-            <td className="signal-time" title={signal.created_at}>
+        <TableRow className={isNew ? 'animate-[signal-pulse_1.6s_ease-out] motion-reduce:animate-none' : undefined}>
+            <TableCell kind="time" title={signal.created_at}>
                 {formatTime(signal.created_at)}
-                <span className="signal-time-sub">
+                <span className={cellSub}>
                     {formatDate(signal.created_at)}, {relativeTime(signal.created_at)}
                 </span>
-            </td>
-            <td>
-                <span className={getActionBadge(signal.action)}>
+            </TableCell>
+            <TableCell>
+                <Badge tone={actionBadgeTone(signal.action)}>
                     {signal.action}
-                </span>
-            </td>
-            <td>
-                <span className={getSideBadge(side)}>
+                </Badge>
+            </TableCell>
+            <TableCell>
+                <Badge tone={sideBadgeTone(side)}>
                     {side}
-                </span>
-            </td>
-            <td>
-                <span className={getMarketBadge(marketState)}>
+                </Badge>
+            </TableCell>
+            <TableCell>
+                <Badge variant="market" tone={marketTone(marketState)}>
                     {marketState}
-                </span>
-            </td>
-            <td className="strategy-cell" title={signal.strategy}>
+                </Badge>
+            </TableCell>
+            <TableCell kind="strategy" title={signal.strategy}>
                 {signal.strategy}
-            </td>
-            <td>
-                <span className={`order-type-badge ${mode.mode}`} title={mode.title}>
+            </TableCell>
+            <TableCell>
+                <Badge variant="order" tone={orderTypeTone(mode.mode)} title={mode.title}>
                     {mode.text}
-                </span>
-            </td>
-            <td title={`${signal.exchange}:${signal.token}`}>
-                <span className={signal.fno_symbol ? 'mono' : undefined}>{instrumentLabel(signal)}</span>
-            </td>
-            <td className="price-cell">
+                </Badge>
+            </TableCell>
+            <TableCell title={`${signal.exchange}:${signal.token}`}>
+                <span className={signal.fno_symbol ? rowMono : undefined}>{instrumentLabel(signal)}</span>
+            </TableCell>
+            <TableCell kind="price">
                 {formatPrice(signal.price)}
                 {pnl !== null && (
                     <>
-                        <span className="price-sub">
+                        <span className={cellSub}>
                             entry {formatPrice(entryPrice)}
                         </span>
-                        <span className={`price-pnl ${pnl === 0 ? '' : pnlClass(pnl)}`}>
+                        <span className={cn('block mt-[2px] text-[0.8rem] font-semibold', pnl === 0 ? undefined : pnlClass(pnl))}>
                             {formatSignedPaise(pnl)}
                         </span>
                     </>
                 )}
-            </td>
-            <td className="signal-reason" title={signal.reason}>{signal.reason}</td>
-        </tr>
+            </TableCell>
+            <TableCell kind="reason" title={signal.reason}>{signal.reason}</TableCell>
+        </TableRow>
     );
 }

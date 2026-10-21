@@ -23,8 +23,11 @@ const subsKey = "push:subs"
 
 const (
 	sendTimeout = 10 * time.Second
-	pushTTL     = 60 // seconds: a trade alert older than this is noise
-	maxInFlight = 4  // concurrent sends to push services
+	// pushTTL is how long the push service holds an alert for a device it
+	// cannot reach. An Android phone in Doze can be unreachable for many
+	// minutes; with a short TTL the alert is dropped and never shown.
+	pushTTL     = 15 * 60 // seconds
+	maxInFlight = 4       // concurrent sends to push services
 )
 
 // ErrDisabled is returned when VAPID keys are not configured.

@@ -9,7 +9,21 @@ import { useLastNiftyPaise } from './useLastNiftyPaise';
 import { FLICK_SPEED, useSheetDrag } from '../../hooks/useSheetDrag';
 import { useBackToClose } from '../../hooks/useBackToClose';
 import { haptic } from '../../utils/haptic';
-import styles from './SRMobile.module.css';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { REGIME_TONE, sheetHandle } from './srClasses';
+
+const navH = '[--nav-h:calc(56px+env(safe-area-inset-bottom))] phone-land:[--nav-h:0px]';
+const cardTitle = 'mt-0 mx-0 mb-[6px] text-sg-muted text-[11px] font-semibold tracking-[0.06em] uppercase';
+const stats = 'grid grid-cols-[repeat(3,minmax(0,1fr))] gap-x-[10px] gap-y-[12px]';
+const note = 'mt-[10px] mx-0 mb-0 text-sg-muted text-[12px]';
+const sheetBase = `${navH} fixed left-0 right-0 bottom-[var(--nav-h)] z-[90] flex flex-col border-t border-t-sg-line rounded-t-panel bg-sg-surface shadow-[0_-12px_32px_rgba(0,0,0,0.4)] text-sg-text-2 text-[13px] focus:outline-none motion-reduce:[transition:none] phone-land:left-auto phone-land:top-0 phone-land:w-[min(420px,45vw)] phone-land:h-auto phone-land:rounded-tr-none phone-land:rounded-bl-panel`;
+const sheetOpenT = '[transition:transform_0.2s_ease-out,height_0.2s_ease-out,visibility_0s_linear_0s]';
+const sheetClosed = 'invisible [transform:translateY(calc(100%_+_var(--nav-h)))] phone-land:[transform:translateX(100%)]';
+const sheetClosedT = '[transition:transform_0.2s_ease-out,height_0.2s_ease-out,visibility_0s_linear_0.2s]';
 
 export type SheetSnap = 'closed' | 'half' | 'full';
 
@@ -26,10 +40,10 @@ const FULL = 0.9;
 
 function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
     return (
-        <div className={styles.stat}>
-            <span className={styles.statLabel}>{label}</span>
-            <span className={styles.statValue}>{value}</span>
-            {sub && <span className={styles.statSub}>{sub}</span>}
+        <div className="flex flex-col min-w-0">
+            <span className="text-sg-muted text-[11px]">{label}</span>
+            <span className="text-sg-text text-[15px] font-semibold tabular-nums">{value}</span>
+            {sub && <span className="text-sg-muted text-[11px] tabular-nums">{sub}</span>}
         </div>
     );
 }
@@ -38,7 +52,7 @@ function SheetBody() {
     const v = useSelectedSRView();
     const last = useLastNiftyPaise(v?.key);
 
-    if (!v) return <p className={styles.muted}>Waiting for the strategy engine…</p>;
+    if (!v) return <p className="text-sg-muted">Waiting for the strategy engine…</p>;
 
     const price = last ?? v.close ?? null;
     const watch = watching(v, price);
@@ -51,32 +65,32 @@ function SheetBody() {
     return (
         <>
             {inPosition && (
-                <section className={styles.card} aria-label="Position">
-                    <div className={styles.posHead}>
-                        <span className={`${styles.side} ${v.side === 'CALL' ? styles.call : styles.put}`}>{v.side}</span>
-                        <span className={styles.kind}>{kindLabel}</span>
-                        {v.strike ? <span className={styles.muted}>{v.strike} {v.side === 'CALL' ? 'CE' : 'PE'}</span> : null}
-                        {pnl !== null && <span className={`${styles.pnl} ${pnl >= 0 ? styles.up : styles.down}`}>{points(pnl, true)}</span>}
+                <Card variant="sub" render={<section />} aria-label="Position">
+                    <div className="flex items-center flex-wrap gap-[8px] mb-[10px]">
+                        <Badge variant="side" tone={v.side === 'CALL' ? 'profit' : 'loss'}>{v.side}</Badge>
+                        <span className="text-sg-text font-medium">{kindLabel}</span>
+                        {v.strike ? <span className="text-sg-muted">{v.strike} {v.side === 'CALL' ? 'CE' : 'PE'}</span> : null}
+                        {pnl !== null && <span className={cn('ml-auto text-[18px] font-semibold tabular-nums', pnl >= 0 ? 'text-sg-profit' : 'text-sg-loss')}>{points(pnl, true)}</span>}
                     </div>
-                    <div className={styles.stats}>
+                    <div className={stats}>
                         <Stat label="Entry" value={rupees(v.entry)} />
                         <Stat label="Stop" value={rupees(v.stop)} sub={last && v.stop ? points(Math.abs(last - v.stop)) : undefined} />
                         <Stat label="Target" value={rupees(v.target)} sub={last && v.target ? points(Math.abs(v.target - last)) : undefined} />
                     </div>
-                </section>
+                </Card>
             )}
 
-            <section className={styles.card} aria-label="Watching">
-                <h3 className={styles.cardTitle}>Watching</h3>
-                <p className={`${styles.watch}${watch.kind === 'pending' ? ` ${styles.warn}` : ''}`}>{watch.text}</p>
+            <Card variant="sub" render={<section />} aria-label="Watching">
+                <h3 className={cardTitle}>Watching</h3>
+                <p className={cn('m-0 leading-[1.45]', watch.kind === 'pending' && 'text-sg-warn')}>{watch.text}</p>
                 {!inPosition && v.last_reject && (
-                    <p className={styles.note}>Last refused{rejectAt ? ` ${rejectAt}` : ''}: {rejectLabel(v.last_reject)}</p>
+                    <p className={note}>Last refused{rejectAt ? ` ${rejectAt}` : ''}: {rejectLabel(v.last_reject)}</p>
                 )}
-            </section>
+            </Card>
 
-            <section className={styles.card} aria-label="Situation">
-                <h3 className={styles.cardTitle}>Situation</h3>
-                <div className={styles.stats}>
+            <Card variant="sub" render={<section />} aria-label="Situation">
+                <h3 className={cardTitle}>Situation</h3>
+                <div className={stats}>
                     <Stat label="15m ADX" value={v.adx.toFixed(1)} />
                     <Stat label="5m RSI" value={v.rsi5 ? v.rsi5.toFixed(0) : '—'} />
                     <Stat label="15m ATR" value={v.atr15 ? points(v.atr15) : '—'} />
@@ -87,18 +101,18 @@ function SheetBody() {
                         sub={resistance && price ? `${points(resistance.price - price, true)} · ${sourceLabel(resistance.source)}` : undefined} />
                 </div>
                 <DayPosition v={v} price={price} />
-                {!support && !resistance && <p className={styles.note}>No S/R levels yet</p>}
-                {!inPosition && <p className={styles.note}>Position: Flat</p>}
-            </section>
+                {!support && !resistance && <p className={note}>No S/R levels yet</p>}
+                {!inPosition && <p className={note}>Position: Flat</p>}
+            </Card>
 
-            <div className={styles.chips}>
-                <span className={styles.chip}>Trades {v.trades_today}/{v.max_trades}</span>
-                <span className={styles.chip}>Day {points(v.day_pnl_pts, true)}</span>
-                {v.cooldown_left > 0 && <span className={styles.chip}>Cooldown {v.cooldown_left}m</span>}
-                <span className={styles.chip}>Entries {hhmm(v.entry_from_min)}–{hhmm(v.entry_to_min)} on {v.entry_tf}m</span>
-                <span className={`${styles.chip} ${v.fade ? styles.chipOn : ''}`}>Fade</span>
-                <span className={`${styles.chip} ${v.retest ? styles.chipOn : ''}`}>Retest</span>
-                <span className={`${styles.chip} ${v.pullback ? styles.chipOn : ''}`}>Pullback</span>
+            <div className="flex flex-wrap gap-[6px]">
+                <Badge variant="chip">Trades {v.trades_today}/{v.max_trades}</Badge>
+                <Badge variant="chip">Day {points(v.day_pnl_pts, true)}</Badge>
+                {v.cooldown_left > 0 && <Badge variant="chip">Cooldown {v.cooldown_left}m</Badge>}
+                <Badge variant="chip">Entries {hhmm(v.entry_from_min)}–{hhmm(v.entry_to_min)} on {v.entry_tf}m</Badge>
+                <Badge variant="chip" tone={v.fade ? 'profit' : undefined}>Fade</Badge>
+                <Badge variant="chip" tone={v.retest ? 'profit' : undefined}>Retest</Badge>
+                <Badge variant="chip" tone={v.pullback ? 'profit' : undefined}>Pullback</Badge>
             </div>
         </>
     );
@@ -158,11 +172,16 @@ export function SRSheet({ id, snap, onSnap, returnFocusRef }: SRSheetProps) {
 
     return (
         <>
-            {snap === 'full' && <div className={styles.backdrop} onClick={() => onSnap('closed')} aria-hidden />}
+            {snap === 'full' && <div className={cn(navH, 'fixed inset-x-0 top-0 bottom-[var(--nav-h)] z-[89] bg-[rgba(5,8,12,0.55)]')} onClick={() => onSnap('closed')} aria-hidden />}
             <div
                 ref={sheetRef}
                 id={id}
-                className={`${styles.sheet} ${styles[`snap_${snap}`]}${dragH !== null ? ` ${styles.dragging}` : ''}`}
+                className={cn(
+                    sheetBase,
+                    snap === 'full' ? 'h-[90dvh]' : 'h-[50dvh]',
+                    snap === 'closed' && sheetClosed,
+                    dragH !== null ? '[transition:none]' : snap === 'closed' ? sheetClosedT : sheetOpenT,
+                )}
                 style={dragH !== null ? { height: dragH } : undefined}
                 role="dialog"
                 aria-modal={snap === 'full'}
@@ -171,36 +190,35 @@ export function SRSheet({ id, snap, onSnap, returnFocusRef }: SRSheetProps) {
                 tabIndex={-1}
             >
                 <div
-                    className={styles.sheetHead}
+                    className="shrink-0 flex flex-col gap-[6px] pt-[6px] px-[12px] pb-[8px] border-b border-b-sg-line-soft touch-none cursor-grab"
                     {...handlers}
                 >
-                    <span className={styles.handle} aria-hidden />
-                    <div className={styles.sheetTitleRow}>
-                        <h2 className={styles.sheetTitle}>S/R strategy</h2>
-                        {v && <span className={`${styles.pill} ${styles[`regime${v.regime}`] ?? ''}`}>{REGIME_LABEL[v.regime] ?? v.regime}</span>}
-                        <span className={`${styles.pill} ${styles.regimeWARMING}`} title="The executor only sends real orders for NIFTY50_FNO">Paper</span>
-                        {updated && <span className={styles.updated}>as of {updated} IST</span>}
-                        <button type="button" className={styles.close} onClick={() => onSnap('closed')} aria-label="Close strategy details">
+                    <span className={sheetHandle} aria-hidden />
+                    <div className="flex items-center gap-[8px] min-w-0">
+                        <h2 className="m-0 text-sg-text text-[15px] font-semibold whitespace-nowrap">S/R strategy</h2>
+                        {v && <Badge variant="mobile" tone={REGIME_TONE[v.regime]}>{REGIME_LABEL[v.regime] ?? v.regime}</Badge>}
+                        <Badge variant="mobile" tone={REGIME_TONE.WARMING} title="The executor only sends real orders for NIFTY50_FNO">Paper</Badge>
+                        {updated && <span className="ml-auto text-sg-muted text-[11px] whitespace-nowrap">as of {updated} IST</span>}
+                        <Button variant="ghost-quiet" size="icon-40" className="mr-[-8px]" onClick={() => onSnap('closed')} aria-label="Close strategy details">
                             <X size={18} />
-                        </button>
+                        </Button>
                     </div>
-                    <div className={styles.sheetTabs} role="tablist" aria-label="Sheet view">
-                        {(['sr', 'fno'] as const).map(t => (
-                            <button
-                                key={t}
-                                type="button"
-                                role="tab"
-                                aria-selected={tab === t}
-                                className={`${styles.sheetTab}${tab === t ? ` ${styles.sheetTabOn}` : ''}`}
-                                onPointerDown={e => e.stopPropagation()}
-                                onClick={() => { haptic(); setTab(t); if (t === 'fno' && snap === 'half') onSnap('full'); }}
-                            >
-                                {t === 'sr' ? 'S/R strategy' : 'F&O instruments'}
-                            </button>
-                        ))}
-                    </div>
+                    <Tabs value={tab} onValueChange={(t) => setTab(t as SheetTab)}>
+                        <TabsList variant="sheet" aria-label="Sheet view">
+                            {(['sr', 'fno'] as const).map(t => (
+                                <TabsTrigger
+                                    key={t}
+                                    value={t}
+                                    onPointerDown={e => e.stopPropagation()}
+                                    onClick={() => { haptic(); setTab(t); if (t === 'fno' && snap === 'half') onSnap('full'); }}
+                                >
+                                    {t === 'sr' ? 'S/R strategy' : 'F&O instruments'}
+                                </TabsTrigger>
+                            ))}
+                        </TabsList>
+                    </Tabs>
                 </div>
-                <div className={styles.sheetBody}>
+                <div className="flex-1 min-h-0 flex flex-col gap-[10px] pt-[12px] px-[12px] pb-[16px] overflow-y-auto overscroll-contain">
                     {tab === 'sr' ? <SheetBody /> : <FnoInstrumentsTab />}
                 </div>
             </div>

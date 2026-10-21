@@ -90,6 +90,9 @@ func (svc *Service) route(ctx context.Context, ch <-chan *goredis.Message) {
 }
 
 func (svc *Service) enqueue(n Notification) {
+	if n.TS == 0 {
+		n.TS = time.Now().UnixMilli()
+	}
 	select {
 	case svc.queue <- n:
 	default:

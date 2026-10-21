@@ -1,7 +1,12 @@
 import { useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { postPositionCommand } from '../../services/api';
 import type { OpenOrder } from './signalAnalytics';
 import { canEdit, exitCommand, levelCommand, levelOnRightSide, type LevelKind } from './positionCommands';
+
+const posRow = 'flex flex-wrap items-center gap-[4px]';
+const posLabel = 'inline-flex items-center gap-[3px] text-[0.7rem] text-sg-muted';
 
 const fmt = (v: number | null | undefined) => (v && v > 0 ? v.toFixed(2) : '');
 const num = (s: string) => (s.trim() === '' ? null : Number(s));
@@ -18,7 +23,7 @@ export function PositionControls({ order, currentPrice }: { order: OpenOrder; cu
     const [confirmExit, setConfirmExit] = useState(false);
     const [note, setNote] = useState('');
 
-    if (order.real) return <span className="pos-readonly" title="Real orders are not edited from the dashboard">real · read-only</span>;
+    if (order.real) return <span className="text-[0.68rem] text-sg-faint" title="Real orders are not edited from the dashboard">real · read-only</span>;
     if (!canEdit(order)) return null;
 
     const open = (kind: LevelKind) => {
@@ -59,28 +64,28 @@ export function PositionControls({ order, currentPrice }: { order: OpenOrder; cu
     if (editing) {
         const label = editing === 'stop' ? 'SL' : 'TGT';
         return (
-            <div className="pos-edit">
-                <label>{label} ₹<input aria-label={`${label} premium`} type="number" step="0.05" value={premium} onChange={e => setPremium(e.target.value)} /></label>
-                <label>idx<input aria-label={`${label} index`} type="number" step="0.05" value={index} onChange={e => setIndex(e.target.value)} /></label>
-                <button type="button" className="pos-btn" onClick={save}>Save</button>
-                <button type="button" className="pos-btn ghost" onClick={() => setEditing(null)}>Cancel</button>
+            <div className={posRow}>
+                <label className={posLabel}>{label} ₹<Input variant="xs" aria-label={`${label} premium`} type="number" step="0.05" value={premium} onChange={e => setPremium(e.target.value)} /></label>
+                <label className={posLabel}>idx<Input variant="xs" aria-label={`${label} index`} type="number" step="0.05" value={index} onChange={e => setIndex(e.target.value)} /></label>
+                <Button type="button" variant="secondary" size="xs" onClick={save}>Save</Button>
+                <Button type="button" variant="bordered" size="xs" tone="muted" onClick={() => setEditing(null)}>Cancel</Button>
             </div>
         );
     }
 
     return (
-        <div className="pos-controls">
-            <button type="button" className="pos-btn" onClick={() => open('stop')}>SL</button>
-            <button type="button" className="pos-btn" onClick={() => open('target')}>TGT</button>
+        <div className={posRow}>
+            <Button type="button" variant="secondary" size="xs" onClick={() => open('stop')}>SL</Button>
+            <Button type="button" variant="secondary" size="xs" onClick={() => open('target')}>TGT</Button>
             {confirmExit ? (
                 <>
-                    <button type="button" className="pos-btn danger" onClick={() => { setConfirmExit(false); void send(exitCommand(order)); }}>Confirm exit</button>
-                    <button type="button" className="pos-btn ghost" onClick={() => setConfirmExit(false)}>No</button>
+                    <Button type="button" variant="destructive" size="xs" onClick={() => { setConfirmExit(false); void send(exitCommand(order)); }}>Confirm exit</Button>
+                    <Button type="button" variant="bordered" size="xs" tone="muted" onClick={() => setConfirmExit(false)}>No</Button>
                 </>
             ) : (
-                <button type="button" className="pos-btn danger" onClick={() => setConfirmExit(true)}>Exit</button>
+                <Button type="button" variant="destructive" size="xs" onClick={() => setConfirmExit(true)}>Exit</Button>
             )}
-            {note && <span className="pos-note">{note}</span>}
+            {note && <span className="text-[0.68rem] text-sg-muted">{note}</span>}
         </div>
     );
 }

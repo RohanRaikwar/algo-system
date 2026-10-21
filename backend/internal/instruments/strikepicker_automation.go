@@ -870,6 +870,13 @@ func medianFloat(values []float64) float64 {
 // (e.g. Mon 19 Oct 2026 for the Tue 20 Oct holiday) is fetched as listed;
 // without them it falls back to the weekly-Tuesday rule. Today's expiry
 // counts until 15:30, as in nextWeeklyExpiryDay.
+// UpcomingExpiries returns the nearest two expiries the picker builds its
+// chains on (listed in the instrument master, else the weekday guess).
+// No broker call.
+func (sp *StrikePicker) UpcomingExpiries(now time.Time) []time.Time {
+	return sp.automationExpiries(now)
+}
+
 func (sp *StrikePicker) automationExpiries(entryTime time.Time) []time.Time {
 	if listed := sp.upcomingListedExpiries(entryTime); len(listed) >= 2 {
 		return listed[:2]

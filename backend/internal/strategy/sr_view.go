@@ -42,6 +42,7 @@ type SRView struct {
 	Stop   int64  `json:"stop,omitempty"`
 	Target int64  `json:"target,omitempty"`
 	Manual bool   `json:"manual,omitempty"` // stop/target moved by hand
+	Trail  int64  `json:"trail,omitempty"`  // stop trails the 1m close by this
 	Strike int64  `json:"strike,omitempty"`
 
 	// Block is the day/time cap refusing entries right now, "" if none.
@@ -111,7 +112,7 @@ func (s *Nifty50SR) View(key string) (SRView, bool) {
 		DayOpen: ss.DayOpen, DayHigh: ss.DayHigh, DayLow: ss.DayLow, PrevDayHigh: ss.PrevDayHigh, PrevDayLow: ss.PrevDayLow,
 		DayExtremePct: s.cfg.DayExtremePct, DayRunPts: s.cfg.DayRunPts, DayExtremePuts: s.cfg.DayExtremePuts,
 		Close: st.LastClose, Levels: append([]SRLevel{}, ss.Levels...),
-		Side: string(st.Side), Kind: st.Kind, Entry: st.IndexEntry, Stop: st.StopLevel, Target: st.TargetLevel, Manual: st.ManualLevels, Strike: st.Strike,
+		Side: string(st.Side), Kind: st.Kind, Entry: st.IndexEntry, Stop: st.StopLevel, Target: st.TargetLevel, Manual: st.ManualLevels, Trail: st.TrailDist, Strike: st.Strike,
 		LastReject: s.lastReject, LastRejectTS: s.lastRejectTS, Rejects: make(map[string]int, len(s.dayRejects)),
 		TradesToday: st.TradesToday, MaxTrades: s.cfg.MaxTradesPerDay, ConsecLosses: st.ConsecLosses,
 		DayPnLPts: st.DayPnLPts, CooldownLeft: st.CooldownLeft,

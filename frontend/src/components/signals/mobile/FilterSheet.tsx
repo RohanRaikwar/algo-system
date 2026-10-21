@@ -1,6 +1,8 @@
 import { BottomSheet } from '../../layout/BottomSheet';
 import type { SignalsData } from '../useSignalsData';
-import styles from './signalsMobile.module.css';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 
 interface Props {
     open: boolean;
@@ -9,6 +11,8 @@ interface Props {
     /** Action and token filters apply to the log only. */
     logFilters: boolean;
 }
+
+const field = 'flex flex-col gap-[6px] text-sg-muted text-[12px] font-semibold';
 
 /** Strategy / action / token filters. Changes apply live; chips show what is on. */
 export function FilterSheet({ open, onClose, data, logFilters }: Props) {
@@ -19,35 +23,36 @@ export function FilterSheet({ open, onClose, data, logFilters }: Props) {
             title="Filters"
             footer={(
                 <>
-                    <button type="button" className={styles.btnGhost} onClick={data.clearFilters} disabled={!data.filtersActive}>
+                    <Button variant="bordered" size="sheet" onClick={data.clearFilters} disabled={!data.filtersActive}>
                         Clear
-                    </button>
-                    <button type="button" className={styles.btnPrimary} onClick={onClose}>Done</button>
+                    </Button>
+                    <Button variant="default" size="sheet" onClick={onClose}>Done</Button>
                 </>
             )}
         >
-            <div className={styles.form}>
-                <label className={styles.field}>
+            <div className="flex flex-col gap-[14px]">
+                <label className={field}>
                     <span>Strategy</span>
-                    <select value={data.stratFilter} onChange={e => data.setStratFilter(e.target.value)}>
-                        <option value="ALL">All strategies</option>
-                        {data.strategyNames.map(n => <option key={n} value={n}>{n}</option>)}
-                    </select>
+                    <NativeSelect variant="sheet" value={data.stratFilter} onChange={e => data.setStratFilter(e.target.value)}>
+                        <NativeSelectOption value="ALL">All strategies</NativeSelectOption>
+                        {data.strategyNames.map(n => <NativeSelectOption key={n} value={n}>{n}</NativeSelectOption>)}
+                    </NativeSelect>
                 </label>
                 {logFilters && (
                     <>
-                        <label className={styles.field}>
+                        <label className={field}>
                             <span>Action</span>
-                            <select value={data.actionFilter} onChange={e => data.setActionFilter(e.target.value)}>
-                                <option value="ALL">All actions</option>
-                                <option value="BUY">Entries (BUY)</option>
-                                <option value="EXIT">Exits (EXIT)</option>
-                                <option value="WATCH">Exit watch (WATCH_*)</option>
-                            </select>
+                            <NativeSelect variant="sheet" value={data.actionFilter} onChange={e => data.setActionFilter(e.target.value)}>
+                                <NativeSelectOption value="ALL">All actions</NativeSelectOption>
+                                <NativeSelectOption value="BUY">Entries (BUY)</NativeSelectOption>
+                                <NativeSelectOption value="EXIT">Exits (EXIT)</NativeSelectOption>
+                                <NativeSelectOption value="WATCH">Exit watch (WATCH_*)</NativeSelectOption>
+                            </NativeSelect>
                         </label>
-                        <label className={styles.field}>
+                        <label className={field}>
                             <span>Token</span>
-                            <input
+                            <Input
+                                variant="sheet"
                                 type="search"
                                 inputMode="search"
                                 placeholder="e.g. NFO:43521"

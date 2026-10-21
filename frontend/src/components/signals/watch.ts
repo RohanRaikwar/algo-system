@@ -1,3 +1,6 @@
+import type { BadgeTone } from '@/components/ui/badge';
+import { actionBadge, actionTone, type ActionTone } from './classes';
+
 /**
  * Exit-watch signals (WATCH_HOLD / WATCH_TIGHTEN / WATCH_EXIT) come from the
  * exitwatch service on pub:signal and its own journal; WATCH_BUY is SR entry
@@ -15,13 +18,22 @@ export function matchesActionFilter(action: string, filter: string): boolean {
     return action === filter;
 }
 
+function watchActionTone(action: string): ActionTone {
+    const a = action.toUpperCase();
+    if (a === 'WATCH_EXIT') return 'watchExit';
+    if (a === 'WATCH_BUY') return 'watchBuy';
+    if (a === 'WATCH_TIGHTEN') return 'watchTighten';
+    return 'watchHold';
+}
+
+/** Badge tone for a WATCH_* action. */
+export function watchBadgeTone(action: string): BadgeTone {
+    return actionTone(watchActionTone(action));
+}
+
 /** Badge class for a WATCH_* action. */
 export function watchBadgeClass(action: string): string {
-    const a = action.toUpperCase();
-    if (a === 'WATCH_EXIT') return 'action-badge watch-exit';
-    if (a === 'WATCH_BUY') return 'action-badge watch-buy';
-    if (a === 'WATCH_TIGHTEN') return 'action-badge watch-tighten';
-    return 'action-badge watch-hold';
+    return actionBadge(watchActionTone(action));
 }
 
 /**

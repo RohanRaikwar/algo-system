@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isWatchAction, matchesActionFilter, watchBadgeClass, watchExitPricedAtPremium } from '../watch';
+import { actionBadge } from '../classes';
 import { buildCompletedEvents, buildOpenOrders } from '../signalAnalytics';
 import { buildChartMarkers } from '../../chart/hooks/useChartMarkers';
 import type { SignalRecord } from '../../../types/signal';
@@ -32,9 +33,9 @@ describe('exit watch signals', () => {
         expect(matchesActionFilter('EXIT', 'EXIT')).toBe(true);
         expect(matchesActionFilter('WATCH_EXIT', 'EXIT')).toBe(false);
         expect(matchesActionFilter('BUY', 'ALL')).toBe(true);
-        expect(watchBadgeClass('WATCH_EXIT')).toContain('watch-exit');
-        expect(watchBadgeClass('WATCH_TIGHTEN')).toContain('watch-tighten');
-        expect(watchBadgeClass('WATCH_HOLD')).toContain('watch-hold');
+        expect(watchBadgeClass('WATCH_EXIT')).toBe(actionBadge('watchExit'));
+        expect(watchBadgeClass('WATCH_TIGHTEN')).toBe(actionBadge('watchTighten'));
+        expect(watchBadgeClass('WATCH_HOLD')).toBe(actionBadge('watchHold'));
     });
 
     // Store order is newest-first.
@@ -78,7 +79,7 @@ describe('entry advice (WATCH_BUY)', () => {
         expect(isWatchAction('WATCH_BUY')).toBe(true);
         expect(matchesActionFilter('WATCH_BUY', 'WATCH')).toBe(true);
         expect(matchesActionFilter('WATCH_BUY', 'BUY')).toBe(false);
-        expect(watchBadgeClass('WATCH_BUY')).toContain('watch-buy');
+        expect(watchBadgeClass('WATCH_BUY')).toBe(actionBadge('watchBuy'));
     });
 
     it('opens no position and pairs with no exit', () => {

@@ -1,8 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Bell, BellOff, BellRing, Send } from 'lucide-react';
 import { disablePush, enablePush, sendTestPush, type PushState } from '../../services/push';
 import { usePushStore } from '../../store/usePushStore';
-import styles from './Header.module.css';
+import { useAlertSetupStore } from '../../store/useAlertSetupStore';
+import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Popover, PopoverContent } from '@/components/ui/popover';
+
+/* The bell and Test buttons are Button variant="pill" (font inherited from the header).
+   Menu and note open 6px below the bell + Test group, right aligned. */
 
 const HINT: Record<PushState, string> = {
     'unsupported': 'This browser does not support push notifications',
@@ -21,15 +27,7 @@ export function PushToggle() {
     const [menu, setMenu] = useState(false);
     const [note, setNote] = useState('');
     const ref = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        if (!menu) return;
-        const close = (e: MouseEvent) => {
-            if (!ref.current?.contains(e.target as Node)) setMenu(false);
-        };
-        document.addEventListener('mousedown', close);
-        return () => document.removeEventListener('mousedown', close);
-    }, [menu]);
+    const openSetup = useAlertSetupStore(s => s.setOpen);
 
     if (state === null || state === 'unsupported') return null;
 
@@ -46,9 +44,10 @@ export function PushToggle() {
         }
     };
 
+    // 'on' opens the menu (DropdownMenuTrigger); other states act on click.
     const onClick = () => {
-        if (state === 'on') setMenu(m => !m);
-        else if (state === 'off' || state === 'disabled') run(enablePush);
+        if (state === 'on') return;
+        if (state === 'off' || state === 'disabled') run(enablePush);
         else setNote(HINT[state]);
     };
 
@@ -59,43 +58,61 @@ export function PushToggle() {
     });
 
     const Icon = state === 'on' ? BellRing : state === 'off' ? Bell : BellOff;
-    const tone = state === 'on' ? styles.toneUp : state === 'off' ? '' : styles.toneMuted;
+    const tone = state === 'on' ? 'profit' : 'text-2';
+
+    const bell = (
+        <Button
+            variant="pill"
+            tone={tone}
+            onClick={onClick}
+            disabled={busy}
+            title={HINT[state]}
+            aria-label={HINT[state]}
+        >
+            <Icon size={14} aria-hidden />
+        </Button>
+    );
 
     return (
-        <div className={styles.pushWrap} ref={ref}>
-            <button
-                type="button"
-                className={`${styles.pill} ${styles.pushBtn} ${tone}`}
-                onClick={onClick}
-                disabled={busy}
-                title={HINT[state]}
-                aria-label={HINT[state]}
-                aria-expanded={state === 'on' ? menu : undefined}
-            >
-                <Icon size={14} aria-hidden />
-            </button>
+        <div className="relative flex gap-[6px] shrink-0" ref={ref}>
+            {state === 'on' ? (
+                <DropdownMenu open={menu} onOpenChange={setMenu}>
+                    <DropdownMenuTrigger render={bell} disabled={busy} />
+                    <DropdownMenuContent anchor={ref} align="end" sideOffset={6}>
+                        <DropdownMenuItem onClick={() => { setMenu(false); openSetup(true); }}>
+                            Alert setup (sleeping phone)
+                        </DropdownMenuItem>
+                        <DropdownMenuItem disabled={busy} onClick={() => run(async () => { setMenu(false); return disablePush(); })}>
+                            Turn off alerts
+                        </DropdownMenuItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
+            ) : bell}
             {state === 'on' && (
-                <button
-                    type="button"
-                    className={`${styles.pill} ${styles.pushBtn}`}
+                <Button
+                    variant="pill"
+                    tone="text-2"
                     onClick={sendTest}
                     disabled={busy}
                     title="Send a test alert to this device"
                 >
                     <Send size={13} aria-hidden /> Test
-                </button>
+                </Button>
             )}
-            {menu && (
-                <div className={styles.pushMenu} role="menu">
-                    <button type="button" role="menuitem" disabled={busy}
-                        onClick={() => run(async () => { setMenu(false); return disablePush(); })}>
-                        Turn off alerts
-                    </button>
-                </div>
-            )}
-            {note && (
-                <div className={styles.pushNote} role="status" onClick={() => setNote('')}>{note}</div>
-            )}
+            {/* Note: stays until clicked (or Esc); never takes focus. */}
+            <Popover open={note !== ''} onOpenChange={(open, d) => { if (!open && d.reason === 'escape-key') setNote(''); }}>
+                <PopoverContent
+                    anchor={ref}
+                    align="end"
+                    role="status"
+                    initialFocus={false}
+                    finalFocus={false}
+                    className="cursor-pointer"
+                    onClick={() => setNote('')}
+                >
+                    {note}
+                </PopoverContent>
+            </Popover>
         </div>
     );
 }

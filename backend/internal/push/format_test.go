@@ -22,6 +22,7 @@ func TestFormatSignal(t *testing.T) {
 			wantTitle: "BUY NIFTY50_SR [PAPER]",
 			wantBody:  []string{"NIFTY24500CE @ ₹123.45", "support bounce"},
 			wantTag:   "entry-111",
+			sticky:    true,
 		},
 		{
 			name:      "buy without premium falls back to index",
@@ -29,6 +30,7 @@ func TestFormatSignal(t *testing.T) {
 			wantOK:    true,
 			wantTitle: "BUY S",
 			wantBody:  []string{"PUT, index ₹24,500.55"},
+			sticky:    true,
 		},
 		{
 			name:      "exit with pnl",

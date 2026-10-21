@@ -50,7 +50,7 @@ func (svc *Service) positionCommandVia(c positionCommander, cmd model.PositionCo
 		}
 		return sig, nil
 	}
-	e := strategy.LevelEdit{IndexStop: cmd.IndexStop, IndexTarget: cmd.IndexTarget, FNOSL: cmd.FNOSL, FNOTarget: cmd.FNOTarget}
+	e := strategy.LevelEdit{IndexStop: cmd.IndexStop, IndexTarget: cmd.IndexTarget, IndexTrail: cmd.IndexTrail, FNOSL: cmd.FNOSL, FNOTarget: cmd.FNOTarget}
 	return nil, c.SetLevels(side, tok, e)
 }
 

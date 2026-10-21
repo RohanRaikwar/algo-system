@@ -315,8 +315,10 @@ export async function saveTradingConfig(cfg: StoredTradingConfig): Promise<void>
 
 /**
  * Dashboard edit of an open paper position (POST /api/positions/command).
- * Levels are paise; omitted levels stay as they are, fno_target -1 removes
- * the premium target. stratengine refuses real-order strategies.
+ * Levels are paise; omitted levels stay as they are, -1 removes the index
+ * stop, index target, index trail or premium target. index_trail is the
+ * distance the index stop follows the 1m close at. stratengine refuses
+ * real-order strategies.
  */
 export interface PositionCommand {
     strategy: string;
@@ -325,6 +327,7 @@ export interface PositionCommand {
     action: 'set_levels' | 'exit';
     index_stop?: number;
     index_target?: number;
+    index_trail?: number;
     fno_sl?: number;
     fno_target?: number;
 }

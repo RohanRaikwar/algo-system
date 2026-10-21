@@ -3,13 +3,20 @@ import { ErrorBoundary } from '../components/ErrorBoundary';
 import { TradingChart } from '../components/chart/TradingChart';
 import { SRPanel } from '../components/sr/SRPanel';
 import { FnoInstrumentsTab } from '../components/signals/FnoInstrumentsTab';
-import '../components/signals/signals.css';
 import { SRPeek } from '../components/sr/SRPeek';
 import { SRSheet, type SheetSnap } from '../components/sr/SRSheet';
 import { useMediaQuery, PHONE_QUERY, PHONE_LANDSCAPE_QUERY } from '../hooks/useMediaQuery';
 import { useAppStore } from '../store/useAppStore';
 import { loadLayout, saveLayout, LAYOUTS, type ChartLayout } from './dashboardLayout';
-import styles from './DashboardPage.module.css';
+import { cn } from '@/lib/utils';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+
+const GRID_COLS: Record<number, string> = {
+    1: 'grid-cols-[minmax(0,1fr)] lte-640:grid-rows-[minmax(0,1fr)] phone-land:grid-rows-[minmax(0,1fr)]',
+    2: 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)]',
+    4: 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)] grid-rows-[minmax(0,1fr)_minmax(0,1fr)]',
+};
 
 const SHEET_ID = 'sr-sheet';
 const SNAP_KEY = 'rangeSheetSnap';
@@ -88,46 +95,44 @@ export function DashboardPage({ onOpenIndicators }: DashboardPageProps) {
 
     return (
         <ErrorBoundary>
-            <div className={styles.page}>
-                <div className={styles.layoutBar}>
-                    <div className={styles.layoutGroup} role="tablist" aria-label="Dashboard view">
-                        {(['charts', 'fno'] as const).map(v => (
-                            <button
-                                key={v}
-                                role="tab"
-                                aria-selected={view === v}
-                                className={`${styles.layoutBtn}${view === v ? ` ${styles.layoutActive}` : ''}`}
-                                onClick={() => setView(v)}
-                            >
-                                {v === 'charts' ? 'Charts' : 'F&O instruments'}
-                            </button>
-                        ))}
-                    </div>
-                    <span className={styles.spacer} />
+            <div className="relative flex flex-col flex-[1_1_auto] min-w-0 min-h-0">
+                <div className="flex items-center justify-end gap-[8px] py-[4px] px-[12px] border-b border-b-sg-line bg-sg-surface shrink-0 lte-640:hidden phone-land:hidden">
+                    <Tabs value={view} onValueChange={v => setView(v as DashView)}>
+                        <TabsList variant="compact" aria-label="Dashboard view">
+                            {(['charts', 'fno'] as const).map(v => (
+                                <TabsTrigger key={v} value={v}>
+                                    {v === 'charts' ? 'Charts' : 'F&O instruments'}
+                                </TabsTrigger>
+                            ))}
+                        </TabsList>
+                    </Tabs>
+                    <span className="flex-[1_1_auto]" />
                     {!showFno && (<>
-                    <span className={styles.layoutLabel}>Charts</span>
-                    <div className={styles.layoutGroup} role="radiogroup" aria-label="Chart layout">
+                    <span className="text-[11px] text-sg-muted">Charts</span>
+                    <ToggleGroup
+                        variant="compact"
+                        aria-label="Chart layout"
+                        value={[String(layout.count)]}
+                        onValueChange={v => v[0] && setLayout(l => ({ ...l, count: Number(v[0]) as ChartLayout['count'] }))}
+                    >
                         {LAYOUTS.map(n => (
-                            <button
+                            <ToggleGroupItem
                                 key={n}
-                                role="radio"
-                                aria-checked={layout.count === n}
-                                className={`${styles.layoutBtn}${layout.count === n ? ` ${styles.layoutActive}` : ''}`}
-                                onClick={() => setLayout(l => ({ ...l, count: n }))}
+                                value={String(n)}
                                 title={n === 1 ? 'One chart' : `${n} charts, each with its own timeframe`}
                             >
                                 {n}
-                            </button>
+                            </ToggleGroupItem>
                         ))}
-                    </div>
+                    </ToggleGroup>
                     </>)}
                 </div>
                 {showFno ? (
-                    <div className={styles.fnoPane}>
+                    <div className="flex-[1_1_auto] min-h-0 overflow-y-auto py-[12px] px-[16px] bg-sg-bg">
                         <FnoInstrumentsTab />
                     </div>
                 ) : (
-                    <div className={`${styles.grid} ${styles[`grid${count}`]}`}>
+                    <div className={cn('grid flex-[1_1_auto] min-h-0 gap-[1px] bg-sg-line', GRID_COLS[count])}>
                         <TradingChart onOpenIndicators={onOpenIndicators} onOpenSR={compactUI ? openSR : undefined} />
                         {panes.map((tf, i) => (
                             <TradingChart key={i} compact paneTF={tf} onPaneTFChange={t => setPaneTF(i, t)} />

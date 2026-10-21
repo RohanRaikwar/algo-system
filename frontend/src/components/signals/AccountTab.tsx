@@ -2,6 +2,15 @@ import { useCallback, useEffect, useState } from 'react';
 import { User, Wallet, RefreshCw, TrendingUp, TrendingDown } from 'lucide-react';
 import { fetchAccountBalance, fetchLastOrders, fetchUserProfile } from '../../services/api';
 import type { AccountBalance, LastOrder, UserProfile } from '../../services/api';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Empty } from '@/components/ui/empty';
+import { Spinner } from '@/components/ui/spinner';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { actionTone, dailyTitle, errorText, footerNote, sectionHeader, sectionTitleText, summaryGrid, summaryLabel, summaryValue, tableWrap, tabStack } from './classes';
+
+const sectionTitle = `${sectionTitleText} mb-[10px] text-[0.92rem]`;
 
 export function AccountTab() {
     const [loading, setLoading] = useState(true);
@@ -60,20 +69,20 @@ export function AccountTab() {
 
     if (loading && !balance) {
         return (
-            <div className="signals-empty">
+            <Empty>
                 <p>Loading account information…</p>
-            </div>
+            </Empty>
         );
     }
 
     if (error) {
         return (
-            <div className="signals-empty">
-                <p className="error-text">{error}</p>
-                <button onClick={() => void load()} className="daily-refresh-btn">
+            <Empty>
+                <p className={errorText}>{error}</p>
+                <Button variant="outline" onClick={() => void load()}>
                     <RefreshCw size={14} /> Retry
-                </button>
-            </div>
+                </Button>
+            </Empty>
         );
     }
 
@@ -82,100 +91,100 @@ export function AccountTab() {
         : '0';
 
     return (
-        <div className="account-tab">
-            <div className="daily-header">
-                <div className="daily-title">
+        <div className={tabStack}>
+            <div className={sectionHeader}>
+                <div className={dailyTitle}>
                     <User size={16} />
                     Angel One account
                 </div>
-                <button
-                    className="daily-refresh-btn"
+                <Button
+                    variant="outline"
                     onClick={() => void load()}
                     disabled={loading}
                     title="Refresh account data"
                 >
-                    <RefreshCw size={14} className={loading ? 'spin' : ''} />
+                    <Spinner size={14} spinning={loading} />
                     Refresh
-                </button>
+                </Button>
             </div>
 
             {/* User Profile Section */}
             <div className="account-balance-section">
-                <h3 className="section-title">
+                <h3 className={sectionTitle}>
                     <User size={16} />
                     Account details
                 </h3>
-                <div className="daily-summary-grid">
-                    <div className="daily-summary-card">
-                        <div className="daily-summary-label">Client ID</div>
-                        <div className="daily-summary-value sm">
+                <div className={summaryGrid}>
+                    <Card variant="summary">
+                        <div className={summaryLabel}>Client ID</div>
+                        <div className={summaryValue(undefined, true)}>
                             {profile?.data?.clientcode || '—'}
                         </div>
-                    </div>
-                    <div className="daily-summary-card">
-                        <div className="daily-summary-label">Name</div>
-                        <div className="daily-summary-value sm">
+                    </Card>
+                    <Card variant="summary">
+                        <div className={summaryLabel}>Name</div>
+                        <div className={summaryValue(undefined, true)}>
                             {profile?.data?.name || '—'}
                         </div>
-                    </div>
-                    <div className="daily-summary-card">
-                        <div className="daily-summary-label">Broker</div>
-                        <div className="daily-summary-value sm">
+                    </Card>
+                    <Card variant="summary">
+                        <div className={summaryLabel}>Broker</div>
+                        <div className={summaryValue(undefined, true)}>
                             {profile?.data?.broker || 'Angel One'}
                         </div>
-                    </div>
-                    <div className="daily-summary-card">
-                        <div className="daily-summary-label">Status</div>
-                        <div className="daily-summary-value sm text-pos">
+                    </Card>
+                    <Card variant="summary">
+                        <div className={summaryLabel}>Status</div>
+                        <div className={summaryValue('text-sg-profit', true)}>
                             {profile ? 'Active' : '—'}
                         </div>
-                    </div>
+                    </Card>
                 </div>
             </div>
 
             {/* Account Balance Section */}
             <div className="account-balance-section">
-                <h3 className="section-title">
+                <h3 className={sectionTitle}>
                     <Wallet size={16} />
                     Margin and funds
                 </h3>
-                <div className="daily-summary-grid">
-                    <div className="daily-summary-card">
-                        <div className="daily-summary-label">Total balance</div>
-                        <div className="daily-summary-value">
+                <div className={summaryGrid}>
+                    <Card variant="summary">
+                        <div className={summaryLabel}>Total balance</div>
+                        <div className={summaryValue()}>
                             {balance ? formatINR(balance.total_balance) : '—'}
                         </div>
-                    </div>
-                    <div className="daily-summary-card">
-                        <div className="daily-summary-label">
+                    </Card>
+                    <Card variant="summary">
+                        <div className={summaryLabel}>
                             <TrendingUp size={14} />
                             Available cash
                         </div>
-                        <div className="daily-summary-value price-up">
+                        <div className={summaryValue('text-sg-profit')}>
                             {balance ? formatINR(balance.available_balance) : '—'}
                         </div>
-                    </div>
-                    <div className="daily-summary-card">
-                        <div className="daily-summary-label">
+                    </Card>
+                    <Card variant="summary">
+                        <div className={summaryLabel}>
                             <TrendingDown size={14} />
                             Used margin
                         </div>
-                        <div className="daily-summary-value price-down">
+                        <div className={summaryValue('text-sg-loss')}>
                             {balance ? formatINR(balance.used_margin) : '—'}
                         </div>
-                    </div>
-                    <div className="daily-summary-card">
-                        <div className="daily-summary-label">Margin usage</div>
-                        <div className={`daily-summary-value ${
-                            parseFloat(marginUsagePercent) > 80 ? 'text-neg' :
-                                parseFloat(marginUsagePercent) > 60 ? 'text-warn' : 'text-pos'
-                        }`}>
+                    </Card>
+                    <Card variant="summary">
+                        <div className={summaryLabel}>Margin usage</div>
+                        <div className={summaryValue(
+                            parseFloat(marginUsagePercent) > 80 ? 'text-sg-loss' :
+                                parseFloat(marginUsagePercent) > 60 ? 'text-sg-warn' : 'text-sg-profit',
+                        )}>
                             {marginUsagePercent}%
                         </div>
-                    </div>
+                    </Card>
                 </div>
                 {balance && (
-                    <div className="account-updated">
+                    <div className={`${footerNote} mt-[8px]`}>
                         Last updated: {new Date(balance.last_updated).toLocaleTimeString('en-IN', {
                             hour: '2-digit',
                             minute: '2-digit',
@@ -187,53 +196,53 @@ export function AccountTab() {
 
             {/* Last Orders Section */}
             <div className="account-orders-section">
-                <h3 className="section-title">Recent orders</h3>
+                <h3 className={sectionTitle}>Recent orders</h3>
                 {lastOrders.length === 0 ? (
-                    <div className="signals-empty">
+                    <Empty>
                         <p>No recent orders found.</p>
-                    </div>
+                    </Empty>
                 ) : (
-                    <div className="signals-table-wrap">
-                        <table className="signals-table compact-table">
-                            <thead>
-                                <tr>
-                                    <th style={{ width: '120px' }}>Time</th>
-                                    <th style={{ width: '130px' }}>Strategy</th>
-                                    <th style={{ width: '140px' }}>Instrument</th>
-                                    <th style={{ width: '70px' }}>Side</th>
-                                    <th style={{ width: '70px' }}>Action</th>
-                                    <th className="num" style={{ width: '60px' }}>Qty</th>
-                                    <th className="num" style={{ width: '110px' }}>Price</th>
-                                    <th style={{ width: '90px' }}>Status</th>
-                                </tr>
-                            </thead>
-                            <tbody>
+                    <div className={tableWrap()}>
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead style={{ width: '120px' }}>Time</TableHead>
+                                    <TableHead style={{ width: '130px' }}>Strategy</TableHead>
+                                    <TableHead style={{ width: '140px' }}>Instrument</TableHead>
+                                    <TableHead style={{ width: '70px' }}>Side</TableHead>
+                                    <TableHead style={{ width: '70px' }}>Action</TableHead>
+                                    <TableHead numeric style={{ width: '60px' }}>Qty</TableHead>
+                                    <TableHead numeric style={{ width: '110px' }}>Price</TableHead>
+                                    <TableHead style={{ width: '90px' }}>Status</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
                                 {lastOrders.map((order) => (
-                                    <tr key={order.id} className="signal-row">
-                                        <td className="signal-time">{formatTime(order.created_at)}</td>
-                                        <td className="strategy-cell">{order.strategy}</td>
-                                        <td>{order.instrument}</td>
-                                        <td>
-                                            <span className={order.side === 'PUT' ? 'action-badge buy-put' : 'action-badge buy-call'}>
+                                    <TableRow key={order.id}>
+                                        <TableCell density="compact" kind="time">{formatTime(order.created_at)}</TableCell>
+                                        <TableCell density="compact" kind="strategy">{order.strategy}</TableCell>
+                                        <TableCell density="compact">{order.instrument}</TableCell>
+                                        <TableCell density="compact">
+                                            <Badge tone={actionTone(order.side === 'PUT' ? 'put' : 'buy')}>
                                                 {order.side}
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <span className={order.action === 'BUY' ? 'action-badge buy' : 'action-badge exit'}>
+                                            </Badge>
+                                        </TableCell>
+                                        <TableCell density="compact">
+                                            <Badge tone={actionTone(order.action === 'BUY' ? 'buy' : 'exit')}>
                                                 {order.action}
-                                            </span>
-                                        </td>
-                                        <td className="price-cell">{order.qty}</td>
-                                        <td className="price-cell">{formatINR(order.price)}</td>
-                                        <td>
-                                            <span className="status-badge status-complete">
+                                            </Badge>
+                                        </TableCell>
+                                        <TableCell density="compact" kind="price">{order.qty}</TableCell>
+                                        <TableCell density="compact" kind="price">{formatINR(order.price)}</TableCell>
+                                        <TableCell density="compact">
+                                            <Badge tone="profit">
                                                 {order.status}
-                                            </span>
-                                        </td>
-                                    </tr>
+                                            </Badge>
+                                        </TableCell>
+                                    </TableRow>
                                 ))}
-                            </tbody>
-                        </table>
+                            </TableBody>
+                        </Table>
                     </div>
                 )}
             </div>

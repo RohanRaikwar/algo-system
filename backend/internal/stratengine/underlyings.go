@@ -704,6 +704,8 @@ func (svc *Service) refreshExtraStrikeSel(ctx context.Context, ex *srExtra, now 
 	lim := svc.extraLimits(ex)
 	if chain, err := svc.extraChain(ex, now); err != nil {
 		errText = "no greeks: " + err.Error()
+		// An empty local chain must not stop the SR-expiry ladder either.
+		svc.subscribeExtraExpiryLadder(ctx, ex, nil, now)
 	} else {
 		svc.subscribeExtraExpiryLadder(ctx, ex, chain, now)
 		side := func(opt string) *srSideView {
@@ -776,6 +778,13 @@ func (svc *Service) subscribeExtraExpiryLadder(ctx context.Context, ex *srExtra,
 			srExp = c.Expiry
 		}
 	}
+	if srExp.IsZero() {
+		// A local-greeks chain (SENSEX) holds only contracts that already
+		// have a premium, and the SR expiry gets premiums only once this
+		// ladder streams it. Take the expiry from the listed ones instead,
+		// or every Wednesday (Thursday expiry 1 day out) refuses all entries.
+		srExp = svc.listedSRExpiry(ex, now, lim.MinDTE)
+	}
 	spot := svc.orderExecutor.GetLTP(ex.prof.IndexToken)
 	if srExp.IsZero() || sameDay(srExp, nearest) || spot <= 0 {
 		return
@@ -806,6 +815,28 @@ func (svc *Service) subscribeExtraExpiryLadder(ctx context.Context, ex *srExtra,
 		}
 	}
 	svc.subscribeOn(ctx, ex, tokens...)
+}
+
+// expiryLister lists upcoming expiries without a broker call
+// (*instruments.StrikePicker).
+type expiryLister interface {
+	UpcomingExpiries(now time.Time) []time.Time
+}
+
+// listedSRExpiry is the nearest listed expiry at least minDTE days out, zero
+// if ex's resolver cannot list expiries or none qualifies.
+func (svc *Service) listedSRExpiry(ex *srExtra, now time.Time, minDTE int) time.Time {
+	l, ok := svc.resolverOf(ex).(expiryLister)
+	if !ok {
+		return time.Time{}
+	}
+	today := dayStart(now)
+	for _, e := range l.UpcomingExpiries(now) {
+		if daysBetween(today, e) >= minDTE {
+			return e
+		}
+	}
+	return time.Time{}
 }
 
 // publishExtraStrikeSels publishes {"BSE:99919000": view, …}.

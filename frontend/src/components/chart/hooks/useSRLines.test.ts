@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { LineStyle } from 'lightweight-charts';
 import { srLines } from './useSRLines';
 import { srBox } from '../srBoxPrimitive';
 import type { SRView } from '../../../types/sr';
@@ -26,8 +27,8 @@ describe('SR chart lines', () => {
     });
 
     it('adds SR position lines when in a trade', () => {
-        const titles = srLines({ ...v, side: 'CALL', entry: 2271270, stop: 2265991, target: 2281828 }, 2271000).map(l => l.title);
-        expect(titles.slice(-3)).toEqual(['SR CALL', 'SR stop', 'SR target']);
+        const lines = srLines({ ...v, side: 'CALL', entry: 2271270, stop: 2265991, target: 2281828 }, 2271000);
+        expect(lines.slice(-3).map(l => `${l.title}@${l.price}`)).toEqual(['@22712.7', '@22659.91', '@22818.28']);
         expect(srLines(null, 1)).toEqual([]);
     });
 });
@@ -41,13 +42,12 @@ describe('SR sideways box geometry', () => {
 });
 
 describe('SR line drag', () => {
-    it('holds a dragged stop and tags manual levels', async () => {
+    it('holds a dragged stop solid', async () => {
         const { hitLine } = await import('./useTradeLineDrag');
         const pos = { ...v, side: 'CALL', entry: 2271270, stop: 2265991, target: 2281828 };
-        const lines = srLines(pos, 2271000, { stop: 2268000 });
-        expect(lines.find(l => l.title === 'SR stop')?.price).toBe(22680);
-        expect(lines.find(l => l.title === 'SR target')?.price).toBe(22818.28);
-        expect(srLines({ ...pos, manual: true }, 2271000).slice(-2).map(l => l.title)).toEqual(['SR stop manual', 'SR target manual']);
+        const [, stop, target] = srLines(pos, 2271000, { stop: 2268000 }).slice(-3);
+        expect(stop).toMatchObject({ price: 22680, style: LineStyle.Solid });
+        expect(target).toMatchObject({ price: 22818.28, style: LineStyle.Dashed });
 
         expect(hitLine(100, 104, 300)).toBe('stop');
         expect(hitLine(100, 97, 102)).toBe('target');

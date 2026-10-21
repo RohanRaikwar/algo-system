@@ -5,9 +5,55 @@ import { fmtUptime } from '../../utils/helpers';
 import type { SystemMetrics } from '../../types/ws';
 import { Sparkline } from './Sparkline';
 import { SERVICE_LABELS, collectIssues, isStale, isTicking } from './healthStatus';
-import styles from './Health.module.css';
+import { cn } from '@/lib/utils';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Alert } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Card as UICard } from '@/components/ui/card';
+import { Empty } from '@/components/ui/empty';
+import { Progress } from '@/components/ui/progress';
+import { Separator } from '@/components/ui/separator';
 
 type Tone = 'ok' | 'warn' | 'bad' | 'idle';
+
+/** Text colour per tone. */
+const TONE_TEXT: Record<Tone, string> = {
+    ok: 'text-sg-profit',
+    warn: 'text-sg-warn',
+    bad: 'text-sg-loss',
+    idle: 'text-sg-faint',
+};
+
+const DOT_BG: Record<Tone, string> = {
+    ok: 'bg-sg-profit',
+    warn: 'bg-sg-warn',
+    bad: 'bg-sg-loss',
+    idle: 'bg-sg-faint',
+};
+
+/** Meter fill tone per health tone. */
+const FILL_TONE = { ok: 'accent', warn: 'warn', bad: 'loss', idle: 'faint' } as const;
+
+/** Banner left-border tone; idle has none. */
+const BANNER_TONE = { ok: 'profit', warn: 'warn', bad: 'loss', idle: undefined } as const;
+
+function dot(tone: Tone, opts: { lg?: boolean; pulse?: boolean } = {}): string {
+    return cn(
+        'rounded-[50%] shrink-0',
+        opts.lg ? 'w-[12px] h-[12px]' : 'w-[8px] h-[8px]',
+        DOT_BG[tone],
+        opts.pulse && 'animate-[health-pulse_2s_ease-out_infinite] motion-reduce:animate-none',
+    );
+}
+
+const pageCls = 'flex flex-col gap-[14px]';
+const pageTitle = 'text-sg-text text-[1.25rem] font-semibold tracking-[-0.01em]';
+const colCls = 'flex flex-col gap-[12px] min-w-0 lte-1100:last:col-span-full lte-1100:last:grid lte-1100:last:grid-cols-[repeat(2,minmax(0,1fr))] lte-1100:last:items-start lte-720:last:grid-cols-[minmax(0,1fr)]';
+const serviceCls = 'inline-flex items-center gap-[8px] text-[0.86rem] whitespace-nowrap';
+const serviceName = 'text-sg-text-2 font-medium';
+const heroCls = 'flex items-center gap-[10px] mb-[10px]';
+const heroValue = 'text-[1.9rem] font-semibold tracking-[-0.02em] leading-[1.1] tabular-nums';
+const note = 'text-sg-faint text-[0.8rem] leading-[1.5] mt-[2px] mb-[4px] mx-0';
 
 function fmtCount(n: number | undefined): string {
     if (n === undefined || n === null) return '—';
@@ -56,40 +102,44 @@ function useNow(): number {
 
 function Card({ title, meta, children }: { title: string; meta?: ReactNode; children: ReactNode }) {
     return (
-        <section className={styles.card}>
-            <header className={styles.cardHead}>
-                <h2 className={styles.cardTitle}>{title}</h2>
-                {meta && <span className={styles.cardMeta}>{meta}</span>}
+        <UICard variant="panel" render={<section />}>
+            <header className="flex items-center justify-between gap-[10px] mb-[12px]">
+                <h2 className="text-sg-text text-[0.95rem] font-semibold">{title}</h2>
+                {meta && <span className="text-sg-faint text-[0.78rem]">{meta}</span>}
             </header>
             {children}
-        </section>
+        </UICard>
     );
 }
 
 /** A labelled value. Colour only when the value needs attention. */
 function Row({ label, value, tone, hint }: { label: string; value: ReactNode; tone?: Tone; hint?: string }) {
-    const alert = tone === 'warn' || tone === 'bad' || tone === 'idle' ? styles[tone] : '';
+    const alert = tone === 'warn' || tone === 'bad' || tone === 'idle' ? TONE_TEXT[tone] : 'text-sg-text';
     return (
-        <div className={styles.row}>
-            <span className={`${styles.rowLabel}${hint ? ` ${styles.hasHint}` : ''}`} title={hint}>{label}</span>
-            <span className={`${styles.rowValue} ${alert}`}>{value}</span>
+        <div className="flex items-baseline justify-between gap-[12px] py-[6px] px-0 text-[0.86rem]">
+            {hint ? (
+                <Tooltip>
+                    <TooltipTrigger render={<span className="text-sg-muted cursor-help underline decoration-dotted decoration-sg-faint underline-offset-[3px]" />}>{label}</TooltipTrigger>
+                    {/* Hints are sentences: wrap like the native title did. */}
+                    <TooltipContent className="whitespace-normal max-w-[min(280px,calc(100vw_-_32px))]">{hint}</TooltipContent>
+                </Tooltip>
+            ) : <span className="text-sg-muted">{label}</span>}
+            <span className={cn('font-medium tabular-nums whitespace-pre text-right', alert)}>{value}</span>
         </div>
     );
 }
 
 function Meter({ pct, tone }: { pct: number; tone: Tone }) {
     return (
-        <div className={styles.meter} role="presentation">
-            <span className={`${styles.meterFill} ${styles[`fill_${tone}`]}`} style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
-        </div>
+        <Progress variant="meter" tone={FILL_TONE[tone]} className="mt-[2px] mb-[8px]" aria-hidden value={Math.max(0, Math.min(100, pct))} />
     );
 }
 
 function NotReporting({ service }: { service: string }) {
     return (
-        <p className={styles.unavailable}>
+        <Empty variant="unavailable" render={<p />}>
             {service} hasn't published stats recently. Check that the service is running.
-        </p>
+        </Empty>
     );
 }
 
@@ -110,9 +160,9 @@ export function SystemHealth() {
 
     if (!m || metricsAt === null) {
         return (
-            <div className={styles.page}>
-                <h1 className={styles.pageTitle}>System health</h1>
-                <div className={styles.waiting}>Waiting for the first metrics update from the gateway…</div>
+            <div className={pageCls}>
+                <h1 className={pageTitle}>System health</h1>
+                <Empty variant="panel">Waiting for the first metrics update from the gateway…</Empty>
             </div>
         );
     }
@@ -155,54 +205,54 @@ export function SystemHealth() {
     const loadTone = levelTone((m.cpu_load_1 / cores) * 100, 70, 100);
 
     return (
-        <div className={styles.page}>
-            <div className={styles.titleRow}>
-                <h1 className={styles.pageTitle}>System health</h1>
-                <span className={`${styles.updated}${stale ? ` ${styles.bad}` : ''}`}>
-                    <span className={`${styles.dot} ${styles[stale ? 'dot_bad' : 'dot_ok']}${stale ? '' : ` ${styles.dotPulse}`}`} />
+        <div className={pageCls}>
+            <div className="flex items-baseline justify-between gap-[12px]">
+                <h1 className={pageTitle}>System health</h1>
+                <span className={cn('inline-flex items-center gap-[7px] text-[0.8rem] tabular-nums', stale ? 'text-sg-loss' : 'text-sg-faint')}>
+                    <span className={dot(stale ? 'bad' : 'ok', { pulse: !stale })} />
                     {stale ? `Last update ${fmtClock(metricsAt)}` : `Updated ${fmtAge(age)}`}
                 </span>
             </div>
 
-            <div className={`${styles.banner} ${styles[`banner_${worst}`]}`} role="status">
+            <Alert variant="status" tone={BANNER_TONE[worst]} role="status">
                 {stale ? <WifiOff size={20} /> : worst === 'ok' ? <CheckCircle2 size={20} /> : <AlertTriangle size={20} />}
                 <div>
-                    <div className={styles.bannerTitle}>
+                    <div className="text-sg-text font-semibold">
                         {stale
                             ? `No updates from the gateway for ${Math.round(age / 1000)}s`
                             : worst === 'ok' ? 'All systems running normally'
                                 : issues.length === 1 ? '1 issue needs attention' : `${issues.length} issues need attention`}
                     </div>
                     {stale && (
-                        <p className={styles.bannerText}>
+                        <p className="mt-[4px] text-sg-text-2 text-[0.86rem] leading-[1.5]">
                             {connected ? 'The connection is open but metrics stopped arriving.' : 'The browser is disconnected and reconnecting.'}
                             {' '}Everything below is from {fmtClock(metricsAt)} and may be out of date.
                         </p>
                     )}
                     {!stale && issues.length > 0 && (
-                        <ul className={styles.issueList}>
+                        <ul className="mt-[6px] pl-[18px] text-sg-text-2 text-[0.86rem] leading-[1.6]">
                             {issues.map(i => <li key={i.key}>{i.text}</li>)}
                         </ul>
                     )}
                 </div>
-            </div>
+            </Alert>
 
-            <div className={stale ? styles.staleBody : styles.body}>
+            <div className={cn('flex flex-col gap-[14px] transition-opacity duration-200 ease-[ease] motion-reduce:transition-none', stale && 'opacity-[0.45] [filter:grayscale(0.6)]')}>
                 {/* Services: one compact row */}
                 {(m.services?.length ?? 0) > 0 && (
-                    <div className={styles.services} aria-label="Services">
+                    <div className="flex flex-wrap items-center gap-[6px_22px] py-[10px] px-[16px] bg-sg-surface border border-solid border-sg-line rounded-[12px]" aria-label="Services">
                         {(m.services ?? []).map(s => (
-                            <span key={s.name} className={styles.service} title={`${s.name}: ${s.status === 'up' ? `last heartbeat ${fmtAge(s.age_ms)}` : 'no heartbeat'}`}>
-                                <span className={`${styles.dot} ${styles[s.status === 'up' ? 'dot_ok' : 'dot_bad']}`} />
-                                <span className={styles.serviceName}>{SERVICE_LABELS[s.name] ?? s.name}</span>
-                                {s.status === 'down' && <span className={styles.bad}>down</span>}
+                            <span key={s.name} className={serviceCls} title={`${s.name}: ${s.status === 'up' ? `last heartbeat ${fmtAge(s.age_ms)}` : 'no heartbeat'}`}>
+                                <span className={dot(s.status === 'up' ? 'ok' : 'bad')} />
+                                <span className={serviceName}>{SERVICE_LABELS[s.name] ?? s.name}</span>
+                                {s.status === 'down' && <span className="text-sg-loss">down</span>}
                             </span>
                         ))}
                         {m.redis_ok !== undefined && (
-                            <span className={styles.service} title="Redis round trip from the API gateway">
-                                <span className={`${styles.dot} ${styles[m.redis_ok ? 'dot_ok' : 'dot_bad']}`} />
-                                <span className={styles.serviceName}>Redis</span>
-                                <span className={m.redis_ok ? styles.serviceSub : styles.bad}>
+                            <span className={serviceCls} title="Redis round trip from the API gateway">
+                                <span className={dot(m.redis_ok ? 'ok' : 'bad')} />
+                                <span className={serviceName}>Redis</span>
+                                <span className={m.redis_ok ? 'text-sg-faint text-[0.8rem] tabular-nums' : 'text-sg-loss'}>
                                     {m.redis_ok ? fmtMs(m.redis_ping_ms, 2) : 'unreachable'}
                                 </span>
                             </span>
@@ -210,35 +260,35 @@ export function SystemHealth() {
                     </div>
                 )}
 
-                <div className={styles.grid}>
-                    <div className={styles.col}>
+                <div className="grid grid-cols-[repeat(3,minmax(0,1fr))] gap-[12px] items-start lte-1100:grid-cols-[repeat(2,minmax(0,1fr))] lte-720:grid-cols-[minmax(0,1fr)]">
+                    <div className={colCls}>
                         {/* Market data pipeline */}
                         <Card
                             title="Market data pipeline"
-                            meta={p && <span className={`${styles.chip} ${p.market_open ? styles.chip_ok : ''}`}>{p.market_open ? 'Market open' : 'Market closed'}</span>}
+                            meta={p && <Badge variant="status" tone={p.market_open ? 'profit' : undefined}>{p.market_open ? 'Market open' : 'Market closed'}</Badge>}
                         >
                             {!p ? <NotReporting service="mdengine" /> : (
                                 <>
-                                    <div className={styles.hero}>
-                                        <span className={styles.heroValue}>{tickRate === null ? '—' : fmtRate(tickRate)}</span>
-                                        <span className={styles.heroUnit}>ticks/s</span>
+                                    <div className={heroCls}>
+                                        <span className={cn(heroValue, 'text-sg-text')}>{tickRate === null ? '—' : fmtRate(tickRate)}</span>
+                                        <span className="text-sg-muted text-[0.86rem]">ticks/s</span>
                                     </div>
                                     <Sparkline
                                         label="Ticks per second over the last 5 minutes"
                                         points={history.map(h => ({ at: h.at, value: h.tickRate }))}
                                         format={v => `${fmtRate(v)}/s`}
                                     />
-                                    <div className={styles.divider} />
+                                    <Separator variant="soft" />
                                     <Row label="Ticks received" value={fmtCount(p.ticks_total)} />
                                     <Row label="1s candles built" value={fmtCount(p.candles_total)} />
                                     {problems.length === 0 ? (
-                                        <p className={styles.allClear}>
+                                        <p className="flex items-start gap-[7px] mt-[6px] mb-[2px] mx-0 text-sg-muted text-[0.84rem] leading-[1.45] [&_svg]:shrink-0 [&_svg]:mt-[2px] [&_svg]:text-sg-profit">
                                             <CheckCircle2 size={14} /> No dropped or late ticks, stale candles, feed gaps or reconnects.
                                         </p>
                                     ) : problems.map(c => (
                                         <Row key={c.key} label={c.label} value={fmtCount(p[c.key] as number)} tone="warn" hint={c.hint} />
                                     ))}
-                                    <div className={styles.divider} />
+                                    <Separator variant="soft" />
                                     {p.feed_conns_wanted !== undefined && p.feed_conns_wanted > 0 && (
                                         <Row
                                             label="Feed sockets"
@@ -264,10 +314,10 @@ export function SystemHealth() {
                         </Card>
                     </div>
 
-                    <div className={styles.col}>
+                    <div className={colCls}>
                         {/* Latency */}
                         <Card title="Latency">
-                            <div className={styles.latGrid}>
+                            <div className="grid grid-cols-[repeat(3,1fr)] gap-[8px] mb-[8px]">
                                 {([
                                     ['p50', legacy ? undefined : m.e2e_latency_p50_ms],
                                     ['p95', legacy ? undefined : m.e2e_latency_p95_ms],
@@ -275,9 +325,9 @@ export function SystemHealth() {
                                 ] as const).map(([label, v]) => {
                                     const t = levelTone(v, 20, 100);
                                     return (
-                                        <div key={label} className={styles.latCell}>
-                                            <span className={styles.latLabel}>{label}</span>
-                                            <span className={`${styles.latValue} ${t === 'ok' ? '' : styles[t]}`}>{fmtMs(v)}</span>
+                                        <div key={label} className="flex flex-col gap-[2px] py-[10px] px-[12px] bg-sg-bg border border-solid border-sg-line-soft rounded-[10px]">
+                                            <span className="text-sg-faint text-[0.76rem]">{label}</span>
+                                            <span className={cn('whitespace-nowrap text-[1.05rem] font-semibold tabular-nums', t === 'ok' ? 'text-sg-text' : TONE_TEXT[t])}>{fmtMs(v)}</span>
                                         </div>
                                     );
                                 })}
@@ -289,12 +339,12 @@ export function SystemHealth() {
                                     format={v => fmtMs(v)}
                                 />
                             )}
-                            <p className={styles.note}>
+                            <p className={note}>
                                 Tick pipeline p95: market data received to pushed to your browser
                                 {legacy ? '. Shown after the stack restarts; the old gateway measured candle age instead.'
                                     : samples > 0 ? `, last ${fmtCount(samples)} ticks.` : '. No ticks measured yet.'}
                             </p>
-                            <div className={styles.divider} />
+                            <Separator variant="soft" />
                             <Row label="Browser round trip" value={fmtMs(wsDelay, 0)} tone={levelTone(wsDelay, 200, 1000)} hint="Ping from this browser to the gateway and back" />
                             <Row
                                 label="Indicator compute"
@@ -309,21 +359,21 @@ export function SystemHealth() {
                         <Card title="Order safety" meta="stratengine">
                             {!orders || !cb ? <NotReporting service="stratengine" /> : (
                                 <>
-                                    <div className={styles.hero}>
-                                        <span className={`${styles.dot} ${styles[`dot_${cb.tone}`]} ${styles.dotLg}`} />
-                                        <span className={`${styles.heroValue} ${styles[cb.tone]}`}>{cb.label}</span>
+                                    <div className={heroCls}>
+                                        <span className={dot(cb.tone, { lg: true })} />
+                                        <span className={cn(heroValue, TONE_TEXT[cb.tone])}>{cb.label}</span>
                                     </div>
-                                    <p className={styles.note}>Circuit breaker {cb.sub.toLowerCase()}.</p>
+                                    <p className={note}>Circuit breaker {cb.sub.toLowerCase()}.</p>
                                     <Row
                                         label="Consecutive broker failures"
                                         value={fmtCount(orders.cb_failures)}
                                         tone={orders.cb_failures > 0 ? 'warn' : undefined}
                                         hint="The breaker opens after 3 failed broker calls in a row"
                                     />
-                                    <div className={styles.divider} />
+                                    <Separator variant="soft" />
                                     <Row label="Real entries in the last 60s" value={`${fmtCount(orders.rl_count)} of ${fmtCount(orders.rl_max)}`} tone={rlTone === 'ok' || rlTone === 'idle' ? undefined : rlTone} />
                                     <Meter pct={rlPct} tone={rlTone} />
-                                    <p className={styles.note}>Real entries only. New entries are refused at the limit; exits are never blocked.</p>
+                                    <p className={note}>Real entries only. New entries are refused at the limit; exits are never blocked.</p>
                                 </>
                             )}
                         </Card>
@@ -331,14 +381,14 @@ export function SystemHealth() {
                         {/* Order-status socket */}
                         <Card title="Order-status socket" meta="stratengine">
                             {!orders ? <NotReporting service="stratengine" /> : !ows || !owsState ? (
-                                <p className={styles.unavailable}>The running stratengine does not report the order-status socket. Restart it to load the new build.</p>
+                                <Empty variant="unavailable" render={<p />}>The running stratengine does not report the order-status socket. Restart it to load the new build.</Empty>
                             ) : (
                                 <>
-                                    <div className={styles.hero}>
-                                        <span className={`${styles.dot} ${styles[`dot_${owsState.tone}`]} ${styles.dotLg}`} />
-                                        <span className={`${styles.heroValue} ${styles[owsState.tone]}`}>{owsState.label}</span>
+                                    <div className={heroCls}>
+                                        <span className={dot(owsState.tone, { lg: true })} />
+                                        <span className={cn(heroValue, TONE_TEXT[owsState.tone])}>{owsState.label}</span>
                                     </div>
-                                    <p className={styles.note}>{owsState.sub}</p>
+                                    <p className={note}>{owsState.sub}</p>
                                     {owsActive && (
                                         <>
                                             <Row
@@ -367,7 +417,7 @@ export function SystemHealth() {
                         </Card>
                     </div>
 
-                    <div className={styles.col}>
+                    <div className={colCls}>
                         {/* Host */}
                         <Card title="Host machine">
                             <Row label="CPU" value={`${m.cpu_percent.toFixed(1)}%`} tone={cpuTone} />
@@ -379,7 +429,7 @@ export function SystemHealth() {
                                 hint={`1, 5 and 15 minute load averages. Above ${cores} (the core count) means work is queueing.`}
                             />
                             <Row label="Cores" value={cores} />
-                            <div className={styles.divider} />
+                            <Separator variant="soft" />
                             <Row label="Memory" value={`${(m.mem_used_mb / 1024).toFixed(1)} of ${(m.mem_total_mb / 1024).toFixed(1)} GB`} tone={memTone} />
                             <Meter pct={m.mem_percent} tone={memTone} />
                         </Card>

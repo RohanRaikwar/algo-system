@@ -1,6 +1,9 @@
 import { Activity } from 'lucide-react';
 import { useSelectedSRView } from '../../store/useSRStore';
 import type { SRView } from '../../types/sr';
+import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
+import { fnoAtmBody, fnoAtmHeader, fnoAtmStat, fnoInstBody, fnoInstRow, fnoLabel, fnoParam, fnoValue } from './classes';
 
 const pts = (v?: number) => (v && v > 0 ? (v / 100).toFixed(2) : '—');
 const hm = (min: number) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
@@ -73,31 +76,31 @@ export function SRStatusCard() {
     ];
     const rejects = topRejects(v.rejects);
     return (
-        <div className="fno-atm-card">
-            <div className="fno-atm-header">
+        <Card>
+            <div className={fnoAtmHeader}>
                 <Activity size={16} />
                 <span>{v.strategy} status</span>
-                <span className="fno-badge resolved">{fmtTime(v.ts)}</span>
+                <Badge variant="fno" className="ml-auto">{fmtTime(v.ts)}</Badge>
             </div>
-            <div className="fno-inst-body">
-                <div className="fno-inst-row"><span className="fno-inst-value">{srStatus(v)}</span></div>
+            <div className={fnoInstBody}>
+                <div className={fnoInstRow}><span className={fnoValue}>{srStatus(v)}</span></div>
             </div>
-            <div className="fno-atm-body">
+            <div className={fnoAtmBody}>
                 {stats.map(([label, value]) => (
-                    <div key={label} className="fno-atm-stat">
-                        <span className="fno-atm-label">{label}</span>
-                        <span className="fno-atm-value fno-param">{value}</span>
+                    <div key={label} className={fnoAtmStat}>
+                        <span className={fnoLabel}>{label}</span>
+                        <span className={fnoParam}>{value}</span>
                     </div>
                 ))}
             </div>
-            <div className="fno-inst-body">
-                <div className="fno-inst-row">
-                    <span className="fno-inst-label">Refused today</span>
-                    <span className="fno-inst-value">
+            <div className={fnoInstBody}>
+                <div className={fnoInstRow}>
+                    <span className={fnoLabel}>Refused today</span>
+                    <span className={fnoValue}>
                         {rejects.length === 0 ? 'none' : rejects.map(([k, n]) => `${rejectLabel(k)} ×${n}`).join(' · ')}
                     </span>
                 </div>
             </div>
-        </div>
+        </Card>
     );
 }

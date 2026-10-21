@@ -13,12 +13,28 @@ import { useChartMarkers } from './hooks/useChartMarkers';
 import { useSRLines } from './hooks/useSRLines';
 import { useSRBox } from './hooks/useSRBox';
 import { useTradeLineDrag } from './hooks/useTradeLineDrag';
+import { OrderLineOverlay } from './OrderLineOverlay';
 import { SRSituationCard } from './SRSituationCard';
 import { ChartLegend } from './ChartLegend';
 import { StatusDot } from '../layout/StatusDot';
 import { PHONE_PORTRAIT_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
 import { haptic } from '../../utils/haptic';
-import styles from './Chart.module.css';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Kbd } from '@/components/ui/kbd';
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+
+const up = 'text-sg-profit';
+const down = 'text-sg-loss';
+// The instrument select is NativeSelect variant="symbol" (drawn chevron).
+// No caption (empty span): the select drops its bottom padding and centres its chevron.
+const symbolStackEmpty = 'lte-640:[&:has(>span:empty)>select]:pb-0 lte-640:[&:has(>span:empty)>select]:[background-position:right_4px_center]';
+const symbolCaption = 'hidden lte-640:absolute lte-640:left-0 lte-640:bottom-[4px] lte-640:pointer-events-none lte-640:block lte-640:text-sg-faint lte-640:text-[11px] lte-640:leading-[1.3] lte-640:tabular-nums lte-640:whitespace-nowrap lte-640:overflow-hidden lte-640:text-ellipsis';
+const quoteCls = 'flex items-baseline gap-[10px] whitespace-nowrap tabular-nums lte-640:flex-col lte-640:items-end lte-640:gap-0 lte-640:leading-[1.2]';
+const lastPrice = 'text-sg-text font-semibold tracking-[-0.02em]';
+const change = 'text-[0.86rem] font-medium lte-640:text-[12px]';
 
 interface TradingChartProps {
     onOpenIndicators?: () => void;
@@ -118,32 +134,32 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
     useSRLines(candleSeries, selectedToken, lastPaise, srOverlay, lineDrag.override);
     useSRBox(candleSeries, selectedToken, srOverlay);
 
-    const tone = !quote || quote.change === 0 ? '' : quote.change > 0 ? styles.up : styles.down;
+    const tone = !quote || quote.change === 0 ? 'text-sg-muted' : quote.change > 0 ? up : down;
     const sign = !quote ? '' : quote.change > 0 ? '+' : quote.change < 0 ? '−' : '';
 
     return (
-        <section className={`${styles.chartCard}${compact ? ` ${styles.compact}` : ''}`} aria-label={`Price chart ${tfLabel(selectedTF)}`}>
+        <section className="relative flex flex-col flex-[1_1_auto] min-w-0 min-h-0 bg-sg-surface overflow-hidden" aria-label={`Price chart ${tfLabel(selectedTF)}`}>
             {phoneBar ? (
-                <div className={`${styles.toolbar} ${styles.phoneBar}`}>
+                <div className="flex flex-wrap items-center gap-[6px] min-h-[calc(52px+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] pr-[8px] pb-0 pl-[14px] border-b border-b-sg-line shrink-0 select-none [-webkit-touch-callout:none]">
                     <StatusDot />
-                    <div className={styles.symbolStack}>
-                        <select
-                            className={styles.symbolSelect}
+                    <div className={cn('flex flex-col min-w-0 relative shrink max-w-none', symbolStackEmpty)}>
+                        <NativeSelect
+                            variant="symbol"
                             value={selectedToken || ''}
                             onChange={(e) => setSelectedToken(e.target.value)}
                             aria-label="Instrument"
                         >
                             {config.tokens.map((t) => (
-                                <option key={t} value={t}>{tokenLabel(t)}</option>
+                                <NativeSelectOption key={t} value={t}>{tokenLabel(t)}</NativeSelectOption>
                             ))}
-                        </select>
-                        <span className={styles.symbolCaption} aria-hidden>{tokenCaption(selectedToken)}</span>
+                        </NativeSelect>
+                        <span className={symbolCaption} aria-hidden>{tokenCaption(selectedToken)}</span>
                     </div>
-                    <span className={styles.tfChip}>
+                    <span className="relative inline-flex items-center gap-[3px] shrink-0 h-[28px] py-0 pr-[8px] pl-[10px] rounded-pill bg-sg-raised border border-solid border-sg-line text-sg-text text-[12px] font-semibold tabular-nums [&_svg]:text-sg-muted active:bg-sg-hover has-[select:active]:bg-sg-hover has-[select:focus-visible]:shadow-ring">
                         {tfLabel(selectedTF)}
                         <ChevronDown size={12} aria-hidden />
                         <select
-                            className={styles.tfChipSelect}
+                            className="absolute inset-y-[-8px] inset-x-[-4px] w-[calc(100%+8px)] opacity-0 text-[16px] cursor-pointer"
                             value={selectedTF}
                             onChange={(e) => { haptic(); setSelectedTF(Number(e.target.value)); }}
                             aria-label="Timeframe"
@@ -154,102 +170,120 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
                         </select>
                     </span>
                     {quote && (
-                        <div className={styles.quote}>
-                            <span className={styles.lastPrice}>{fmtPrice(quote.price)}</span>
-                            <span className={`${styles.change} ${tone}`}>
+                        <div className={cn(quoteCls, 'ml-auto')}>
+                            <span className={cn(lastPrice, 'text-[18px]')}>{fmtPrice(quote.price)}</span>
+                            <span className={cn(change, tone)}>
                                 {sign}{fmtPrice(Math.abs(quote.change))} ({sign}{Math.abs(quote.pct).toFixed(2)}%)
                             </span>
                         </div>
                     )}
                     {onOpenIndicators && (
-                        <button
-                            className={`${styles.toolBtn} ${styles.phoneIndBtn}`}
+                        <Button
+                            variant="ghost-tool"
+                            size="icon-40"
+                            className={quote ? 'ml-0' : 'ml-auto'}
                             onClick={onOpenIndicators}
                             aria-label={`Indicators${activeEntries.length ? `, ${activeEntries.length} active` : ''}`}
                         >
                             <SlidersHorizontal size={16} />
                             {activeEntries.length > 0 && (
-                                <span className={styles.toolCount} aria-hidden>{activeEntries.length}</span>
+                                <Badge variant="count-tool-sm" className="absolute top-[2px] right-0" aria-hidden>{activeEntries.length}</Badge>
                             )}
-                        </button>
+                        </Button>
                     )}
                 </div>
             ) : (
-                <div className={styles.toolbar}>
-                    <div className={styles.symbolGroup}>
+                <div className={cn(
+                    "flex items-center border-b border-b-sg-line shrink-0 lte-900:flex-wrap lte-640:grid lte-640:grid-cols-[minmax(0,1fr)_auto] lte-640:[grid-template-areas:'sym_sym'_'tf_ind'] phone-land:flex-nowrap",
+                    compact
+                        ? 'min-h-[40px] gap-[10px] py-[4px] px-[10px]'
+                        : 'gap-[16px] min-h-[52px] py-[8px] px-[12px] lte-900:gap-x-[12px] lte-900:gap-y-[8px] lte-640:gap-x-[8px] lte-640:gap-y-[6px] lte-640:pt-[6px] lte-640:px-[12px] lte-640:pb-[8px] phone-land:min-h-[44px] phone-land:gap-[10px] phone-land:py-[4px] phone-land:px-[12px]',
+                )}>
+                    <div className="flex items-center gap-[14px] min-w-0 lte-640:[grid-area:sym] lte-640:justify-between lte-640:gap-[10px]">
                         {compact ? (
-                            <span className={styles.paneSymbol}>{tokenLabel(selectedToken)}</span>
+                            <span className="text-[12px] font-semibold text-sg-muted">{tokenLabel(selectedToken)}</span>
                         ) : (
-                        <div className={styles.symbolStack}>
-                            <select
-                                className={styles.symbolSelect}
+                        <div className={cn('flex flex-col min-w-0 lte-640:relative lte-640:max-w-[60%]', symbolStackEmpty)}>
+                            <NativeSelect
+                                variant="symbol"
                                 value={selectedToken || ''}
                                 onChange={(e) => setSelectedToken(e.target.value)}
                                 aria-label="Instrument"
                                 title={selectedToken || undefined}
                             >
                                 {config.tokens.map((t) => (
-                                    <option key={t} value={t}>{tokenLabel(t)}</option>
+                                    <NativeSelectOption key={t} value={t}>{tokenLabel(t)}</NativeSelectOption>
                                 ))}
-                            </select>
-                            <span className={styles.symbolCaption} aria-hidden>{tokenCaption(selectedToken)}</span>
+                            </NativeSelect>
+                            <span className={symbolCaption} aria-hidden>{tokenCaption(selectedToken)}</span>
                         </div>
                         )}
                         {quote && (
-                            <div className={styles.quote}>
-                                <span className={styles.lastPrice}>{fmtPrice(quote.price)}</span>
-                                <span className={`${styles.change} ${tone}`} title="Change since the session's first candle">
+                            <div className={quoteCls}>
+                                <span className={cn(lastPrice, compact ? 'text-[14px]' : 'text-[1.35rem] lte-640:text-[18px] phone-land:text-[16px]')}>{fmtPrice(quote.price)}</span>
+                                <span className={cn(change, tone)} title="Change since the session's first candle">
                                     {sign}{fmtPrice(Math.abs(quote.change))} ({sign}{Math.abs(quote.pct).toFixed(2)}%)
                                 </span>
                             </div>
                         )}
                     </div>
 
-                    <div className={styles.tfGroup} role="radiogroup" aria-label="Timeframe">
+                    <ToggleGroup
+                        variant="segment"
+                        size="tf"
+                        className="shrink-0 lte-640:[grid-area:tf] lte-640:flex lte-640:min-w-0"
+                        aria-label="Timeframe"
+                        value={[String(selectedTF)]}
+                        onValueChange={(v) => { if (v[0]) setSelectedTF(Number(v[0])); }}
+                    >
                         {config.tfs.map((tf) => (
-                            <button
-                                key={tf}
-                                role="radio"
-                                aria-checked={tf === selectedTF}
-                                className={`${styles.tfBtn}${tf === selectedTF ? ` ${styles.tfActive}` : ''}`}
-                                onClick={() => setSelectedTF(tf)}
-                            >
+                            <ToggleGroupItem key={tf} value={String(tf)}>
                                 {tfLabel(tf)}
-                            </button>
+                            </ToggleGroupItem>
                         ))}
-                    </div>
+                    </ToggleGroup>
 
-                    <div className={styles.indGroup}>
+                    <div className="flex items-center gap-[6px] ml-auto min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lte-900:order-3 lte-900:w-full lte-900:ml-0 lte-640:[grid-area:ind] lte-640:order-[0] lte-640:w-auto lte-640:m-0 lte-640:overflow-visible phone-land:order-[0] phone-land:w-auto phone-land:ml-auto">
                         {onOpenIndicators && !compact && (
-                            <button
-                                className={styles.toolBtn}
+                            <Button
+                                variant="outline"
+                                size="sm"
                                 onClick={onOpenIndicators}
                                 title="Indicators (press / or I)"
                                 aria-keyshortcuts="/ I"
                             >
                                 <SlidersHorizontal size={14} />
-                                <span className={styles.toolBtnLabel}>Indicators</span>
+                                <span className="lte-640:hidden phone-land:hidden">Indicators</span>
                                 {activeEntries.length > 0 && (
-                                    <span className={styles.toolCount} aria-label={`${activeEntries.length} active`}>{activeEntries.length}</span>
+                                    <Badge variant="count-tool" aria-label={`${activeEntries.length} active`}>{activeEntries.length}</Badge>
                                 )}
-                                <kbd className={styles.kbd}>/</kbd>
-                            </button>
+                                <Kbd variant="tool" className="phone-land:hidden touch:hidden">/</Kbd>
+                            </Button>
                         )}
                     </div>
                 </div>
             )}
 
-            <div className={styles.plot}>
-                <div ref={chartContainer} className={styles.chartContainer} />
-                {lineDrag.note && <div className={styles.dragNote} role="status">{lineDrag.note}</div>}
+            <div className="relative flex-[1_1_auto] min-h-0">
+                <div ref={chartContainer} className="absolute inset-0" />
+                <OrderLineOverlay
+                    chartApi={chartApi}
+                    candleSeries={candleSeries}
+                    selectedToken={selectedToken}
+                    enabled={srOverlay}
+                    price={lastPaise}
+                    override={lineDrag.override}
+                    beginDrag={lineDrag.beginDrag}
+                />
+                {lineDrag.note && <div className="absolute right-[72px] bottom-[32px] z-[6] py-[3px] px-[8px] rounded-ctrl bg-sg-raised text-sg-text-2 text-[0.75rem] pointer-events-none" role="status">{lineDrag.note}</div>}
 
                 {!hasCandles && (
-                    <div className={styles.emptyState}>
+                    <div className="absolute inset-0 z-[5] flex items-center justify-center text-sg-muted text-[0.9rem] pointer-events-none">
                         Waiting for market data for {tokenLabel(selectedToken) || 'this instrument'}…
                     </div>
                 )}
 
-                <div className={styles.overlays}>
+                <div className="absolute top-[10px] left-[12px] right-[80px] z-[10] flex flex-col items-start gap-[4px] pointer-events-none lte-640:top-[6px] lte-640:left-[8px] lte-640:right-[64px]">
                     <ChartLegend
                         ohlcData={ohlcData}
                         indValues={indValues}

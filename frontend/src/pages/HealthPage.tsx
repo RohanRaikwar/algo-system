@@ -6,8 +6,8 @@ import { SessionHealthTab } from '../components/signals/SessionHealthTab';
 import { TradingSettingsTab } from '../components/signals/TradingSettingsTab';
 import { PHONE_PORTRAIT_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
 import { haptic } from '../utils/haptic';
-import '../components/signals/signals.css';
-import styles from './HealthPage.module.css';
+import { signalsPage } from '../components/signals/classes';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 type Section = 'system' | 'account' | 'sessions' | 'settings';
 
@@ -35,25 +35,20 @@ export function HealthPage() {
     return (
         <>
             <PageAppBar title="Health" />
-            <div className={styles.segRow}>
-                <div className={styles.seg} role="tablist" aria-label="Health sections">
-                    {SECTIONS.map(s => (
-                        <button
-                            key={s.id}
-                            type="button"
-                            role="tab"
-                            aria-selected={section === s.id}
-                            className={`${styles.segBtn}${section === s.id ? ` ${styles.segActive}` : ''}`}
-                            onClick={() => pick(s.id)}
-                        >
-                            {s.label}
-                        </button>
-                    ))}
-                </div>
+            <div className="sticky top-[calc(48px_+_env(safe-area-inset-top))] z-50 flex items-center h-[52px] mt-[-12px] mx-[-12px] mb-[8px] py-0 px-[12px] bg-sg-bg">
+                <Tabs value={section} onValueChange={v => pick(v as Section)}>
+                    <TabsList variant="segment" className="flex-1" aria-label="Health sections">
+                        {SECTIONS.map(s => (
+                            <TabsTrigger key={s.id} value={s.id}>
+                                {s.label}
+                            </TabsTrigger>
+                        ))}
+                    </TabsList>
+                </Tabs>
             </div>
             {section === 'system' && <SystemHealth />}
             {section !== 'system' && (
-                <div className="signals-page">
+                <div className={signalsPage}>
                     {section === 'account' && <AccountTab />}
                     {section === 'sessions' && <SessionHealthTab />}
                     {section === 'settings' && <TradingSettingsTab />}

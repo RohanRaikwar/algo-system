@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MutableRefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { IChartApi, ISeriesApi } from 'lightweight-charts';
 import { useSRViewFor } from '../../../store/useSRStore';
 import { useLiveOrderStore } from '../../../store/useLiveOrderStore';
@@ -24,7 +24,9 @@ export function hitLine(y: number, stopY: number | null, targetY: number | null,
  * paper position (NIFTY or SENSEX, whichever index is shown). On release
  * the level is sent to stratengine; until the strategy's view reports it
  * the line is held where it was dropped. Real-order positions are not
- * draggable. Returns the held levels for useSRLines and a short note.
+ * draggable. Returns the held levels for useSRLines, a short note, and
+ * beginDrag for a handle drawn over the chart (its pointer events never
+ * reach the chart container, so the drag is started by hand).
  */
 export function useTradeLineDrag(
     chartApi: MutableRefObject<IChartApi | null>,
@@ -32,12 +34,14 @@ export function useTradeLineDrag(
     chartContainer: MutableRefObject<HTMLDivElement | null>,
     selectedToken: string | null,
     enabled: boolean,
-): { override: LevelOverride | null; note: string } {
+): { override: LevelOverride | null; note: string; beginDrag: (kind: LevelKind, e: PointerEvent) => void } {
     const view = useSRViewFor(selectedToken);
     const live = useLiveOrderStore(s => (view ? s.ordersByKey[`${view.strategy}|${view.side}`] : undefined));
     const [override, setOverride] = useState<LevelOverride | null>(null);
     const [note, setNote] = useState('');
     const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const begin = useRef<((kind: LevelKind, e: PointerEvent) => void) | null>(null);
+    const beginDrag = useCallback((kind: LevelKind, e: PointerEvent) => begin.current?.(kind, e), []);
 
     const active = enabled && !!view && view.key === selectedToken && view.side !== 'NONE' && live?.real !== true;
     // Latest values for the pointer handlers, which are bound once per activation.
@@ -88,9 +92,7 @@ export function useTradeLineDrag(
             }
         };
 
-        const down = (e: PointerEvent) => {
-            const kind = grabbed(e);
-            if (!kind) return;
+        const start = (kind: LevelKind, e: PointerEvent) => {
             e.preventDefault();
             e.stopPropagation();
             dragging = kind;
@@ -99,6 +101,11 @@ export function useTradeLineDrag(
             setChartInput(false);
             el.setPointerCapture?.(e.pointerId);
         };
+        const down = (e: PointerEvent) => {
+            const kind = grabbed(e);
+            if (kind) start(kind, e);
+        };
+        begin.current = start;
         const move = (e: PointerEvent) => {
             if (!dragging) {
                 el.style.cursor = grabbed(e) ? 'ns-resize' : '';
@@ -147,6 +154,7 @@ export function useTradeLineDrag(
         el.addEventListener('pointerup', up, true);
         el.addEventListener('pointercancel', up, true);
         return () => {
+            begin.current = null;
             el.removeEventListener('pointerdown', down, true);
             el.removeEventListener('pointermove', move, true);
             el.removeEventListener('pointerup', up, true);
@@ -156,5 +164,5 @@ export function useTradeLineDrag(
         };
     }, [active, chartApi, candleSeries, chartContainer]);
 
-    return { override: active ? override : null, note: active ? note : '' };
+    return { override: active ? override : null, note: active ? note : '', beginDrag };
 }

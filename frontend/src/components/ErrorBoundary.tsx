@@ -17,16 +17,12 @@ export class ErrorBoundary extends Component<Props, State> {
     render() {
         if (this.state.hasError) {
             return this.props.fallback || (
-                <div style={{
-                    padding: '24px', margin: '16px', borderRadius: '12px',
-                    background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
-                    color: '#ef4444', fontFamily: 'monospace', fontSize: 13,
-                }}>
+                <div className="p-[24px] m-[16px] rounded-[12px] bg-[rgba(239,68,68,0.1)] border border-solid border-[rgba(239,68,68,0.3)] text-[#ef4444] [font-family:monospace] text-[13px]">
                     <strong>Chart Error:</strong> {this.state.error?.message || 'Unknown error'}
                     <br /><br />
                     <button
                         onClick={() => this.setState({ hasError: false, error: null })}
-                        style={{ padding: '6px 16px', background: '#6366f1', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}
+                        className="py-[6px] px-[16px] bg-[#6366f1] text-white border-none rounded-[6px] cursor-pointer"
                     >
                         Retry
                     </button>

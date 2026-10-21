@@ -13,8 +13,10 @@ const (
 
 // PositionCommand is a dashboard edit of an open position, sent on
 // PositionCommandChannel. Levels are paise; a zero level is left
-// unchanged and FNOTarget -1 removes the premium target. Real-order
-// strategies are refused by stratengine.
+// unchanged and -1 removes it (index stop, index target, index trail,
+// premium target). IndexTrail is a distance: the index stop follows the
+// 1m close at that many paise. Real-order strategies are refused by
+// stratengine.
 type PositionCommand struct {
 	Strategy    string    `json:"strategy"`
 	Side        string    `json:"side"` // CALL or PUT
@@ -22,6 +24,7 @@ type PositionCommand struct {
 	Action      string    `json:"action"`
 	IndexStop   int64     `json:"index_stop,omitempty"`
 	IndexTarget int64     `json:"index_target,omitempty"`
+	IndexTrail  int64     `json:"index_trail,omitempty"`
 	FNOSL       int64     `json:"fno_sl,omitempty"`
 	FNOTarget   int64     `json:"fno_target,omitempty"`
 	TS          time.Time `json:"ts"`
@@ -39,10 +42,10 @@ func (c PositionCommand) Validate() error {
 	case PositionExit:
 		return nil
 	case PositionSetLevels:
-		if c.IndexStop < 0 || c.IndexTarget < 0 || c.FNOSL < 0 || c.FNOTarget < -1 {
+		if c.IndexStop < -1 || c.IndexTarget < -1 || c.IndexTrail < -1 || c.FNOSL < 0 || c.FNOTarget < -1 {
 			return errors.New("negative level")
 		}
-		if c.IndexStop == 0 && c.IndexTarget == 0 && c.FNOSL == 0 && c.FNOTarget == 0 {
+		if c.IndexStop == 0 && c.IndexTarget == 0 && c.IndexTrail == 0 && c.FNOSL == 0 && c.FNOTarget == 0 {
 			return errors.New("no level to set")
 		}
 		return nil

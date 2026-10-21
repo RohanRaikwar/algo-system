@@ -3,6 +3,7 @@ import { LineStyle, type IPriceLine, type ISeriesApi } from 'lightweight-charts'
 import { useSRViewFor } from '../../../store/useSRStore';
 import type { SRView } from '../../../types/sr';
 import { nearestN, sourceLabel } from '../../sr/srFormat';
+import { CHART, SG } from '../../../styles/palette';
 
 export interface PriceLine {
     price: number; // rupees
@@ -12,13 +13,13 @@ export interface PriceLine {
 }
 
 const C = {
-    support: '#3ecf8e', // --sg-profit
-    resistance: '#f0616d', // --sg-loss
-    day: '#8a94a6', // --sg-text-3
-    prevDay: '#6b7385',
-    entry: '#b8c0cd', // --sg-text-2
-    target: '#3ecf8e',
-    stop: '#f0616d',
+    support: SG.profit,
+    resistance: SG.loss,
+    day: SG.muted,
+    prevDay: CHART.prevDay,
+    entry: SG.text2,
+    target: SG.profit,
+    stop: SG.loss,
 };
 
 /** Stop/target held by a drag (paise) until the strategy's view catches up. */
@@ -46,11 +47,11 @@ export function srLines(v: SRView | null, price: number | null, drag: LevelOverr
     add(v.day_open, C.day, LineStyle.SparseDotted, 'DO');
     add(v.prev_day_high, C.prevDay, LineStyle.Dotted, 'PDH');
     add(v.prev_day_low, C.prevDay, LineStyle.Dotted, 'PDL');
+    // Position lines are untitled: OrderLineOverlay labels them.
     if (v.side !== 'NONE') {
-        const tag = v.manual ? ' manual' : '';
-        add(v.entry, C.entry, LineStyle.Solid, `SR ${v.side}`);
-        add(drag?.stop ?? v.stop, C.stop, drag?.stop ? LineStyle.Solid : LineStyle.Dashed, `SR stop${tag}`);
-        add(drag?.target ?? v.target, C.target, drag?.target ? LineStyle.Solid : LineStyle.Dashed, `SR target${tag}`);
+        add(v.entry, C.entry, LineStyle.Solid, '');
+        add(drag?.stop ?? v.stop, C.stop, drag?.stop ? LineStyle.Solid : LineStyle.Dashed, '');
+        add(drag?.target ?? v.target, C.target, drag?.target ? LineStyle.Solid : LineStyle.Dashed, '');
     }
     return out;
 }
@@ -71,7 +72,7 @@ export function useSRLines(
         const series = candleSeries.current;
         if (!series) return;
         const lines = enabled && view && selectedToken === view.key ? srLines(view, price, drag) : [];
-        const fp = lines.map(l => `${l.title}:${l.price}`).join('|');
+        const fp = lines.map(l => `${l.title}:${l.price}:${l.style}`).join('|');
         if (fp === fingerprint.current) return;
         fingerprint.current = fp;
         for (const pl of drawn.current) series.removePriceLine(pl);
@@ -84,5 +85,6 @@ export function useSRLines(
         const series = candleSeries.current;
         if (series) for (const pl of drawn.current) series.removePriceLine(pl);
         drawn.current = [];
+        fingerprint.current = ''; // redraw on the next series, even if the levels are unchanged
     }, [candleSeries]);
 }

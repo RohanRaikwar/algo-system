@@ -247,3 +247,51 @@ func TestExtraQtyUsesOwnLotSize(t *testing.T) {
 		t.Fatalf("unset lots = %d, want 20", got)
 	}
 }
+
+// listingRes is fakeExtraRes that also lists expiries, as the StrikePicker does.
+type listingRes struct {
+	fakeExtraRes
+	expiries []time.Time
+}
+
+func (l *listingRes) UpcomingExpiries(time.Time) []time.Time { return l.expiries }
+
+// A local-greeks chain holds only contracts with a premium. On a Wednesday
+// the Thursday expiry is 1 day out (below SRMinDTE 2) and next week's has no
+// premiums until streamed, so the chain alone never names the SR expiry.
+// The ladder must come from the listed expiries, or no entry ever passes.
+func TestExtraExpiryLadder_FromListedExpiriesWhenChainLacksIt(t *testing.T) {
+	svc, ex := sensexService(t)
+	svc.cfg.SREnabled = true
+	svc.cfg.SRMinDTE = 2
+	wed := time.Date(2026, 10, 21, 10, 0, 0, 0, istSR)
+	thu := time.Date(2026, 10, 22, 0, 0, 0, 0, istSR)
+	nextThu := thu.AddDate(0, 0, 7)
+	res := &listingRes{expiries: []time.Time{thu, nextThu}}
+	ex.res = res
+	ex.greeks = &fakeGreeks{chain: []instruments.OptionContract{
+		srContract(81200, "CE", 0.52, 0.001, -20, 400, thu),
+		srContract(81200, "PE", -0.50, 0.001, -20, 380, thu),
+	}}
+	svc.orderExecutor.UpdateLTP(model.Tick{Token: ex.prof.IndexToken, Exchange: "BSE", Price: 8123400})
+	var subscribed []string
+	svc.subscribeHook = func(tokens []string) { subscribed = append(subscribed, tokens...) }
+
+	svc.refreshExtraStrikeSels(context.Background(), wed)
+	if len(subscribed) != 2*(2*ladderStrikes+1) {
+		t.Fatalf("subscribed %d tokens, want the next-week ladder (%d)", len(subscribed), 2*(2*ladderStrikes+1))
+	}
+
+	// Without a lister (and no qualifying expiry in the chain) nothing streams.
+	subscribed = nil
+	svc2, ex2 := sensexService(t)
+	svc2.cfg.SREnabled, svc2.cfg.SRMinDTE = true, 2
+	ex2.res = &fakeExtraRes{}
+	ex2.greeks = ex.greeks
+	svc2.orderExecutor.UpdateLTP(model.Tick{Token: ex2.prof.IndexToken, Exchange: "BSE", Price: 8123400})
+	svc2.subscribeHook = svc.subscribeHook
+	svc2.refreshExtraStrikeSels(context.Background(), wed)
+	if len(subscribed) != 0 {
+		t.Fatalf("subscribed %v with no expiry source", subscribed)
+	}
+}

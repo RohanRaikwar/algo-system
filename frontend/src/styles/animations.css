@@ -1,0 +1,38 @@
+
+/* layout: StatusDot live pulse */
+@keyframes layout-status-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(62, 207, 142, 0.55); }
+    50% { box-shadow: 0 0 0 5px rgba(62, 207, 142, 0); }
+}
+
+/* layout: Header feed dot pulse */
+@keyframes layout-header-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(62, 207, 142, 0.5); }
+    70% { box-shadow: 0 0 0 6px rgba(62, 207, 142, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(62, 207, 142, 0); }
+}
+
+/* health: live dot pulse */
+@keyframes health-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(62, 207, 142, 0.5); }
+    70% { box-shadow: 0 0 0 5px rgba(62, 207, 142, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(62, 207, 142, 0); }
+}
+
+/* signals: open-positions dot (names kept from signals.css) */
+@keyframes live-dot {
+    0% { box-shadow: 0 0 0 0 rgba(91, 141, 239, 0.55); }
+    70% { box-shadow: 0 0 0 7px rgba(91, 141, 239, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(91, 141, 239, 0); }
+}
+
+/* signals: new row flash in the signal log */
+@keyframes signal-pulse {
+    0% { background: var(--sg-accent-soft); }
+    100% { background: transparent; }
+}
+
+/* signals: refresh / loading spinner */
+@keyframes sg-spin {
+    to { transform: rotate(360deg); }
+}

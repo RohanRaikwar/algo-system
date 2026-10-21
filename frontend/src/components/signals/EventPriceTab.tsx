@@ -2,6 +2,13 @@ import { useEffect, useMemo, useState, useCallback } from 'react';
 import { Table2, ChevronDown, ChevronRight } from 'lucide-react';
 import { fetchDailyOrders } from '../../services/api';
 import type { DailyOrdersResponse, DailyCompletedOrder } from '../../services/api';
+import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Empty } from '@/components/ui/empty';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { sideBadgeTone } from './signalFormat';
+import { cellSub, dayBody, dayDate, dayHead, dayLeft, dayList, dayMeta, dayPnl, dayRight, pnlTone, pnlToneKey, rowMono, tableWrap, tabStack } from './classes';
 
 interface EventPriceTabProps {
     /** Strategy filter passed from parent (SignalsPage). When 'ALL', no filter is applied. */
@@ -47,17 +54,9 @@ function formatDateKey(dateKey: string): string {
     }
 }
 
-function getSideBadge(side: string) {
-    if (side === 'CALL') return 'action-badge buy-call';
-    if (side === 'PUT') return 'action-badge buy-put';
-    return 'action-badge';
-}
-
 function getMoveClass(move: number | null): string {
     if (move === null) return '';
-    if (move > 0) return 'price-up';
-    if (move < 0) return 'price-down';
-    return 'price-flat';
+    return pnlTone(move);
 }
 
 function formatMove(paise: number): string {
@@ -134,111 +133,110 @@ export function EventPriceTab({ strategyFilter }: EventPriceTabProps) {
 
     if (loading) {
         return (
-            <div className="signals-empty">
+            <Empty>
                 <p>Loading trade events…</p>
-            </div>
+            </Empty>
         );
     }
 
     if (groups.length === 0) {
         return (
-            <div className="signals-empty">
+            <Empty>
                 <Table2 size={48} strokeWidth={1.5} />
                 <p>No completed trade events{activeStrategy ? ` for ${activeStrategy}` : ''}.</p>
-            </div>
+            </Empty>
         );
     }
 
     return (
-        <div className="daily-analytics">
-            <div className="signals-filters trade-events-filters">
-                <span className="trade-events-count">
+        <div className={tabStack}>
+            <div className="flex items-center gap-[8px] flex-wrap">
+                <span className="text-sg-muted text-[0.85rem]">
                     {totalTrades} trades across {groups.length} day{groups.length === 1 ? '' : 's'}
                 </span>
             </div>
 
-            <div className="daily-day-list">
+            <div className={dayList}>
                 {groups.map((group) => {
                     const expanded = !!expandedDates[group.date];
                     const moveClass = getMoveClass(group.netPnl);
 
                     return (
-                        <section key={group.date} className="daily-day-card">
-                            <button
-                                className="daily-day-head"
-                                aria-expanded={expanded}
-                                onClick={() => setExpandedDates(prev => ({ ...prev, [group.date]: !prev[group.date] }))}
-                            >
-                                <span className="daily-day-left">
+                        <Collapsible
+                            key={group.date}
+                            open={expanded}
+                            onOpenChange={() => setExpandedDates(prev => ({ ...prev, [group.date]: !prev[group.date] }))}
+                            render={<Card render={<section />} />}
+                        >
+                            <CollapsibleTrigger className={dayHead}>
+                                <span className={dayLeft}>
                                     {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                    <span className="daily-day-date">{formatDateKey(group.date)}</span>
+                                    <span className={dayDate}>{formatDateKey(group.date)}</span>
                                 </span>
-                                <span className="daily-day-right">
-                                    <span className={`daily-day-pnl ${moveClass}`}>{formatMove(group.netPnl)}</span>
-                                    <span className={`daily-day-pnl pts ${getMoveClass(group.totalProfitPts)}`}>
+                                <span className={dayRight}>
+                                    <span className={dayPnl(moveClass)}>{formatMove(group.netPnl)}</span>
+                                    <span className={dayPnl(getMoveClass(group.totalProfitPts), true)}>
                                         {group.totalProfitPts > 0 ? '+' : ''}{group.totalProfitPts.toFixed(1)} pts
                                     </span>
-                                    <span className="daily-day-meta">{group.orders.length} trades</span>
+                                    <span className={dayMeta}>{group.orders.length} trades</span>
                                 </span>
-                            </button>
+                            </CollapsibleTrigger>
 
-                            {expanded && (
-                                <div className="daily-day-body">
-                                    <div className="signals-table-wrap trade-events-table-wrap">
-                                        <table className="signals-table compact-table">
-                                            <thead>
-                                                <tr>
-                                                    <th style={{ width: '140px' }}>Signal</th>
-                                                    <th style={{ width: '70px' }}>Side</th>
-                                                    <th style={{ width: '140px' }}>Instrument</th>
-                                                    <th className="num" style={{ width: '100px' }}>Entry</th>
-                                                    <th style={{ width: '120px' }}>Entry time</th>
-                                                    <th className="num" style={{ width: '100px' }}>Exit</th>
-                                                    <th style={{ width: '120px' }}>Exit time</th>
-                                                    <th className="num" style={{ width: '100px' }}>P&L</th>
-                                                    <th className="num" style={{ width: '90px' }}>Points</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
+                            <CollapsibleContent className={dayBody}>
+                                    <div className={tableWrap({ dayBody: true, fullHeight: true })}>
+                                        <Table>
+                                            <TableHeader>
+                                                <TableRow>
+                                                    <TableHead style={{ width: '140px' }}>Signal</TableHead>
+                                                    <TableHead style={{ width: '70px' }}>Side</TableHead>
+                                                    <TableHead style={{ width: '140px' }}>Instrument</TableHead>
+                                                    <TableHead numeric style={{ width: '100px' }}>Entry</TableHead>
+                                                    <TableHead style={{ width: '120px' }}>Entry time</TableHead>
+                                                    <TableHead numeric style={{ width: '100px' }}>Exit</TableHead>
+                                                    <TableHead style={{ width: '120px' }}>Exit time</TableHead>
+                                                    <TableHead numeric style={{ width: '100px' }}>P&L</TableHead>
+                                                    <TableHead numeric style={{ width: '90px' }}>Points</TableHead>
+                                                </TableRow>
+                                            </TableHeader>
+                                            <TableBody>
                                                 {group.orders.map((o, i) => (
-                                                    <tr key={`${group.date}-${o.strategy}-${o.instrument}-${o.exit_time}-${i}`} className="signal-row">
-                                                        <td className="strategy-cell">{o.strategy}</td>
-                                                        <td>
-                                                            <span className={getSideBadge(o.side)}>{o.side}</span>
-                                                        </td>
-                                                        <td title={o.instrument}><span className={o.fno_symbol ? 'mono' : undefined}>{o.fno_symbol || o.instrument}</span></td>
-                                                        <td className="price-cell">
+                                                    <TableRow key={`${group.date}-${o.strategy}-${o.instrument}-${o.exit_time}-${i}`} >
+                                                        <TableCell density="compact" kind="strategy">{o.strategy}</TableCell>
+                                                        <TableCell density="compact">
+                                                            <Badge tone={sideBadgeTone(o.side)}>{o.side}</Badge>
+                                                        </TableCell>
+                                                        <TableCell density="compact" title={o.instrument}><span className={o.fno_symbol ? rowMono : undefined}>{o.fno_symbol || o.instrument}</span></TableCell>
+                                                        <TableCell density="compact" kind="price">
                                                             {formatPricePaise(o.entry_price)}
-                                                        </td>
-                                                        <td className="signal-time" title={o.entry_time}>
+                                                        </TableCell>
+                                                        <TableCell density="compact" kind="time" title={o.entry_time}>
                                                             {formatTime(o.entry_time)}
-                                                            <span className="signal-time-sub">
+                                                            <span className={cellSub}>
                                                                 {formatDate(o.entry_time)}
                                                             </span>
-                                                        </td>
-                                                        <td className="price-cell">
+                                                        </TableCell>
+                                                        <TableCell density="compact" kind="price">
                                                             {formatPricePaise(o.exit_price)}
-                                                        </td>
-                                                        <td className="signal-time" title={o.exit_time}>
+                                                        </TableCell>
+                                                        <TableCell density="compact" kind="time" title={o.exit_time}>
                                                             {formatTime(o.exit_time)}
-                                                            <span className="signal-time-sub">
+                                                            <span className={cellSub}>
                                                                 {formatDate(o.exit_time)}
                                                             </span>
-                                                        </td>
-                                                        <td className={`price-cell ${getMoveClass(o.realized_pnl)}`}>
+                                                        </TableCell>
+                                                        <TableCell density="compact" kind="price" tone={pnlToneKey(o.realized_pnl)}>
                                                             {formatMove(o.realized_pnl)}
-                                                        </td>
-                                                        <td className={`price-cell ${getMoveClass(o.exit_price - o.entry_price)}`}>
+                                                        </TableCell>
+                                                        <TableCell density="compact" kind="price" tone={pnlToneKey(o.exit_price - o.entry_price)}>
                                                             {((o.exit_price - o.entry_price) / 100).toFixed(1)} pts
-                                                        </td>
-                                                    </tr>
+                                                        </TableCell>
+                                                    </TableRow>
                                                 ))}
-                                            </tbody>
-                                        </table>
+                                            </TableBody>
+                                        </Table>
                                     </div>
-                                </div>
-                            )}
-                        </section>
+                            </CollapsibleContent>
+                        </Collapsible>
                     );
                 })}
             </div>

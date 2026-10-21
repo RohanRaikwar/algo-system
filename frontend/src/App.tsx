@@ -7,6 +7,8 @@ import { useSignalStore } from './store/useSignalStore';
 import { fetchSignals } from './services/api';
 import { useConfigQuery } from './hooks/useConfigQuery';
 import { initPushOnOpen } from './services/push';
+import { holdWakeLock } from './services/wakeLock';
+import { useWakeStore } from './store/useWakeStore';
 import { usePushStore } from './store/usePushStore';
 import { startMarketStatusPoll } from './store/useMarketStatusStore';
 import { PHONE_PORTRAIT_QUERY, useMediaQuery } from './hooks/useMediaQuery';
@@ -15,10 +17,11 @@ import { StatusBar } from './components/layout/StatusBar';
 import { MobileNav } from './components/layout/MobileNav';
 import { ReconnectBanner } from './components/layout/ReconnectBanner';
 import { SettingsModal } from './components/settings/SettingsModal';
+import { AlertSetupDialog } from './components/layout/AlertSetupDialog';
 import { DashboardPage } from './pages/DashboardPage';
 import { SignalsPage } from './pages/SignalsPage';
 import { HealthPage } from './pages/HealthPage';
-import styles from './App.module.css';
+import { cn } from '@/lib/utils';
 
 const queryClient = new QueryClient({
     defaultOptions: { queries: { refetchOnWindowFocus: false } },
@@ -42,6 +45,11 @@ function AppShell() {
     // Ask for notification permission on open, like a native app.
     const setPushState = usePushStore(s => s.setState);
     useEffect(() => initPushOnOpen(setPushState), [setPushState]);
+
+    // Keep the screen on while the app is shown, if chosen (header sun/moon).
+    const keepAwake = useWakeStore(s => s.want);
+    const setAwakeHeld = useWakeStore(s => s.setHeld);
+    useEffect(() => (keepAwake ? holdWakeLock(setAwakeHeld) : undefined), [keepAwake, setAwakeHeld]);
 
     // Preload signal history so chart markers show without visiting Signals.
     const mergeSignals = useSignalStore(s => s.mergeSignals);
@@ -87,20 +95,28 @@ function AppShell() {
     // Loading state — all hooks must be declared ABOVE this early return
     if (cfgLoading) {
         return (
-            <div style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                height: '100vh', color: 'var(--text-muted)', fontFamily: 'var(--font)',
-            }}>
+            <div className="flex h-screen items-center justify-center font-sans text-sg-muted">
                 Loading…
             </div>
         );
     }
 
     return (
-        <div className={`${styles.shell}${isDashboard ? ` ${styles.shellFixed}` : ''}`}>
+        <div className={cn(
+            'flex flex-col min-h-[100dvh]',
+            // Dashboard: the chart owns the viewport, nothing scrolls. The document
+            // itself never scrolls either; otherwise a phone swipe drags the page
+            // and shows body background under the tab bar.
+            isDashboard && 'h-[100dvh] overflow-hidden [:is(html,body):has(&)]:h-full [:is(html,body):has(&)]:overflow-hidden [:is(html,body):has(&)]:overscroll-none',
+        )}>
             <ReconnectBanner />
             {!isPhone && <Header />}
-            <main className={`${styles.main}${isDashboard ? ` ${styles.mainFull}` : ''}`}>
+            <main className={cn(
+                'w-full mx-auto',
+                isDashboard
+                    ? 'flex-[1_1_auto] flex flex-col min-h-0 max-w-none p-0'
+                    : 'flex-[1_0_auto] max-w-[1600px] pt-[20px] px-[24px] pb-[28px] lte-900:p-[16px] lte-640:p-[12px]',
+            )}>
                 <Routes>
                     <Route path="/" element={<DashboardPage onOpenIndicators={() => setSettingsOpen(true)} />} />
                     <Route path="/signals" element={<SignalsPage />} />
@@ -111,6 +127,7 @@ function AppShell() {
             <StatusBar inline />
             <MobileNav />
             <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+            <AlertSetupDialog />
         </div>
     );
 }
