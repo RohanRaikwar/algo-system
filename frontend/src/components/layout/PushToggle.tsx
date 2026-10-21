@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { Bell, BellOff, BellRing, Send } from 'lucide-react';
 import { disablePush, enablePush, sendTestPush, type PushState } from '../../services/push';
 import { usePushStore } from '../../store/usePushStore';
+import { useAlertSetupStore } from '../../store/useAlertSetupStore';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Popover, PopoverContent } from '@/components/ui/popover';
@@ -26,6 +27,7 @@ export function PushToggle() {
     const [menu, setMenu] = useState(false);
     const [note, setNote] = useState('');
     const ref = useRef<HTMLDivElement>(null);
+    const openSetup = useAlertSetupStore(s => s.setOpen);
 
     if (state === null || state === 'unsupported') return null;
 
@@ -77,6 +79,9 @@ export function PushToggle() {
                 <DropdownMenu open={menu} onOpenChange={setMenu}>
                     <DropdownMenuTrigger render={bell} disabled={busy} />
                     <DropdownMenuContent anchor={ref} align="end" sideOffset={6}>
+                        <DropdownMenuItem onClick={() => { setMenu(false); openSetup(true); }}>
+                            Alert setup (sleeping phone)
+                        </DropdownMenuItem>
                         <DropdownMenuItem disabled={busy} onClick={() => run(async () => { setMenu(false); return disablePush(); })}>
                             Turn off alerts
                         </DropdownMenuItem>

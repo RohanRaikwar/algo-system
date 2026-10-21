@@ -13,6 +13,7 @@ import { useChartMarkers } from './hooks/useChartMarkers';
 import { useSRLines } from './hooks/useSRLines';
 import { useSRBox } from './hooks/useSRBox';
 import { useTradeLineDrag } from './hooks/useTradeLineDrag';
+import { OrderLineOverlay } from './OrderLineOverlay';
 import { SRSituationCard } from './SRSituationCard';
 import { ChartLegend } from './ChartLegend';
 import { StatusDot } from '../layout/StatusDot';
@@ -265,6 +266,15 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
 
             <div className="relative flex-[1_1_auto] min-h-0">
                 <div ref={chartContainer} className="absolute inset-0" />
+                <OrderLineOverlay
+                    chartApi={chartApi}
+                    candleSeries={candleSeries}
+                    selectedToken={selectedToken}
+                    enabled={srOverlay}
+                    price={lastPaise}
+                    override={lineDrag.override}
+                    beginDrag={lineDrag.beginDrag}
+                />
                 {lineDrag.note && <div className="absolute right-[72px] bottom-[32px] z-[6] py-[3px] px-[8px] rounded-ctrl bg-sg-raised text-sg-text-2 text-[0.75rem] pointer-events-none" role="status">{lineDrag.note}</div>}
 
                 {!hasCandles && (

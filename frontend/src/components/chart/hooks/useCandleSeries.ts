@@ -15,6 +15,8 @@ export function useCandleSeries(
 ) {
     const candles = useCandleStore(s => s.candles);
     const lastCandleFingerprint = useRef<string>('');
+    // Series the fingerprint belongs to: a rebuilt chart has a new, empty one.
+    const drawnOn = useRef<ISeriesApi<'Candlestick'> | null>(null);
 
     useEffect(() => {
         if (!candleSeries.current) return;
@@ -43,10 +45,11 @@ export function useCandleSeries(
         const firstTime = data[0].time;
         const fingerprint = `${data.length}:${firstTime}:${tf}:${token || ''}`;
 
-        if (fingerprint !== lastCandleFingerprint.current) {
-            // Structure changed → full setData()
+        if (fingerprint !== lastCandleFingerprint.current || drawnOn.current !== candleSeries.current) {
+            // Structure changed (or new series) → full setData()
             candleSeries.current.setData(data as CandlestickData[]);
             lastCandleFingerprint.current = fingerprint;
+            drawnOn.current = candleSeries.current;
         } else {
             // Same structure → efficient update()
             const last = data[data.length - 1];

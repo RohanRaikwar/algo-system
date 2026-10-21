@@ -7,6 +7,8 @@ import { useSignalStore } from './store/useSignalStore';
 import { fetchSignals } from './services/api';
 import { useConfigQuery } from './hooks/useConfigQuery';
 import { initPushOnOpen } from './services/push';
+import { holdWakeLock } from './services/wakeLock';
+import { useWakeStore } from './store/useWakeStore';
 import { usePushStore } from './store/usePushStore';
 import { startMarketStatusPoll } from './store/useMarketStatusStore';
 import { PHONE_PORTRAIT_QUERY, useMediaQuery } from './hooks/useMediaQuery';
@@ -15,6 +17,7 @@ import { StatusBar } from './components/layout/StatusBar';
 import { MobileNav } from './components/layout/MobileNav';
 import { ReconnectBanner } from './components/layout/ReconnectBanner';
 import { SettingsModal } from './components/settings/SettingsModal';
+import { AlertSetupDialog } from './components/layout/AlertSetupDialog';
 import { DashboardPage } from './pages/DashboardPage';
 import { SignalsPage } from './pages/SignalsPage';
 import { HealthPage } from './pages/HealthPage';
@@ -42,6 +45,11 @@ function AppShell() {
     // Ask for notification permission on open, like a native app.
     const setPushState = usePushStore(s => s.setState);
     useEffect(() => initPushOnOpen(setPushState), [setPushState]);
+
+    // Keep the screen on while the app is shown, if chosen (header sun/moon).
+    const keepAwake = useWakeStore(s => s.want);
+    const setAwakeHeld = useWakeStore(s => s.setHeld);
+    useEffect(() => (keepAwake ? holdWakeLock(setAwakeHeld) : undefined), [keepAwake, setAwakeHeld]);
 
     // Preload signal history so chart markers show without visiting Signals.
     const mergeSignals = useSignalStore(s => s.mergeSignals);
@@ -119,6 +127,7 @@ function AppShell() {
             <StatusBar inline />
             <MobileNav />
             <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+            <AlertSetupDialog />
         </div>
     );
 }

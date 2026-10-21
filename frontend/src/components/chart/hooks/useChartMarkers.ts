@@ -344,5 +344,9 @@ export function useChartMarkers(
     useEffect(() => () => {
         if (primitive.current) candleSeries.current?.detachPrimitive(primitive.current);
         primitive.current = null;
+        // The next primitive starts empty; without this the fingerprint
+        // guard skips setMarkers when the data is unchanged (StrictMode's
+        // remount, or coming back to the dashboard), leaving no markers.
+        lastFingerprint.current = '';
     }, [candleSeries]);
 }

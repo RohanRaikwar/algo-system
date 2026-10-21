@@ -825,7 +825,7 @@ func (s *Nifty50SR) open(candle model.TFCandle, st *nifty50SRState, ss SRState, 
 	st.EntryTS, st.MaxGain = candle.TS, 0
 	st.LastSide, st.LastADX = side, ss.Range.ADX
 	st.FNOToken, st.FNOEntryPrice, st.FNOBestPrice, st.FNOLastPrice = "", 0, 0, 0
-	st.ManualLevels, st.FNOManualSL, st.FNOTarget = false, 0, 0
+	st.ManualLevels, st.FNOManualSL, st.FNOTarget, st.TrailDist = false, 0, 0, 0
 	st.Strike = atmStrike(entry, s.cfg.StrikeStep)
 	st.TradesToday++
 
@@ -986,11 +986,18 @@ func (s *Nifty50SR) evaluateExit(candle model.TFCandle, st *nifty50SRState) *Sig
 
 // manualExit checks index levels the user set by hand on the 1m close;
 // breakeven, support-stop and no-progress management are off for them.
+// A removed stop or target (0) is not checked; a trailed stop moves first
+// if the close is beyond the stop it would break.
 func (s *Nifty50SR) manualExit(candle model.TFCandle, st *nifty50SRState, close, sign int64) *Signal {
+	if st.StopLevel == 0 || (close-st.StopLevel)*sign > 0 {
+		if trailStop(st) {
+			log.Printf("[strategy] %s: %s trailed stop to %d (close %d, trail %d)", s.Name(), st.Side, st.StopLevel, close, st.TrailDist)
+		}
+	}
 	switch {
-	case (close-st.StopLevel)*sign <= 0:
+	case st.StopLevel > 0 && (close-st.StopLevel)*sign <= 0:
 		return s.exit(candle.Exchange, candle.Token, st, fmt.Sprintf("SR %s STOP stop=%d close=%d manual", st.Side, st.StopLevel, close))
-	case (close-st.TargetLevel)*sign >= 0:
+	case st.TargetLevel > 0 && (close-st.TargetLevel)*sign >= 0:
 		return s.exit(candle.Exchange, candle.Token, st, fmt.Sprintf("SR %s TARGET target=%d close=%d manual", st.Side, st.TargetLevel, close))
 	}
 	return nil
@@ -1182,7 +1189,7 @@ func (s *Nifty50SR) resetPosition(st *nifty50SRState) {
 	st.Breakeven, st.SupportLvl, st.BreakBars = false, 0, 0
 	st.EntryTS, st.MaxGain = time.Time{}, 0
 	st.Strike, st.FNOToken, st.FNOEntryPrice, st.FNOBestPrice, st.FNOLastPrice = 0, "", 0, 0, 0
-	st.ManualLevels, st.FNOManualSL, st.FNOTarget = false, 0, 0
+	st.ManualLevels, st.FNOManualSL, st.FNOTarget, st.TrailDist = false, 0, 0, 0
 	st.CooldownLeft = s.cfg.CooldownCandles
 }
 

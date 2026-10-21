@@ -1,6 +1,6 @@
 // Levels service worker: Web Push only. It does not cache anything,
 // because every screen shows live market data. The gateway sends the payload
-// built by backend/internal/push (Notification: title, body, tag, url, sticky).
+// built by backend/internal/push (Notification: title, body, tag, url, sticky, ts).
 
 self.addEventListener('install', () => {
     self.skipWaiting();
@@ -24,6 +24,11 @@ self.addEventListener('push', (event) => {
             tag: data.tag || undefined,
             renotify: Boolean(data.tag),
             requireInteraction: Boolean(data.sticky),
+            // Trade alerts (sticky) buzz hard; refused-entry notes buzz once.
+            vibrate: data.sticky ? [300, 150, 300, 150, 600] : [200],
+            silent: false,
+            // Event time: an alert held while the phone slept shows when it happened.
+            timestamp: data.ts || Date.now(),
             icon: '/icon-192.png',
             badge: '/badge-96.png',
             data: { url: data.url || '/' },

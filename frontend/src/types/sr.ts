@@ -35,6 +35,8 @@ export interface SRView {
     target?: number;
     /** Stop/target moved by hand from the dashboard. */
     manual?: boolean;
+    /** Index stop trails the 1m close by this (paise); absent = off. */
+    trail?: number;
     strike?: number;
     block?: string;
     last_reject?: string;

@@ -133,6 +133,8 @@ export function useIndicatorLines(
                     color, lineWidth: 2 as LineWidth, crosshairMarkerVisible: false,
                     lastValueVisible: true, priceLineVisible: false,
                 });
+                // A new series is empty: the fingerprint of the old one must not skip setData.
+                delete lastHistoryFingerprint.current[compositeKey];
             } else if (indLineSeries.current[compositeKey].options().color !== color) {
                 // Colour changed in the Indicators dialog
                 indLineSeries.current[compositeKey].applyOptions({ color });

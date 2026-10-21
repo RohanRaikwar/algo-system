@@ -22,6 +22,9 @@ type Notification struct {
 	URL string `json:"url,omitempty"`
 	// Sticky keeps the notification on screen until the user acts on it.
 	Sticky bool `json:"sticky,omitempty"`
+	// TS is when the event happened (Unix ms), so an alert held by the push
+	// service while the phone slept shows its real time.
+	TS int64 `json:"ts,omitempty"`
 }
 
 // signalMsg is the subset of the pub:signal payload push needs. stratengine
@@ -64,10 +67,11 @@ func FormatSignal(payload []byte) (n Notification, ok bool) {
 			body = fmt.Sprintf("%s, index %s", inst, Rupees(s.Price))
 		}
 		return Notification{
-			Title: fmt.Sprintf("%s %s%s", s.Action, s.StrategyName, mode),
-			Body:  joinReason(body, s.Reason),
-			Tag:   "entry-" + s.FNOToken,
-			URL:   "/",
+			Title:  fmt.Sprintf("%s %s%s", s.Action, s.StrategyName, mode),
+			Body:   joinReason(body, s.Reason),
+			Tag:    "entry-" + s.FNOToken,
+			URL:    "/",
+			Sticky: true,
 		}, true
 	case "EXIT":
 		body := fmt.Sprintf("%s @ %s", inst, Rupees(s.CurrentFNOPrice))

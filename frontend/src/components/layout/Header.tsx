@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom';
 import { useMarketFeedStatus, type Tone } from '../../hooks/useMarketFeedStatus';
 import { SignalBadge } from '../signals/SignalBadge';
 import { PushToggle } from './PushToggle';
+import { KeepAwakeToggle } from './KeepAwakeToggle';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
@@ -60,6 +61,7 @@ export function Header() {
             </nav>
 
             <div className="flex items-center gap-[8px] ml-auto min-w-0 lte-640:gap-[6px]">
+                <KeepAwakeToggle />
                 <PushToggle />
                 <Tooltip>
                     <TooltipTrigger render={<Badge variant="header" tone="bg-raised" className={cn(widePill, TONE_TEXT[marketTone])} />}>

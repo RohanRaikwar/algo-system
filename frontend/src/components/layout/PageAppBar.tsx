@@ -1,4 +1,5 @@
 import { PushToggle } from './PushToggle';
+import { KeepAwakeToggle } from './KeepAwakeToggle';
 import { StatusDot } from './StatusDot';
 
 /**
@@ -11,6 +12,7 @@ export function PageAppBar({ title }: { title: string }) {
             <StatusDot />
             <h1 className="flex-1 min-w-0 m-0 text-sg-text text-[20px] font-bold tracking-[-0.01em]">{title}</h1>
             <div className="flex items-center gap-[6px]">
+                <KeepAwakeToggle />
                 <PushToggle />
             </div>
         </header>

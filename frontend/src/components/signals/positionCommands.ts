@@ -54,3 +54,33 @@ export function exitCommand(order: OpenOrder): PositionCommand {
 export function canEdit(order: OpenOrder): boolean {
     return !order.real && !order.leg;
 }
+
+/** The position a chart command is for. */
+export type PositionRef = Pick<PositionCommand, 'strategy' | 'side' | 'fno_token'>;
+
+/** Index level kinds the chart can remove. */
+export type IndexLevelKind = LevelKind | 'trail';
+
+/** set_levels command removing the index stop, target or trail. */
+export function removeCommand(pos: PositionRef, kind: IndexLevelKind): PositionCommand {
+    const field = kind === 'stop' ? 'index_stop' : kind === 'target' ? 'index_target' : 'index_trail';
+    return { ...pos, action: 'set_levels', [field]: -1 };
+}
+
+/** set_levels command trailing the index stop by points; null for a bad distance. */
+export function trailCommand(pos: PositionRef, points: number): PositionCommand | null {
+    const paise = rupeesToPaise(snapToTick(points));
+    return paise > 0 ? { ...pos, action: 'set_levels', index_trail: paise } : null;
+}
+
+/** Index points from entry to level (paise in), positive in the position's favour. */
+export function pointsFrom(entry: number, level: number, side: string): number {
+    const sign = side === 'PUT' ? -1 : 1;
+    return Math.round((level - entry) * sign) / 100;
+}
+
+/** Signed points label: "+42.5 pts", "−35 pts". */
+export function ptsLabel(points: number): string {
+    const sign = points > 0 ? '+' : points < 0 ? '−' : '';
+    return `${sign}${Number(Math.abs(points).toFixed(2))} pts`;
+}

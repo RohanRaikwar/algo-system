@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { canEdit, exitCommand, levelCommand, levelOnRightSide, rupeesToPaise, snapToTick } from '../positionCommands';
+import { canEdit, exitCommand, levelCommand, levelOnRightSide, pointsFrom, ptsLabel, removeCommand, rupeesToPaise, snapToTick, trailCommand } from '../positionCommands';
 import { PositionControls } from '../PositionControls';
 import { buildOpenOrders, type OpenOrder } from '../signalAnalytics';
 import type { SignalRecord } from '../../../types/signal';
@@ -59,5 +59,29 @@ describe('position commands', () => {
             },
         });
         expect(o).toMatchObject({ fnoToken: '45001', targetPrice: 140, indexStop: 24800, indexTarget: 25000, manual: true, real: false });
+    });
+});
+
+describe('chart order-line commands', () => {
+    const pos = { strategy: 'NIFTY50_SR', side: 'CALL', fno_token: '45001' };
+
+    it('removes index levels with -1', () => {
+        expect(removeCommand(pos, 'stop')).toEqual({ ...pos, action: 'set_levels', index_stop: -1 });
+        expect(removeCommand(pos, 'target')).toEqual({ ...pos, action: 'set_levels', index_target: -1 });
+        expect(removeCommand(pos, 'trail')).toEqual({ ...pos, action: 'set_levels', index_trail: -1 });
+    });
+
+    it('sends a trail distance in paise, snapped to the tick', () => {
+        expect(trailCommand(pos, 25.07)).toEqual({ ...pos, action: 'set_levels', index_trail: 2505 });
+        expect(trailCommand(pos, 0)).toBeNull();
+        expect(trailCommand(pos, -5)).toBeNull();
+    });
+
+    it('measures points from entry in the position\'s favour', () => {
+        expect(pointsFrom(2480000, 2484250, 'CALL')).toBe(42.5);
+        expect(pointsFrom(2480000, 2484250, 'PUT')).toBe(-42.5);
+        expect(ptsLabel(42.5)).toBe('+42.5 pts');
+        expect(ptsLabel(-35)).toBe('−35 pts');
+        expect(ptsLabel(0)).toBe('0 pts');
     });
 });
