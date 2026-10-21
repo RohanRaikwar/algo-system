@@ -3,6 +3,7 @@ import { LineStyle, type IPriceLine, type ISeriesApi } from 'lightweight-charts'
 import { useSRViewFor } from '../../../store/useSRStore';
 import type { SRView } from '../../../types/sr';
 import { nearestN, sourceLabel } from '../../sr/srFormat';
+import { CHART, SG } from '../../../styles/palette';
 
 export interface PriceLine {
     price: number; // rupees
@@ -12,13 +13,13 @@ export interface PriceLine {
 }
 
 const C = {
-    support: '#3ecf8e', // --sg-profit
-    resistance: '#f0616d', // --sg-loss
-    day: '#8a94a6', // --sg-text-3
-    prevDay: '#6b7385',
-    entry: '#b8c0cd', // --sg-text-2
-    target: '#3ecf8e',
-    stop: '#f0616d',
+    support: SG.profit,
+    resistance: SG.loss,
+    day: SG.muted,
+    prevDay: CHART.prevDay,
+    entry: SG.text2,
+    target: SG.profit,
+    stop: SG.loss,
 };
 
 /** Stop/target held by a drag (paise) until the strategy's view catches up. */

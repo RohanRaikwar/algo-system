@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Clock, MessageSquare, Timer, Gauge } from 'lucide-react';
 import { useWSStore } from '../../store/useWSStore';
-import styles from './StatusBar.module.css';
+import { cn } from '@/lib/utils';
+
+const stat = 'flex items-center gap-[6px] min-w-0 whitespace-nowrap';
+const val = 'text-sg-text-2 tabular-nums overflow-hidden text-ellipsis';
 
 interface StatusBarProps {
     inline?: boolean;
@@ -30,11 +33,11 @@ export function StatusBar({ inline = false }: StatusBarProps) {
     }, [startTime]);
 
     return (
-        <div className={`${styles.bar} ${inline ? styles.inline : ''}`}>
-            <div className={styles.stat}><Clock size={12} /> Last update <span className={styles.val}>{lastUpdateTime || '—'}</span></div>
-            <div className={styles.stat}><MessageSquare size={12} /> Messages <span className={styles.val}>{msgCount}</span></div>
-            <div className={styles.stat}><Timer size={12} /> Uptime <span className={styles.val}>{uptime}</span></div>
-            <div className={styles.stat}><Gauge size={12} /> Latency <span className={styles.val}>{latency !== null ? latency + 'ms' : '—'}</span></div>
+        <div className={cn('flex items-center gap-[20px] h-[30px] px-[16px] pb-[env(safe-area-inset-bottom)] text-[0.74rem] text-sg-faint border-t border-t-sg-line bg-sg-surface bottom-0 left-0 right-0 z-[100] shrink-0 lte-640:hidden phone-land:hidden', inline ? 'static' : 'fixed')}>
+            <div className={stat}><Clock size={12} /> Last update <span className={val}>{lastUpdateTime || '—'}</span></div>
+            <div className={stat}><MessageSquare size={12} /> Messages <span className={val}>{msgCount}</span></div>
+            <div className={stat}><Timer size={12} /> Uptime <span className={val}>{uptime}</span></div>
+            <div className={stat}><Gauge size={12} /> Latency <span className={val}>{latency !== null ? latency + 'ms' : '—'}</span></div>
         </div>
     );
 }

@@ -5,6 +5,27 @@ import { useOptionLTPStore, livePremium } from '../../store/useOptionLTPStore';
 import { fetchStrikeSel } from '../../services/api';
 import type { SRContract, SRRejects, SRSide, StrikeSelView, PickerDecision, PickerView, PickerLivePick } from '../../types/strikesel';
 import { Target, TrendingUp, TrendingDown, Clock, SlidersHorizontal, History } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import {
+    fnoAtmBody, fnoAtmHeader, fnoAtmStat, fnoBadge, fnoCard, fnoInstBody, fnoInstHeader, fnoInstRow, fnoLabel, fnoNa,
+    fnoParam, fnoValue, fnoValueLtp, fnoValueLtpLive, fnoValueMono,
+} from './classes';
+
+/** Value class per contract row kind (symbol/token mono, premium big). */
+const VALUE_CLASS: Record<string, string> = {
+    mono: fnoValueMono,
+    ltp: fnoValueLtp,
+    'ltp live': fnoValueLtpLive,
+};
+
+const decBadgeBase = 'py-[2px] px-[9px] rounded-pill text-[0.74rem] font-semibold';
+const DEC_BADGE_TONE = {
+    agree: 'text-sg-profit bg-sg-profit-soft',
+    disagree: 'text-sg-loss bg-sg-loss-soft',
+    none: 'text-sg-muted bg-sg-raised',
+} as const;
+const decSymbol = 'font-mono text-[0.82rem] [overflow-wrap:anywhere]';
+const decCol = 'flex flex-col gap-[4px] min-w-0 py-[10px] px-[12px]';
 
 /** Rupees (the chain's unit) to a display string. */
 function fmtRupees(v: number): string {
@@ -104,14 +125,14 @@ function ThetaRows({ theta, delta, params, live }: { theta: number; delta: numbe
         : null;
     return (
         <>
-            <div className="fno-inst-row">
-                <span className="fno-inst-label">Decay 1h–5h</span>
-                <span className="fno-inst-value">{decayLadder(theta, hold)}</span>
+            <div className={fnoInstRow}>
+                <span className={fnoLabel}>Decay 1h–5h</span>
+                <span className={fnoValue}>{decayLadder(theta, hold)}</span>
             </div>
             {b && params && (
-                <div className="fno-inst-row">
-                    <span className="fno-inst-label">Theta vs gain ({hold}m)</span>
-                    <span className={`fno-inst-value${b.ok ? '' : ' picker-dec-down'}`}>{thetaBudgetLine(b, params.theta_max_gain_pct)}</span>
+                <div className={fnoInstRow}>
+                    <span className={fnoLabel}>Theta vs gain ({hold}m)</span>
+                    <span className={fnoValue}>{thetaBudgetLine(b, params.theta_max_gain_pct)}</span>
                 </div>
             )}
         </>
@@ -138,9 +159,9 @@ function ContractRows({ c, live = false, params }: { c: SRContract; live?: boole
     return (
         <>
             {rows.map(([label, value, cls]) => (
-                <div key={label} className="fno-inst-row">
-                    <span className="fno-inst-label">{label}</span>
-                    <span className={`fno-inst-value${cls ? ` ${cls}` : ''}`}>{value}</span>
+                <div key={label} className={fnoInstRow}>
+                    <span className={fnoLabel}>{label}</span>
+                    <span className={cls ? VALUE_CLASS[cls] : fnoValue}>{value}</span>
                 </div>
             ))}
             <ThetaRows theta={c.theta} delta={c.delta} params={params} live={live} />
@@ -197,35 +218,35 @@ function NewPickRows({ side, params }: { side: SRSide; params?: Params }) {
     const cmp = sideComparison(side);
     return (
         <>
-            <div className="fno-inst-row fno-new-pick-head">
-                <span className="fno-inst-label">New picker</span>
-                <span className="fno-inst-value">
+            <div className={cn(fnoInstRow, 'mt-[6px] [border-top:1px_dashed_var(--sg-line)]')}>
+                <span className="text-[0.8rem] font-semibold text-sg-text-2">New picker</span>
+                <span className={fnoValue}>
                     {p ? `${p.strike} ${p.option}` : 'refused'}
-                    {cmp !== 'none' && <span className={`picker-dec-badge ${cmp}`}>{COMPARISON_LABEL[cmp]}</span>}
+                    {cmp !== 'none' && <span className={cn(decBadgeBase, 'ml-[8px]', DEC_BADGE_TONE[cmp])}>{COMPARISON_LABEL[cmp]}</span>}
                 </span>
             </div>
             {p ? (
                 <>
-                    <div className="fno-inst-row"><span className="fno-inst-label">Bid / ask</span><span className="fno-inst-value">{quoteLine(p)}</span></div>
-                    <div className="fno-inst-row"><span className="fno-inst-label">Delta · IV</span>
-                        <span className="fno-inst-value">{p.delta.toFixed(3)} · {p.iv.toFixed(1)}%</span></div>
-                    <div className="fno-inst-row"><span className="fno-inst-label">Theta</span>
-                        <span className="fno-inst-value">{num(p.theta, 2)} /day</span></div>
+                    <div className={fnoInstRow}><span className={fnoLabel}>Bid / ask</span><span className={fnoValue}>{quoteLine(p)}</span></div>
+                    <div className={fnoInstRow}><span className={fnoLabel}>Delta · IV</span>
+                        <span className={fnoValue}>{p.delta.toFixed(3)} · {p.iv.toFixed(1)}%</span></div>
+                    <div className={fnoInstRow}><span className={fnoLabel}>Theta</span>
+                        <span className={fnoValue}>{num(p.theta, 2)} /day</span></div>
                     <ThetaRows theta={p.theta} delta={p.delta} params={params} live />
                     {p.score !== 0 && (
-                        <div className="fno-inst-row"><span className="fno-inst-label">Expected return</span>
-                            <span className="fno-inst-value">{scoreText(p.score)}</span></div>
+                        <div className={fnoInstRow}><span className={fnoLabel}>Expected return</span>
+                            <span className={fnoValue}>{scoreText(p.score)}</span></div>
                     )}
                     {p.waived && p.waived.length > 0 && (
-                        <div className="fno-inst-row"><span className="fno-inst-label">Rules waived</span>
-                            <span className="fno-inst-value picker-dec-down">{p.waived.join(', ')}</span></div>
+                        <div className={fnoInstRow}><span className={fnoLabel}>Rules waived</span>
+                            <span className={fnoValue}>{p.waived.join(', ')}</span></div>
                     )}
                 </>
             ) : (
-                <div className="fno-inst-row"><span className="fno-na">{side.new_error || 'No tradable contract'}</span></div>
+                <div className={fnoInstRow}><span className={fnoNa}>{side.new_error || 'No tradable contract'}</span></div>
             )}
             {side.new_rejects && (
-                <div className="fno-inst-row"><span className="fno-inst-label">New rejected</span><span className="fno-inst-value">{side.new_rejects}</span></div>
+                <div className={fnoInstRow}><span className={fnoLabel}>New rejected</span><span className={fnoValue}>{side.new_rejects}</span></div>
             )}
         </>
     );
@@ -233,17 +254,17 @@ function NewPickRows({ side, params }: { side: SRSide; params?: Params }) {
 
 function NewChoice({ d }: { d: PickerDecision }) {
     if (d.result !== 'picked') {
-        return <div className="picker-dec-refused">Refused: {d.reason ?? '—'}</div>;
+        return <div className="text-[0.8rem] text-sg-loss [overflow-wrap:anywhere]">Refused: {d.reason ?? '—'}</div>;
     }
     const score = scoreText(d.score);
     return (
         <>
-            <div className="mono picker-dec-symbol">{d.symbol ?? d.strike}</div>
-            <div className="picker-dec-facts">
+            <div className={decSymbol}>{d.symbol ?? d.strike}</div>
+            <div className="flex flex-wrap gap-y-[4px] gap-x-[10px] text-[0.8rem] text-sg-text-2 tabular-nums">
                 <span>Δ {num(d.delta ?? NaN, 2)}</span>
                 <span>{paise(d.bid)} / {paise(d.ask)}</span>
-                {score && <span className={(d.score ?? 0) > 0 ? 'picker-dec-up' : 'picker-dec-down'}>exp {score}</span>}
-                {d.waived && d.waived.length > 0 && <span className="picker-dec-down">waived {d.waived.join(', ')}</span>}
+                {score && <span className={(d.score ?? 0) > 0 ? 'text-sg-profit font-semibold' : 'text-sg-loss font-semibold'}>exp {score}</span>}
+                {d.waived && d.waived.length > 0 && <span className="text-sg-loss font-semibold">waived {d.waived.join(', ')}</span>}
             </div>
         </>
     );
@@ -251,27 +272,27 @@ function NewChoice({ d }: { d: PickerDecision }) {
 
 function OldChoice({ d }: { d: PickerDecision }) {
     if (!d.old_symbol) {
-        return <div className="fno-na">{d.mode === 'on' ? 'Picker decides (on mode)' : 'Not chosen yet'}</div>;
+        return <div className={fnoNa}>{d.mode === 'on' ? 'Picker decides (on mode)' : 'Not chosen yet'}</div>;
     }
-    return <div className="mono picker-dec-symbol">{d.old_symbol}</div>;
+    return <div className={decSymbol}>{d.old_symbol}</div>;
 }
 
 function DecisionCard({ d }: { d: PickerDecision }) {
     const cmp = comparison(d);
     return (
-        <div className="picker-dec" title={decisionLine(d)}>
-            <div className="picker-dec-head">
-                <span className="picker-dec-strategy">{d.strategy}</span>
-                <span className="fno-na">{fmtTime(d.ts)}</span>
-                <span className={`picker-dec-badge ${cmp}`}>{COMPARISON_LABEL[cmp]}</span>
+        <div className="border border-solid border-sg-line-soft rounded-[10px] bg-sg-surface overflow-hidden" title={decisionLine(d)}>
+            <div className="flex items-center gap-[8px] py-[9px] px-[12px] border-b border-b-sg-line-soft">
+                <span className="font-semibold">{d.strategy}</span>
+                <span className={fnoNa}>{fmtTime(d.ts)}</span>
+                <span className={cn(decBadgeBase, 'ml-auto', DEC_BADGE_TONE[cmp])}>{COMPARISON_LABEL[cmp]}</span>
             </div>
-            <div className="picker-dec-cols">
-                <div className="picker-dec-col">
-                    <div className="fno-atm-label">New picker</div>
+            <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                <div className={decCol}>
+                    <div className={fnoLabel}>New picker</div>
                     <NewChoice d={d} />
                 </div>
-                <div className="picker-dec-col">
-                    <div className="fno-atm-label">Old picker</div>
+                <div className={cn(decCol, 'border-l border-l-sg-line-soft')}>
+                    <div className={fnoLabel}>Old picker</div>
                     <OldChoice d={d} />
                 </div>
             </div>
@@ -282,28 +303,28 @@ function DecisionCard({ d }: { d: PickerDecision }) {
 function PickerCard({ p }: { p: PickerView }) {
     const decisions = p.decisions ?? [];
     return (
-        <div className="fno-atm-card">
-            <div className="fno-atm-header">
+        <div className={fnoCard}>
+            <div className={fnoAtmHeader}>
                 <Target size={16} />
                 <span>Global option picker · {p.mode}</span>
-                <span className="fno-badge resolved">{p.streamed} streamed</span>
+                <span className={fnoBadge}>{p.streamed} streamed</span>
             </div>
-            <div className="fno-atm-body">
-                <div className="fno-atm-stat"><span className="fno-atm-label">Greeks (chain)</span>
-                    <span className="fno-atm-value fno-param">{p.chain_error ? `error: ${p.chain_error}` : fmtTime(p.chain_at ?? '')}</span></div>
-                <div className="fno-atm-stat"><span className="fno-atm-label">Max spread</span>
-                    <span className="fno-atm-value fno-param">{num(p.rules.max_spread_pct, 1)}% of mid</span></div>
-                <div className="fno-atm-stat"><span className="fno-atm-label">Max quote age</span>
-                    <span className="fno-atm-value fno-param">{p.rules.max_quote_age_s}s</span></div>
-                <div className="fno-atm-stat"><span className="fno-atm-label">Max greeks age</span>
-                    <span className="fno-atm-value fno-param">{p.rules.max_chain_age_s}s</span></div>
-                <div className="fno-atm-stat"><span className="fno-atm-label">Pick by</span>
-                    <span className="fno-atm-value fno-param">{p.rules.rank === 'return' ? 'expected return on premium' : 'delta closest to band middle'}</span></div>
+            <div className={fnoAtmBody}>
+                <div className={fnoAtmStat}><span className={fnoLabel}>Greeks (chain)</span>
+                    <span className={fnoParam}>{p.chain_error ? `error: ${p.chain_error}` : fmtTime(p.chain_at ?? '')}</span></div>
+                <div className={fnoAtmStat}><span className={fnoLabel}>Max spread</span>
+                    <span className={fnoParam}>{num(p.rules.max_spread_pct, 1)}% of mid</span></div>
+                <div className={fnoAtmStat}><span className={fnoLabel}>Max quote age</span>
+                    <span className={fnoParam}>{p.rules.max_quote_age_s}s</span></div>
+                <div className={fnoAtmStat}><span className={fnoLabel}>Max greeks age</span>
+                    <span className={fnoParam}>{p.rules.max_chain_age_s}s</span></div>
+                <div className={fnoAtmStat}><span className={fnoLabel}>Pick by</span>
+                    <span className={fnoParam}>{p.rules.rank === 'return' ? 'expected return on premium' : 'delta closest to band middle'}</span></div>
             </div>
             {decisions.length === 0 ? (
-                <div className="fno-inst-body"><div className="fno-inst-row"><span className="fno-na">No entry signal yet</span></div></div>
+                <div className={fnoInstBody}><div className={fnoInstRow}><span className={fnoNa}>No entry signal yet</span></div></div>
             ) : (
-                <div className="picker-decisions">
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-[10px] pt-[12px] px-[14px] pb-[14px] border-t border-t-sg-line-soft lte-640:grid-cols-[minmax(0,1fr)] lte-640:p-[10px]">
                     {decisions.map(d => <DecisionCard key={d.strategy} d={d} />)}
                 </div>
             )}
@@ -314,26 +335,26 @@ function PickerCard({ p }: { p: PickerView }) {
 function SideCard({ title, kind, side, chainError, params }: { title: string; kind: 'call' | 'put'; side?: SRSide; chainError?: string; params?: Params }) {
     const Icon = kind === 'call' ? TrendingUp : TrendingDown;
     return (
-        <div className={`fno-instrument-card ${kind}`}>
-            <div className="fno-inst-header">
+        <div className={fnoCard}>
+            <div className={cn(fnoInstHeader, kind === 'call' ? 'text-sg-profit' : 'text-sg-loss')}>
                 <Icon size={16} />
                 <span>{title}</span>
-                {side?.pick && <span className="fno-atm-head-strike">{side.pick.strike}</span>}
+                {side?.pick && <span className="ml-auto tabular-nums">{side.pick.strike}</span>}
             </div>
-            <div className="fno-inst-body">
+            <div className={fnoInstBody}>
                 {side?.pick ? (
                     <ContractRows c={side.pick} live params={params} />
                 ) : (
-                    <div className="fno-inst-row">
-                        <span className="fno-na">
+                    <div className={fnoInstRow}>
+                        <span className={fnoNa}>
                             {chainError || side?.error || 'No contract passes the rules right now'}
                         </span>
                     </div>
                 )}
                 {side && !side.error && !chainError && (
-                    <div className="fno-inst-row">
-                        <span className="fno-inst-label">Rejected</span>
-                        <span className="fno-inst-value">{rejectSummary(side.rejects)}</span>
+                    <div className={fnoInstRow}>
+                        <span className={fnoLabel}>Rejected</span>
+                        <span className={fnoValue}>{rejectSummary(side.rejects)}</span>
                     </div>
                 )}
                 {side && (side.new_pick || side.new_error) && <NewPickRows side={side} params={params} />}
@@ -354,12 +375,12 @@ export function FnoInstrumentsTab() {
 
     if (!view) {
         return (
-            <div className="fno-instruments-wrap">
+            <div className="flex flex-col gap-[12px]">
                 <SRStatusCard />
-                <div className="fno-pending">
+                <div className="flex flex-col items-center gap-[10px] py-[56px] px-[20px] text-sg-muted text-center [&_svg]:text-sg-faint">
                     <Target size={48} strokeWidth={1.5} />
                     <p>Waiting for the greeks strike selection…</p>
-                    <span className="fno-pending-sub">Updates every 30s during market hours (NIFTY50_SR strike selection and the global option picker)</span>
+                    <span className="text-sg-faint text-[0.84rem]">Updates every 30s during market hours (NIFTY50_SR strike selection and the global option picker)</span>
                 </div>
             </div>
         );
@@ -368,39 +389,39 @@ export function FnoInstrumentsTab() {
     const last = view.last;
 
     return (
-        <div className="fno-instruments-wrap">
+        <div className="flex flex-col gap-[12px]">
             <SRStatusCard />
             {view.picker && <PickerCard p={view.picker} />}
-            <div className="fno-atm-card">
-                <div className="fno-atm-header">
+            <div className={fnoCard}>
+                <div className={fnoAtmHeader}>
                     <SlidersHorizontal size={16} />
                     <span>{view.strategy || 'NIFTY50_SR'} strike selection (greeks)</span>
-                    <span className="fno-badge resolved"><Clock size={11} /> {fmtTime(view.updated_at)}</span>
+                    <span className={fnoBadge}><Clock size={11} /> {fmtTime(view.updated_at)}</span>
                 </div>
-                <div className="fno-atm-body">
+                <div className={fnoAtmBody}>
                     {paramRows(view.params).map(([label, value]) => (
-                        <div key={label} className="fno-atm-stat">
-                            <span className="fno-atm-label">{label}</span>
-                            <span className="fno-atm-value fno-param">{value}</span>
+                        <div key={label} className={fnoAtmStat}>
+                            <span className={fnoLabel}>{label}</span>
+                            <span className={fnoParam}>{value}</span>
                         </div>
                     ))}
                 </div>
             </div>
 
-            <div className="fno-instruments-grid">
+            <div className="grid grid-cols-[repeat(2,minmax(0,1fr))] gap-[12px] lte-900:grid-cols-[minmax(0,1fr)]">
                 <SideCard title="CALL pick now" kind="call" side={view.call} chainError={view.error} params={view.params} />
                 <SideCard title="PUT pick now" kind="put" side={view.put} chainError={view.error} params={view.params} />
             </div>
 
-            <div className="fno-instrument-card">
-                <div className="fno-inst-header">
+            <div className={fnoCard}>
+                <div className={fnoInstHeader}>
                     <History size={16} />
                     <span>Last picked for an entry</span>
-                    {last && <span className="fno-na">{fmtTime(last.ts)} · {last.side} · asked {last.asked_strike}</span>}
+                    {last && <span className="ml-auto text-sg-faint text-[0.8rem] font-medium">{fmtTime(last.ts)} · {last.side} · asked {last.asked_strike}</span>}
                 </div>
-                <div className="fno-inst-body">
+                <div className={fnoInstBody}>
                     {last ? <ContractRows c={last} params={view.params} /> : (
-                        <div className="fno-inst-row"><span className="fno-na">No SR entry signal yet</span></div>
+                        <div className={fnoInstRow}><span className={fnoNa}>No SR entry signal yet</span></div>
                     )}
                 </div>
             </div>

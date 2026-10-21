@@ -1,7 +1,16 @@
 import { useEffect, useState } from 'react';
 import { Activity, CheckCircle, AlertTriangle, XCircle, RefreshCw, Clock, Shield } from 'lucide-react';
 import { fetchAllSessionsHealth, type AllSessionsHealth, type SessionHealth } from '../../services/api';
-import './signals.css';
+import { cn } from '@/lib/utils';
+import { dayCard, emptyState, errorText, footerNote, spin, summaryCardShell, summaryGrid, summaryLabel, summaryValue } from './classes';
+
+/* Summary cards on a session card sit on the surface colour. */
+const detailCard = `${summaryCardShell} bg-sg-surface`;
+const STATUS_TONE: Record<string, string> = {
+    healthy: 'text-sg-profit bg-sg-profit-soft',
+    unhealthy: 'text-sg-loss bg-sg-loss-soft',
+    unknown: 'text-sg-muted bg-sg-raised',
+};
 
 export function SessionHealthPanel() {
     const [health, setHealth] = useState<AllSessionsHealth | null>(null);
@@ -30,8 +39,8 @@ export function SessionHealthPanel() {
 
     if (loading) {
         return (
-            <div className="signals-empty">
-                <RefreshCw size={48} className="spin" strokeWidth={1.5} />
+            <div className={emptyState}>
+                <RefreshCw size={48} className={spin} strokeWidth={1.5} />
                 <p>Loading session health…</p>
             </div>
         );
@@ -39,9 +48,9 @@ export function SessionHealthPanel() {
 
     if (error || !health) {
         return (
-            <div className="signals-empty">
+            <div className={emptyState}>
                 <XCircle size={48} strokeWidth={1.5} />
-                <p className="error-text">{error || 'No session data returned by the gateway.'}</p>
+                <p className={errorText}>{error || 'No session data returned by the gateway.'}</p>
             </div>
         );
     }
@@ -52,14 +61,14 @@ export function SessionHealthPanel() {
         const statusClass = isHealthy ? 'healthy' : isConfigured ? 'unhealthy' : 'unknown';
 
         return (
-            <div className={`daily-day-card session-health-card ${statusClass}`}>
+            <div className={cn(dayCard, 'p-[14px]')}>
                 {/* Header */}
-                <div className="session-health-header">
-                    <div className="session-health-title">
+                <div className="flex items-center justify-between gap-[10px]">
+                    <div className="flex items-center gap-[8px] [&_svg]:text-sg-muted">
                         <Activity size={18} />
-                        <span className="session-service-name">{session.service}</span>
+                        <span className="font-semibold">{session.service}</span>
                     </div>
-                    <div className={`session-status-badge ${statusClass}`}>
+                    <div className={cn('inline-flex items-center gap-[5px] py-[3px] px-[10px] rounded-pill text-[0.76rem] font-semibold', STATUS_TONE[statusClass])}>
                         {isHealthy ? (
                             <><CheckCircle size={14} /> Healthy</>
                         ) : isConfigured ? (
@@ -71,11 +80,11 @@ export function SessionHealthPanel() {
                 </div>
 
                 {/* Purpose */}
-                <div className="session-purpose-text">{session.purpose}</div>
+                <div className="mt-[6px] text-sg-muted text-[0.84rem]">{session.purpose}</div>
 
                 {/* Message (if any) */}
                 {session.message && (
-                    <div className="session-warning-message">
+                    <div className="flex items-start gap-[8px] mt-[10px] py-[9px] px-[12px] rounded-ctrl bg-sg-warn-soft text-sg-warn text-[0.84rem] [&_svg]:shrink-0 [&_svg]:mt-[2px]">
                         <AlertTriangle size={14} />
                         {session.message}
                     </div>
@@ -83,54 +92,54 @@ export function SessionHealthPanel() {
 
                 {/* Details Grid */}
                 {isConfigured && session.healthy !== undefined && (
-                    <div className="daily-summary-grid session-details">
-                        <div className="daily-summary-card">
-                            <div className="daily-summary-label">Session valid</div>
-                            <div className={`daily-summary-value ${session.valid ? 'price-up' : 'price-down'}`}>
+                    <div className={cn(summaryGrid, 'mt-[12px]')}>
+                        <div className={detailCard}>
+                            <div className={summaryLabel}>Session valid</div>
+                            <div className={summaryValue(session.valid ? 'text-sg-profit' : 'text-sg-loss')}>
                                 {session.valid ? 'Yes' : 'No'}
                             </div>
                         </div>
 
-                        <div className="daily-summary-card">
-                            <div className="daily-summary-label">
+                        <div className={detailCard}>
+                            <div className={summaryLabel}>
                                 <Clock size={12} />
                                 Session age
                             </div>
-                            <div className="daily-summary-value sm">
+                            <div className={summaryValue(undefined, true)}>
                                 {session.age_minutes?.toFixed(1)} min
                             </div>
                         </div>
 
-                        <div className="daily-summary-card">
-                            <div className="daily-summary-label">
+                        <div className={detailCard}>
+                            <div className={summaryLabel}>
                                 <RefreshCw size={12} />
                                 Next refresh
                             </div>
-                            <div className="daily-summary-value sm">
+                            <div className={summaryValue(undefined, true)}>
                                 {session.time_until_refresh || 'N/A'}
                             </div>
                         </div>
 
-                        <div className="daily-summary-card">
-                            <div className="daily-summary-label">
+                        <div className={detailCard}>
+                            <div className={summaryLabel}>
                                 <Shield size={12} />
                                 Circuit breaker
                             </div>
-                            <div className={`daily-summary-value ${session.circuit_breaker_open ? 'price-down' : 'price-up'}`}>
+                            <div className={summaryValue(session.circuit_breaker_open ? 'text-sg-loss' : 'text-sg-profit')}>
                                 {session.circuit_breaker_open ? 'OPEN' : 'Closed'}
                             </div>
                         </div>
 
-                        <div className="daily-summary-card">
-                            <div className="daily-summary-label">Total refreshes</div>
-                            <div className="daily-summary-value">
+                        <div className={detailCard}>
+                            <div className={summaryLabel}>Total refreshes</div>
+                            <div className={summaryValue()}>
                                 {session.total_refreshes || 0}
                             </div>
                         </div>
 
-                        <div className="daily-summary-card">
-                            <div className="daily-summary-label">Success rate</div>
-                            <div className="daily-summary-value price-up">
+                        <div className={detailCard}>
+                            <div className={summaryLabel}>Success rate</div>
+                            <div className={summaryValue('text-sg-profit')}>
                                 {session.total_refreshes && session.total_refreshes > 0 ? 
                                     `${((session.successful_refreshes || 0) / session.total_refreshes * 100).toFixed(1)}%` : 
                                     'N/A'}
@@ -138,9 +147,9 @@ export function SessionHealthPanel() {
                         </div>
 
                         {session.last_refresh && (
-                            <div className="daily-summary-card span-2">
-                                <div className="daily-summary-label">Last refresh</div>
-                                <div className="daily-summary-value sm">
+                            <div className={cn(detailCard, '[grid-column:span_2] lte-640:[grid-column:auto]')}>
+                                <div className={summaryLabel}>Last refresh</div>
+                                <div className={summaryValue(undefined, true)}>
                                     {new Date(session.last_refresh).toLocaleString('en-IN', {
                                         hour: '2-digit',
                                         minute: '2-digit',
@@ -158,38 +167,38 @@ export function SessionHealthPanel() {
     };
 
     return (
-        <div className="session-health-wrap">
+        <div className="flex flex-col gap-[12px]">
             {/* Overall Status Banner */}
-            <div className={`session-overall-banner ${health.overall.all_healthy ? 'banner-healthy' : 'banner-unhealthy'}`}>
-                <div className="banner-left">
+            <div className={cn('flex items-center justify-between gap-[12px] py-[14px] px-[16px] border border-solid border-sg-line border-l-[3px] rounded-[12px] bg-sg-bg lte-640:flex-col lte-640:items-start', health.overall.all_healthy ? 'border-l-sg-profit' : 'border-l-sg-loss')}>
+                <div className={cn('flex items-center gap-[12px]', health.overall.all_healthy ? '[&>svg]:text-sg-profit' : '[&>svg]:text-sg-loss')}>
                     {health.overall.all_healthy ? (
                         <CheckCircle size={24} />
                     ) : (
                         <AlertTriangle size={24} />
                     )}
                     <div>
-                        <div className="banner-title">
+                        <div className="font-semibold text-[1rem]">
                             {health.overall.all_healthy ? 'All sessions healthy' : 'Some sessions need attention'}
                         </div>
-                        <div className="banner-subtitle">
+                        <div className="text-sg-muted text-[0.84rem]">
                             {health.overall.healthy_sessions} of {health.overall.total_sessions} sessions healthy
                         </div>
                     </div>
                 </div>
-                <div className="banner-right">
+                <div className="flex items-center gap-[6px] text-sg-faint text-[0.8rem] whitespace-nowrap">
                     <RefreshCw size={14} />
                     Refreshes every 30s
                 </div>
             </div>
 
             {/* Session Cards */}
-            <div className="session-cards-grid">
+            <div className="grid grid-cols-[repeat(2,minmax(0,1fr))] gap-[12px] lte-900:grid-cols-[minmax(0,1fr)]">
                 {renderSessionCard(health.sessions.api_gateway)}
                 {renderSessionCard(health.sessions.stratengine)}
             </div>
 
             {/* Footer */}
-            <div className="session-health-footer">
+            <div className={footerNote}>
                 <Clock size={14} />
                 Last updated: {new Date(health.timestamp).toLocaleString('en-IN', {
                     hour: '2-digit',

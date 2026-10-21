@@ -4,6 +4,7 @@ import {
     type IChartApi, type ISeriesApi, type CandlestickData, type LineData,
     type MouseEventParams, type LineWidth,
 } from 'lightweight-charts';
+import { CHART, SG } from '../../../styles/palette';
 
 export interface ChartRefs {
     chartApi: MutableRefObject<IChartApi | null>;
@@ -30,28 +31,28 @@ export function useChartInit(): ChartRefs {
 
         const chart = createChart(el, {
             layout: {
-                background: { type: ColorType.Solid, color: '#151b25' },
-                textColor: '#8a94a6',
+                background: { type: ColorType.Solid, color: SG.surface },
+                textColor: SG.muted,
                 fontFamily: "'Inter', sans-serif",
                 fontSize: 12,
             },
             grid: {
-                vertLines: { color: 'rgba(138, 148, 166, 0.07)' },
-                horzLines: { color: 'rgba(138, 148, 166, 0.07)' },
+                vertLines: { color: CHART.grid },
+                horzLines: { color: CHART.grid },
             },
             crosshair: {
                 mode: CrosshairMode.Normal,
-                vertLine: { color: 'rgba(184, 192, 205, 0.35)', width: 1, style: 2, labelBackgroundColor: '#2b3546' },
-                horzLine: { color: 'rgba(184, 192, 205, 0.35)', width: 1, style: 2, labelBackgroundColor: '#2b3546' },
+                vertLine: { color: CHART.crosshair, width: 1, style: 2, labelBackgroundColor: CHART.crosshairLabel },
+                horzLine: { color: CHART.crosshair, width: 1, style: 2, labelBackgroundColor: CHART.crosshairLabel },
             },
             rightPriceScale: {
-                borderColor: '#263041',
+                borderColor: SG.line,
                 scaleMargins: { top: 0.12, bottom: 0.08 },
                 mode: PriceScaleMode.Normal,
                 autoScale: true,
             },
             timeScale: {
-                borderColor: '#263041',
+                borderColor: SG.line,
                 timeVisible: true,
                 secondsVisible: false,
                 rightOffset: 8,
@@ -69,9 +70,9 @@ export function useChartInit(): ChartRefs {
 
         chartApi.current = chart;
         candleSeries.current = chart.addCandlestickSeries({
-            upColor: '#3ecf8e', downColor: '#f0616d',
-            borderDownColor: '#f0616d', borderUpColor: '#3ecf8e',
-            wickDownColor: '#f0616d', wickUpColor: '#3ecf8e',
+            upColor: SG.profit, downColor: SG.loss,
+            borderDownColor: SG.loss, borderUpColor: SG.profit,
+            wickDownColor: SG.loss, wickUpColor: SG.profit,
         });
 
         // Resize observer

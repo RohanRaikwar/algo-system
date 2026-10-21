@@ -18,7 +18,7 @@ import { SettingsModal } from './components/settings/SettingsModal';
 import { DashboardPage } from './pages/DashboardPage';
 import { SignalsPage } from './pages/SignalsPage';
 import { HealthPage } from './pages/HealthPage';
-import styles from './App.module.css';
+import { cn } from '@/lib/utils';
 
 const queryClient = new QueryClient({
     defaultOptions: { queries: { refetchOnWindowFocus: false } },
@@ -87,20 +87,28 @@ function AppShell() {
     // Loading state — all hooks must be declared ABOVE this early return
     if (cfgLoading) {
         return (
-            <div style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                height: '100vh', color: 'var(--text-muted)', fontFamily: 'var(--font)',
-            }}>
+            <div className="flex h-screen items-center justify-center font-sans text-sg-muted">
                 Loading…
             </div>
         );
     }
 
     return (
-        <div className={`${styles.shell}${isDashboard ? ` ${styles.shellFixed}` : ''}`}>
+        <div className={cn(
+            'flex flex-col min-h-[100dvh]',
+            // Dashboard: the chart owns the viewport, nothing scrolls. The document
+            // itself never scrolls either; otherwise a phone swipe drags the page
+            // and shows body background under the tab bar.
+            isDashboard && 'h-[100dvh] overflow-hidden [:is(html,body):has(&)]:h-full [:is(html,body):has(&)]:overflow-hidden [:is(html,body):has(&)]:overscroll-none',
+        )}>
             <ReconnectBanner />
             {!isPhone && <Header />}
-            <main className={`${styles.main}${isDashboard ? ` ${styles.mainFull}` : ''}`}>
+            <main className={cn(
+                'w-full mx-auto',
+                isDashboard
+                    ? 'flex-[1_1_auto] flex flex-col min-h-0 max-w-none p-0'
+                    : 'flex-[1_0_auto] max-w-[1600px] pt-[20px] px-[24px] pb-[28px] lte-900:p-[16px] lte-640:p-[12px]',
+            )}>
                 <Routes>
                     <Route path="/" element={<DashboardPage onOpenIndicators={() => setSettingsOpen(true)} />} />
                     <Route path="/signals" element={<SignalsPage />} />

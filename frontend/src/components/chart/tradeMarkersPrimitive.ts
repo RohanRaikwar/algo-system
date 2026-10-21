@@ -9,6 +9,7 @@ import type {
     SeriesAttachedParameter,
     Time,
 } from 'lightweight-charts';
+import { CHART, SG } from '../../styles/palette';
 
 // 'watch' is advice only (exitwatch WATCH_EXIT, SR WATCH_BUY): no order, no position change.
 // 'sweep' is an SR liquidity sweep on the index: warning only.
@@ -25,19 +26,19 @@ export interface TradeMarker {
 }
 
 export const MARKER_COLORS: Record<TradeMarkerKind, string> = {
-    entry: '#3ecf8e', // --sg-profit
-    exit: '#f0616d', // --sg-loss
-    refused: '#8a94a6', // --sg-text-3
-    watch: '#4fb8d6', // --sg-info, same as the signal log's Shadow badge
-    sweep: '#e5a23a', // --sg-warn
+    entry: SG.profit,
+    exit: SG.loss,
+    refused: SG.muted,
+    watch: SG.info, // same as the signal log's Shadow badge
+    sweep: SG.warn,
 };
 
 const isBelow = (m: TradeMarker) => m.kind === 'entry' || m.below === true;
 
 const FONT = "600 10px 'Inter', sans-serif";
 const DETAIL_FONT = "500 10px 'Inter', sans-serif";
-const BG = '#151b25'; // chart background
-const DETAIL_COLOR = '#c9d1dc';
+const BG = SG.surface; // chart background
+const DETAIL_COLOR = CHART.markerDetail;
 const HEADER_H = 18;
 const LINE_H = 14;
 const PAD_X = 6;
@@ -313,7 +314,7 @@ class Renderer implements ISeriesPrimitivePaneRenderer {
         ctx.lineWidth = 1;
         ctx.stroke();
 
-        const fg = refused ? color : '#0b0e14';
+        const fg = refused ? color : CHART.markerInk;
         ctx.strokeStyle = fg;
         drawIcon(ctx, m.kind, left + PAD_X + ICON / 2, top + HEADER_H / 2);
         ctx.font = FONT;

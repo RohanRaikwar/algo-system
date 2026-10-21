@@ -6,8 +6,8 @@ import { SessionHealthTab } from '../components/signals/SessionHealthTab';
 import { TradingSettingsTab } from '../components/signals/TradingSettingsTab';
 import { PHONE_PORTRAIT_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
 import { haptic } from '../utils/haptic';
-import '../components/signals/signals.css';
-import styles from './HealthPage.module.css';
+import { signalsPage } from '../components/signals/classes';
+import { cn } from '@/lib/utils';
 
 type Section = 'system' | 'account' | 'sessions' | 'settings';
 
@@ -35,15 +35,20 @@ export function HealthPage() {
     return (
         <>
             <PageAppBar title="Health" />
-            <div className={styles.segRow}>
-                <div className={styles.seg} role="tablist" aria-label="Health sections">
+            <div className="sticky top-[calc(48px_+_env(safe-area-inset-top))] z-50 flex items-center h-[52px] mt-[-12px] mx-[-12px] mb-[8px] py-0 px-[12px] bg-sg-bg">
+                <div className="flex-1 flex p-[3px] gap-[2px] rounded-[10px] bg-sg-surface border border-solid border-sg-line" role="tablist" aria-label="Health sections">
                     {SECTIONS.map(s => (
                         <button
                             key={s.id}
                             type="button"
                             role="tab"
                             aria-selected={section === s.id}
-                            className={`${styles.segBtn}${section === s.id ? ` ${styles.segActive}` : ''}`}
+                            className={cn(
+                                'flex-1 h-[34px] min-w-0 py-0 px-[4px] border-0 rounded-[7px] text-[13px] leading-[inherit] cursor-pointer [-webkit-tap-highlight-color:transparent] select-none active:bg-sg-hover',
+                                section === s.id
+                                    ? 'bg-sg-hover text-sg-text font-semibold shadow-[inset_0_0_0_1px_var(--sg-line)]'
+                                    : 'bg-transparent text-sg-muted font-medium',
+                            )}
                             onClick={() => pick(s.id)}
                         >
                             {s.label}
@@ -53,7 +58,7 @@ export function HealthPage() {
             </div>
             {section === 'system' && <SystemHealth />}
             {section !== 'system' && (
-                <div className="signals-page">
+                <div className={signalsPage}>
                     {section === 'account' && <AccountTab />}
                     {section === 'sessions' && <SessionHealthTab />}
                     {section === 'settings' && <TradingSettingsTab />}

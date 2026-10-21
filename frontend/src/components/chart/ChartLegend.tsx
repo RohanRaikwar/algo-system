@@ -4,7 +4,8 @@ import { tfLabel, entryKey, getEntryColor } from '../../utils/helpers';
 import type { IndicatorEntry } from '../../types/api';
 import type { OHLCData, IndCrosshairValue } from './hooks/useChartInteraction';
 import type { CandleRaw } from '../../store/useCandleStore';
-import styles from './Chart.module.css';
+
+const legendRow = 'flex flex-wrap gap-x-[14px] gap-y-[4px] py-[2px] px-[6px] rounded-[6px] bg-[rgba(21,27,37,0.72)] [&_b]:font-semibold [&_b]:ml-[2px]';
 
 interface ChartLegendProps {
     ohlcData: OHLCData | null;
@@ -44,12 +45,12 @@ export function ChartLegend({
         ? { open: latestCandle.open, high: latestCandle.high, low: latestCandle.low, close: latestCandle.close }
         : null);
     const isUp = ohlc ? ohlc.close >= ohlc.open : true;
-    const toneClass = isUp ? styles.up : styles.down;
+    const toneClass = isUp ? 'text-sg-profit' : 'text-sg-loss';
 
     return (
-        <div className={styles.legend}>
+        <div className="flex max-w-full flex-col items-start gap-[3px] pointer-events-none text-[0.8rem] tabular-nums text-sg-muted lte-640:text-[11px]">
             {ohlc && (
-                <div className={styles.ohlcRow}>
+                <div className={`${legendRow} lte-640:flex-nowrap lte-640:gap-[8px] lte-640:max-w-full lte-640:overflow-hidden lte-640:whitespace-nowrap`}>
                     <span>O <b className={toneClass}>{fmt(ohlc.open)}</b></span>
                     <span>H <b className={toneClass}>{fmt(ohlc.high)}</b></span>
                     <span>L <b className={toneClass}>{fmt(ohlc.low)}</b></span>
@@ -58,10 +59,10 @@ export function ChartLegend({
             )}
 
             {indRows.length > 0 && (
-                <div className={styles.indRow}>
+                <div className={legendRow}>
                     {indRows.map((r) => (
-                        <span key={r.key} className={styles.indItem}>
-                            <i className={styles.indLine} style={{ background: r.color }} />
+                        <span key={r.key} className="inline-flex items-center gap-[5px] whitespace-nowrap [&_small]:text-sg-faint [&_small]:text-[0.9em]">
+                            <i className="w-[10px] h-[2px] rounded-[2px]" style={{ background: r.color }} />
                             {r.name}<small>{r.tf}</small>
                             <b style={{ color: r.color }}>{r.value !== null ? r.value.toFixed(2) : '—'}</b>
                         </span>

@@ -1,5 +1,6 @@
 import type { SignalRecord } from '../../types/signal';
 import { isWatchAction, watchBadgeClass, watchExitPricedAtPremium } from './watch';
+import { actionBadge, marketBadge, pnlTone } from './classes';
 
 /** Display helpers shared by the desktop signal table and the phone cards. */
 
@@ -41,14 +42,14 @@ export function relativeTime(ts: string, now = Date.now()): string {
 
 export function getActionBadge(action: string): string {
     if (isWatchAction(action)) return watchBadgeClass(action);
-    if (action === 'EXIT') return 'action-badge exit';
-    return 'action-badge buy-call';
+    if (action === 'EXIT') return actionBadge('exit');
+    return actionBadge('buy');
 }
 
 export function getSideBadge(side: string): string {
-    if (side === 'CALL') return 'action-badge buy-call';
-    if (side === 'PUT') return 'action-badge buy-put';
-    return 'action-badge';
+    if (side === 'CALL') return actionBadge('buy');
+    if (side === 'PUT') return actionBadge('put');
+    return actionBadge('none');
 }
 
 export function normalizeMarketState(marketState?: string, reason?: string): string {
@@ -66,11 +67,7 @@ export function normalizeMarketState(marketState?: string, reason?: string): str
 }
 
 export function getMarketBadge(state: string): string {
-    if (state === 'TRENDING') return 'market-badge trending';
-    if (state === 'SIDEWAYS') return 'market-badge sideways';
-    if (state === 'CHOPPY') return 'market-badge choppy';
-    if (state === 'RANGE') return 'market-badge range';
-    return 'market-badge';
+    return marketBadge(state);
 }
 
 /** Paise to "₹123.45"; "—" when missing. */
@@ -87,7 +84,7 @@ export function formatSignedPaise(paise: number): string {
 
 export function pnlClass(paise: number | null): string {
     if (paise === null) return '';
-    return paise > 0 ? 'price-up' : paise < 0 ? 'price-down' : 'price-flat';
+    return pnlTone(paise);
 }
 
 export type OrderMode = 'paper' | 'shadow' | 'capped' | 'real';

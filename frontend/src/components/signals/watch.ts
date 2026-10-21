@@ -1,3 +1,5 @@
+import { actionBadge } from './classes';
+
 /**
  * Exit-watch signals (WATCH_HOLD / WATCH_TIGHTEN / WATCH_EXIT) come from the
  * exitwatch service on pub:signal and its own journal; WATCH_BUY is SR entry
@@ -18,10 +20,10 @@ export function matchesActionFilter(action: string, filter: string): boolean {
 /** Badge class for a WATCH_* action. */
 export function watchBadgeClass(action: string): string {
     const a = action.toUpperCase();
-    if (a === 'WATCH_EXIT') return 'action-badge watch-exit';
-    if (a === 'WATCH_BUY') return 'action-badge watch-buy';
-    if (a === 'WATCH_TIGHTEN') return 'action-badge watch-tighten';
-    return 'action-badge watch-hold';
+    if (a === 'WATCH_EXIT') return actionBadge('watchExit');
+    if (a === 'WATCH_BUY') return actionBadge('watchBuy');
+    if (a === 'WATCH_TIGHTEN') return actionBadge('watchTighten');
+    return actionBadge('watchHold');
 }
 
 /**

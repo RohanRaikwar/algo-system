@@ -18,7 +18,20 @@ import { ChartLegend } from './ChartLegend';
 import { StatusDot } from '../layout/StatusDot';
 import { PHONE_PORTRAIT_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
 import { haptic } from '../../utils/haptic';
-import styles from './Chart.module.css';
+import { cn } from '@/lib/utils';
+
+const up = 'text-sg-profit';
+const down = 'text-sg-loss';
+const focusRing = 'focus-visible:outline-none focus-visible:shadow-ring';
+// Chevron drawn into the instrument select (same SVG, quotes and spaces percent-encoded).
+const symbolSelect = `h-[34px] py-0 pr-[30px] pl-[10px] bg-sg-raised [background-image:url(data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20width=%2712%27%20height=%2712%27%20viewBox=%270%200%2024%2024%27%20fill=%27none%27%20stroke=%27%238a94a6%27%20stroke-width=%272.5%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Cpath%20d=%27m6%209%206%206%206-6%27/%3E%3C/svg%3E)] bg-no-repeat [background-position:right_10px_center] border border-solid border-sg-line rounded-ctrl text-sg-text text-[0.9rem] font-semibold appearance-none cursor-pointer max-w-[220px] hover:border-sg-line-hover ${focusRing} lte-640:h-[44px] lte-640:min-w-0 lte-640:max-w-full lte-640:pt-0 lte-640:pr-[22px] lte-640:pb-[14px] lte-640:pl-0 lte-640:border-0 lte-640:bg-transparent lte-640:[background-position:right_4px_top_9px] lte-640:text-[15px]`;
+// No caption (empty span): the select drops its bottom padding and centres its chevron.
+const symbolStackEmpty = 'lte-640:[&:has(>span:empty)>select]:pb-0 lte-640:[&:has(>span:empty)>select]:[background-position:right_4px_center]';
+const symbolCaption = 'hidden lte-640:absolute lte-640:left-0 lte-640:bottom-[4px] lte-640:pointer-events-none lte-640:block lte-640:text-sg-faint lte-640:text-[11px] lte-640:leading-[1.3] lte-640:tabular-nums lte-640:whitespace-nowrap lte-640:overflow-hidden lte-640:text-ellipsis';
+const quoteCls = 'flex items-baseline gap-[10px] whitespace-nowrap tabular-nums lte-640:flex-col lte-640:items-end lte-640:gap-0 lte-640:leading-[1.2]';
+const lastPrice = 'text-sg-text font-semibold tracking-[-0.02em]';
+const change = 'text-[0.86rem] font-medium lte-640:text-[12px]';
+const toolCount = 'py-0 px-[5px] rounded-pill bg-sg-accent text-white font-semibold text-center tabular-nums';
 
 interface TradingChartProps {
     onOpenIndicators?: () => void;
@@ -118,17 +131,17 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
     useSRLines(candleSeries, selectedToken, lastPaise, srOverlay, lineDrag.override);
     useSRBox(candleSeries, selectedToken, srOverlay);
 
-    const tone = !quote || quote.change === 0 ? '' : quote.change > 0 ? styles.up : styles.down;
+    const tone = !quote || quote.change === 0 ? 'text-sg-muted' : quote.change > 0 ? up : down;
     const sign = !quote ? '' : quote.change > 0 ? '+' : quote.change < 0 ? '−' : '';
 
     return (
-        <section className={`${styles.chartCard}${compact ? ` ${styles.compact}` : ''}`} aria-label={`Price chart ${tfLabel(selectedTF)}`}>
+        <section className="relative flex flex-col flex-[1_1_auto] min-w-0 min-h-0 bg-sg-surface overflow-hidden" aria-label={`Price chart ${tfLabel(selectedTF)}`}>
             {phoneBar ? (
-                <div className={`${styles.toolbar} ${styles.phoneBar}`}>
+                <div className="flex flex-wrap items-center gap-[6px] min-h-[calc(52px+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] pr-[8px] pb-0 pl-[14px] border-b border-b-sg-line shrink-0 select-none [-webkit-touch-callout:none]">
                     <StatusDot />
-                    <div className={styles.symbolStack}>
+                    <div className={cn('flex flex-col min-w-0 relative shrink max-w-none', symbolStackEmpty)}>
                         <select
-                            className={styles.symbolSelect}
+                            className={symbolSelect}
                             value={selectedToken || ''}
                             onChange={(e) => setSelectedToken(e.target.value)}
                             aria-label="Instrument"
@@ -137,13 +150,13 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
                                 <option key={t} value={t}>{tokenLabel(t)}</option>
                             ))}
                         </select>
-                        <span className={styles.symbolCaption} aria-hidden>{tokenCaption(selectedToken)}</span>
+                        <span className={symbolCaption} aria-hidden>{tokenCaption(selectedToken)}</span>
                     </div>
-                    <span className={styles.tfChip}>
+                    <span className="relative inline-flex items-center gap-[3px] shrink-0 h-[28px] py-0 pr-[8px] pl-[10px] rounded-pill bg-sg-raised border border-solid border-sg-line text-sg-text text-[12px] font-semibold tabular-nums [&_svg]:text-sg-muted active:bg-sg-hover has-[select:active]:bg-sg-hover has-[select:focus-visible]:shadow-ring">
                         {tfLabel(selectedTF)}
                         <ChevronDown size={12} aria-hidden />
                         <select
-                            className={styles.tfChipSelect}
+                            className="absolute inset-y-[-8px] inset-x-[-4px] w-[calc(100%+8px)] opacity-0 text-[16px] cursor-pointer"
                             value={selectedTF}
                             onChange={(e) => { haptic(); setSelectedTF(Number(e.target.value)); }}
                             aria-label="Timeframe"
@@ -154,35 +167,40 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
                         </select>
                     </span>
                     {quote && (
-                        <div className={styles.quote}>
-                            <span className={styles.lastPrice}>{fmtPrice(quote.price)}</span>
-                            <span className={`${styles.change} ${tone}`}>
+                        <div className={cn(quoteCls, 'ml-auto')}>
+                            <span className={cn(lastPrice, 'text-[18px]')}>{fmtPrice(quote.price)}</span>
+                            <span className={cn(change, tone)}>
                                 {sign}{fmtPrice(Math.abs(quote.change))} ({sign}{Math.abs(quote.pct).toFixed(2)}%)
                             </span>
                         </div>
                     )}
                     {onOpenIndicators && (
                         <button
-                            className={`${styles.toolBtn} ${styles.phoneIndBtn}`}
+                            className={cn('relative inline-flex items-center justify-center gap-[6px] shrink-0 w-[40px] min-w-[40px] h-[40px] p-0 border-0 rounded-ctrl bg-transparent text-sg-text-2 text-[0.82rem] font-medium whitespace-nowrap cursor-pointer hover:bg-sg-hover hover:text-sg-text active:bg-sg-hover', focusRing, quote ? 'ml-0' : 'ml-auto')}
                             onClick={onOpenIndicators}
                             aria-label={`Indicators${activeEntries.length ? `, ${activeEntries.length} active` : ''}`}
                         >
                             <SlidersHorizontal size={16} />
                             {activeEntries.length > 0 && (
-                                <span className={styles.toolCount} aria-hidden>{activeEntries.length}</span>
+                                <span className={cn(toolCount, 'absolute top-[2px] right-0 min-w-[16px] leading-[16px] text-[10px]')} aria-hidden>{activeEntries.length}</span>
                             )}
                         </button>
                     )}
                 </div>
             ) : (
-                <div className={styles.toolbar}>
-                    <div className={styles.symbolGroup}>
+                <div className={cn(
+                    "flex items-center border-b border-b-sg-line shrink-0 lte-900:flex-wrap lte-640:grid lte-640:grid-cols-[minmax(0,1fr)_auto] lte-640:[grid-template-areas:'sym_sym'_'tf_ind'] phone-land:flex-nowrap",
+                    compact
+                        ? 'min-h-[40px] gap-[10px] py-[4px] px-[10px]'
+                        : 'gap-[16px] min-h-[52px] py-[8px] px-[12px] lte-900:gap-x-[12px] lte-900:gap-y-[8px] lte-640:gap-x-[8px] lte-640:gap-y-[6px] lte-640:pt-[6px] lte-640:px-[12px] lte-640:pb-[8px] phone-land:min-h-[44px] phone-land:gap-[10px] phone-land:py-[4px] phone-land:px-[12px]',
+                )}>
+                    <div className="flex items-center gap-[14px] min-w-0 lte-640:[grid-area:sym] lte-640:justify-between lte-640:gap-[10px]">
                         {compact ? (
-                            <span className={styles.paneSymbol}>{tokenLabel(selectedToken)}</span>
+                            <span className="text-[12px] font-semibold text-sg-muted">{tokenLabel(selectedToken)}</span>
                         ) : (
-                        <div className={styles.symbolStack}>
+                        <div className={cn('flex flex-col min-w-0 lte-640:relative lte-640:max-w-[60%]', symbolStackEmpty)}>
                             <select
-                                className={styles.symbolSelect}
+                                className={symbolSelect}
                                 value={selectedToken || ''}
                                 onChange={(e) => setSelectedToken(e.target.value)}
                                 aria-label="Instrument"
@@ -192,26 +210,30 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
                                     <option key={t} value={t}>{tokenLabel(t)}</option>
                                 ))}
                             </select>
-                            <span className={styles.symbolCaption} aria-hidden>{tokenCaption(selectedToken)}</span>
+                            <span className={symbolCaption} aria-hidden>{tokenCaption(selectedToken)}</span>
                         </div>
                         )}
                         {quote && (
-                            <div className={styles.quote}>
-                                <span className={styles.lastPrice}>{fmtPrice(quote.price)}</span>
-                                <span className={`${styles.change} ${tone}`} title="Change since the session's first candle">
+                            <div className={quoteCls}>
+                                <span className={cn(lastPrice, compact ? 'text-[14px]' : 'text-[1.35rem] lte-640:text-[18px] phone-land:text-[16px]')}>{fmtPrice(quote.price)}</span>
+                                <span className={cn(change, tone)} title="Change since the session's first candle">
                                     {sign}{fmtPrice(Math.abs(quote.change))} ({sign}{Math.abs(quote.pct).toFixed(2)}%)
                                 </span>
                             </div>
                         )}
                     </div>
 
-                    <div className={styles.tfGroup} role="radiogroup" aria-label="Timeframe">
+                    <div className="inline-flex p-[3px] gap-[2px] bg-sg-bg border border-solid border-sg-line rounded-[10px] shrink-0 lte-640:[grid-area:tf] lte-640:flex lte-640:min-w-0" role="radiogroup" aria-label="Timeframe">
                         {config.tfs.map((tf) => (
                             <button
                                 key={tf}
                                 role="radio"
                                 aria-checked={tf === selectedTF}
-                                className={`${styles.tfBtn}${tf === selectedTF ? ` ${styles.tfActive}` : ''}`}
+                                className={cn(
+                                    'min-w-[38px] h-[28px] py-0 px-[10px] border-none rounded-[7px] text-[0.82rem] font-medium tabular-nums cursor-pointer transition-[background,color] duration-150 ease-[ease] lte-640:flex-1 lte-640:min-w-0 lte-640:px-[4px] lte-640:h-[34px] lte-640:text-[13px] lte-640:font-semibold phone-land:h-[34px]',
+                                    tf === selectedTF ? 'bg-sg-hover text-sg-text shadow-[inset_0_0_0_1px_var(--sg-line)]' : 'bg-transparent text-sg-muted hover:text-sg-text',
+                                    focusRing,
+                                )}
                                 onClick={() => setSelectedTF(tf)}
                             >
                                 {tfLabel(tf)}
@@ -219,37 +241,37 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
                         ))}
                     </div>
 
-                    <div className={styles.indGroup}>
+                    <div className="flex items-center gap-[6px] ml-auto min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lte-900:order-3 lte-900:w-full lte-900:ml-0 lte-640:[grid-area:ind] lte-640:order-[0] lte-640:w-auto lte-640:m-0 lte-640:overflow-visible phone-land:order-[0] phone-land:w-auto phone-land:ml-auto">
                         {onOpenIndicators && !compact && (
                             <button
-                                className={styles.toolBtn}
+                                className={cn('inline-flex items-center gap-[6px] h-[30px] py-0 px-[11px] border border-solid border-sg-line rounded-ctrl bg-sg-raised text-sg-text-2 text-[0.82rem] font-medium whitespace-nowrap cursor-pointer shrink-0 hover:bg-sg-hover hover:text-sg-text lte-640:h-[40px] lte-640:min-w-[44px] lte-640:justify-center lte-640:px-[10px] phone-land:h-[40px] phone-land:min-w-[44px] phone-land:justify-center', focusRing)}
                                 onClick={onOpenIndicators}
                                 title="Indicators (press / or I)"
                                 aria-keyshortcuts="/ I"
                             >
                                 <SlidersHorizontal size={14} />
-                                <span className={styles.toolBtnLabel}>Indicators</span>
+                                <span className="lte-640:hidden phone-land:hidden">Indicators</span>
                                 {activeEntries.length > 0 && (
-                                    <span className={styles.toolCount} aria-label={`${activeEntries.length} active`}>{activeEntries.length}</span>
+                                    <span className={cn(toolCount, 'min-w-[18px] leading-[18px] text-[0.7rem]')} aria-label={`${activeEntries.length} active`}>{activeEntries.length}</span>
                                 )}
-                                <kbd className={styles.kbd}>/</kbd>
+                                <kbd className="min-w-[18px] py-0 px-[4px] border border-solid border-sg-line border-b-2 rounded-[5px] bg-sg-bg text-sg-muted [font-family:inherit] text-[0.72rem] leading-[1.4] text-center phone-land:hidden touch:hidden">/</kbd>
                             </button>
                         )}
                     </div>
                 </div>
             )}
 
-            <div className={styles.plot}>
-                <div ref={chartContainer} className={styles.chartContainer} />
-                {lineDrag.note && <div className={styles.dragNote} role="status">{lineDrag.note}</div>}
+            <div className="relative flex-[1_1_auto] min-h-0">
+                <div ref={chartContainer} className="absolute inset-0" />
+                {lineDrag.note && <div className="absolute right-[72px] bottom-[32px] z-[6] py-[3px] px-[8px] rounded-ctrl bg-sg-raised text-sg-text-2 text-[0.75rem] pointer-events-none" role="status">{lineDrag.note}</div>}
 
                 {!hasCandles && (
-                    <div className={styles.emptyState}>
+                    <div className="absolute inset-0 z-[5] flex items-center justify-center text-sg-muted text-[0.9rem] pointer-events-none">
                         Waiting for market data for {tokenLabel(selectedToken) || 'this instrument'}…
                     </div>
                 )}
 
-                <div className={styles.overlays}>
+                <div className="absolute top-[10px] left-[12px] right-[80px] z-[10] flex flex-col items-start gap-[4px] pointer-events-none lte-640:top-[6px] lte-640:left-[8px] lte-640:right-[64px]">
                     <ChartLegend
                         ohlcData={ohlcData}
                         indValues={indValues}

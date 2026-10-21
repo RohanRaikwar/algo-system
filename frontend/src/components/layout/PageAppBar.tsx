@@ -1,6 +1,5 @@
 import { PushToggle } from './PushToggle';
 import { StatusDot } from './StatusDot';
-import styles from './PageAppBar.module.css';
 
 /**
  * Phone-portrait page bar for Signals and Health. It replaces the brand
@@ -8,10 +7,10 @@ import styles from './PageAppBar.module.css';
  */
 export function PageAppBar({ title }: { title: string }) {
     return (
-        <header className={styles.bar}>
+        <header className="sticky top-0 z-[60] flex items-center gap-[4px] h-[calc(48px_+_env(safe-area-inset-top))] mt-[-12px] mx-[-12px] mb-[12px] pt-[env(safe-area-inset-top)] pr-[12px] pb-0 pl-[16px] bg-sg-bg border-b border-b-sg-line-soft select-none [-webkit-touch-callout:none]">
             <StatusDot />
-            <h1 className={styles.title}>{title}</h1>
-            <div className={styles.actions}>
+            <h1 className="flex-1 min-w-0 m-0 text-sg-text text-[20px] font-bold tracking-[-0.01em]">{title}</h1>
+            <div className="flex items-center gap-[6px]">
                 <PushToggle />
             </div>
         </header>

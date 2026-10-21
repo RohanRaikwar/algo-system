@@ -2,7 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { Bell, BellOff, BellRing, Send } from 'lucide-react';
 import { disablePush, enablePush, sendTestPush, type PushState } from '../../services/push';
 import { usePushStore } from '../../store/usePushStore';
-import styles from './Header.module.css';
+import { cn } from '@/lib/utils';
+
+/* Header status pill as a button. Font comes from the parent (font: inherit
+   in the old CSS), so the pill's own size/weight do not apply here. */
+const pushBtn = 'inline-flex items-center gap-[5px] h-[28px] px-[9px] rounded-pill bg-sg-raised whitespace-nowrap min-w-0 border-none cursor-pointer leading-[inherit] phone-land:h-[26px] hover:enabled:bg-sg-hover focus-visible:outline-none focus-visible:shadow-ring disabled:opacity-60 disabled:cursor-progress';
+const popover = 'absolute top-[calc(100%_+_6px)] right-0 z-[50] bg-sg-raised border border-solid border-sg-line rounded-ctrl shadow-[0_8px_24px_rgba(0,0,0,0.35)]';
 
 const HINT: Record<PushState, string> = {
     'unsupported': 'This browser does not support push notifications',
@@ -59,13 +64,13 @@ export function PushToggle() {
     });
 
     const Icon = state === 'on' ? BellRing : state === 'off' ? Bell : BellOff;
-    const tone = state === 'on' ? styles.toneUp : state === 'off' ? '' : styles.toneMuted;
+    const tone = state === 'on' ? 'text-sg-profit' : 'text-sg-text-2';
 
     return (
-        <div className={styles.pushWrap} ref={ref}>
+        <div className="relative flex gap-[6px] shrink-0" ref={ref}>
             <button
                 type="button"
-                className={`${styles.pill} ${styles.pushBtn} ${tone}`}
+                className={cn(pushBtn, tone)}
                 onClick={onClick}
                 disabled={busy}
                 title={HINT[state]}
@@ -77,7 +82,7 @@ export function PushToggle() {
             {state === 'on' && (
                 <button
                     type="button"
-                    className={`${styles.pill} ${styles.pushBtn}`}
+                    className={cn(pushBtn, 'text-sg-text-2')}
                     onClick={sendTest}
                     disabled={busy}
                     title="Send a test alert to this device"
@@ -86,15 +91,16 @@ export function PushToggle() {
                 </button>
             )}
             {menu && (
-                <div className={styles.pushMenu} role="menu">
+                <div className={cn(popover, 'flex flex-col min-w-[170px] p-[4px]')} role="menu">
                     <button type="button" role="menuitem" disabled={busy}
+                        className="py-[8px] px-[10px] border-none rounded-[6px] bg-transparent text-sg-text leading-[inherit] text-[0.82rem] text-left cursor-pointer hover:enabled:bg-sg-hover"
                         onClick={() => run(async () => { setMenu(false); return disablePush(); })}>
                         Turn off alerts
                     </button>
                 </div>
             )}
             {note && (
-                <div className={styles.pushNote} role="status" onClick={() => setNote('')}>{note}</div>
+                <div className={cn(popover, 'w-max max-w-[min(280px,calc(100vw_-_32px))] py-[8px] px-[10px] text-sg-text-2 text-[0.78rem] leading-[1.4] cursor-pointer')} role="status" onClick={() => setNote('')}>{note}</div>
             )}
         </div>
     );

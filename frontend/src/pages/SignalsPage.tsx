@@ -8,16 +8,22 @@ import { DailyAnalyticsTab } from '../components/signals/DailyAnalyticsTab';
 import { AccountTab } from '../components/signals/AccountTab';
 import { TradingSettingsTab } from '../components/signals/TradingSettingsTab';
 import { SessionHealthTab } from '../components/signals/SessionHealthTab';
-import '../components/signals/signals.css';
 import { formatDateKey, signalKey, useSignalsData, type SignalsData } from '../components/signals/useSignalsData';
 import { SignalsMobile } from '../components/signals/mobile/SignalsMobile';
 import { PHONE_PORTRAIT_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
+import { cn } from '@/lib/utils';
+import { ctrlBtn, dayBody, dayCard, dayDate, dayHead, dayLeft, dayList, dayMeta, dayRight, emptyState, signalsPage, table, tableWrap, th, thNum } from '../components/signals/classes';
 
 type SignalTab = 'LOG' | 'LIVE' | 'EVENT_PRICE' | 'DAILY' | 'PNL' | 'ACCOUNT' | 'SETTINGS' | 'SESSION';
 
 type TabGroup = 'activity' | 'performance' | 'system';
 
 const TAB_GROUPS: TabGroup[] = ['activity', 'performance', 'system'];
+
+const stat = 'flex flex-col justify-center gap-[2px] min-w-[104px] py-[8px] px-[18px] border-r border-r-sg-line-soft last:[border-right:none] lte-640:min-w-0 lte-640:px-[12px] lte-640:nth-[3n]:[border-right:none]';
+const statLabel = 'text-[0.78rem] text-sg-muted whitespace-nowrap lte-640:overflow-hidden lte-640:text-ellipsis';
+const statValue = 'inline-flex items-center gap-[8px] text-[1.6rem] font-semibold leading-[1.15] tracking-[-0.02em] tabular-nums lte-640:text-[1.3rem]';
+const filterField = 'h-[34px] py-0 px-[10px] bg-sg-bg border border-solid border-sg-line rounded-ctrl text-sg-text [font-family:inherit] text-[0.85rem] [transition:border-color_0.15s] hover:border-sg-faint lte-640:flex-[1_1_140px] lte-640:min-w-0';
 
 const TABS: { id: SignalTab; label: string; Icon: LucideIcon; group: TabGroup }[] = [
     { id: 'LOG', label: 'Signal log', Icon: ClipboardList, group: 'activity' },
@@ -61,40 +67,40 @@ function SignalsDesktop({ data }: { data: SignalsData }) {
     };
 
     return (
-        <div className="signals-page">
-            <header className="signals-header">
-                <div className="signals-stats">
-                    <div className="stat">
-                        <span className="stat-label">Total signals</span>
-                        <span className="stat-value">{signals.length}</span>
+        <div className={signalsPage}>
+            <header className="flex items-stretch gap-[12px] p-[6px] bg-sg-surface border border-solid border-sg-line rounded-panel lte-640:flex-col lte-640:p-[4px]">
+                <div className="flex flex-1 min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lte-640:grid lte-640:grid-cols-[repeat(3,minmax(0,1fr))] lte-640:gap-y-[4px] lte-640:overflow-visible">
+                    <div className={stat}>
+                        <span className={statLabel}>Total signals</span>
+                        <span className={cn(statValue, 'text-sg-text')}>{signals.length}</span>
                     </div>
-                    <div className="stat">
-                        <span className="stat-label">Today</span>
-                        <span className="stat-value">{todayCount}</span>
+                    <div className={stat}>
+                        <span className={statLabel}>Today</span>
+                        <span className={cn(statValue, 'text-sg-text')}>{todayCount}</span>
                     </div>
-                    <div className="stat">
-                        <span className="stat-label">Entries</span>
-                        <span className="stat-value buy">{buyCount}</span>
+                    <div className={stat}>
+                        <span className={statLabel}>Entries</span>
+                        <span className={cn(statValue, 'text-sg-profit')}>{buyCount}</span>
                     </div>
-                    <div className="stat">
-                        <span className="stat-label">Exits</span>
-                        <span className="stat-value exit">{exitCount}</span>
+                    <div className={stat}>
+                        <span className={statLabel}>Exits</span>
+                        <span className={cn(statValue, 'text-sg-text-2')}>{exitCount}</span>
                     </div>
-                    <div className="stat">
-                        <span className="stat-label">Open positions</span>
-                        <span className="stat-value open">
-                            {openOrders.length > 0 && <span className="live-dot" aria-hidden="true" />}
+                    <div className={stat}>
+                        <span className={statLabel}>Open positions</span>
+                        <span className={cn(statValue, 'text-sg-accent')}>
+                            {openOrders.length > 0 && <span className="w-[8px] h-[8px] rounded-[50%] bg-sg-accent shadow-[0_0_0_0_rgba(91,141,239,0.55)] animate-[live-dot_2s_ease-out_infinite] motion-reduce:animate-none" aria-hidden="true" />}
                             {openOrders.length}
                         </span>
                     </div>
                 </div>
             </header>
 
-            <nav className="signals-tabs" role="tablist" aria-label="Signals views">
+            <nav className="flex items-center gap-[4px] p-[4px] bg-sg-surface border border-solid border-sg-line rounded-panel overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="tablist" aria-label="Signals views">
                 {TAB_GROUPS.map((group, gi) => (
                     <Fragment key={group}>
-                        {gi > 0 && <span className="signals-tab-sep" aria-hidden="true" />}
-                        <div className="signals-tab-group">
+                        {gi > 0 && <span className="w-[1px] h-[20px] my-0 mx-[6px] bg-sg-line shrink-0" aria-hidden="true" />}
+                        <div className="flex gap-[2px] shrink-0">
                             {TABS.filter(t => t.group === group).map(({ id, label, Icon }) => {
                                 const selected = activeTab === id;
                                 return (
@@ -105,13 +111,18 @@ function SignalsDesktop({ data }: { data: SignalsData }) {
                                         aria-selected={selected}
                                         aria-controls="signals-panel"
                                         tabIndex={selected ? 0 : -1}
-                                        className={`signals-tab${selected ? ' active' : ''}`}
+                                        className={cn(
+                                            'inline-flex items-center gap-[7px] py-[8px] px-[12px] [border:none] rounded-[10px] text-[0.86rem] font-medium whitespace-nowrap cursor-pointer [transition:background_0.15s,color_0.15s]',
+                                            selected
+                                                ? 'text-sg-text bg-sg-hover shadow-[inset_0_0_0_1px_var(--sg-line)] focus-visible:aria-selected:shadow-[inset_0_0_0_1px_var(--sg-line)] [&_svg]:text-sg-accent'
+                                                : 'bg-transparent text-sg-muted hover:text-sg-text hover:bg-sg-raised',
+                                        )}
                                         onClick={() => setActiveTab(id)}
                                         onKeyDown={onTabKeyDown}
                                     >
                                         <Icon size={15} /> {label}
                                         {id === 'LIVE' && openOrders.length > 0 && (
-                                            <span className="tab-count">{openOrders.length}</span>
+                                            <span className="min-w-[18px] py-[1px] px-[6px] rounded-pill bg-sg-accent text-white text-[0.7rem] font-semibold text-center tabular-nums">{openOrders.length}</span>
                                         )}
                                     </button>
                                 );
@@ -123,13 +134,13 @@ function SignalsDesktop({ data }: { data: SignalsData }) {
 
             <section
                 id="signals-panel"
-                className="signals-panel"
+                className="flex flex-col gap-[12px] min-w-0 p-[14px] bg-sg-surface border border-solid border-sg-line rounded-panel lte-640:p-[10px]"
                 role="tabpanel"
                 aria-labelledby={`signals-tab-${activeTab}`}
             >
             {(activeTab === 'LOG' || activeTab === 'LIVE' || activeTab === 'EVENT_PRICE') && (
-                <div className="signals-filters">
-                    <select value={stratFilter} onChange={e => setStratFilter(e.target.value)} aria-label="Strategy">
+                <div className="flex items-center gap-[8px] flex-wrap">
+                    <select className={filterField} value={stratFilter} onChange={e => setStratFilter(e.target.value)} aria-label="Strategy">
                         <option value="ALL">All strategies</option>
                         {strategyNames.map(name => (
                             <option key={name} value={name}>{name}</option>
@@ -137,13 +148,14 @@ function SignalsDesktop({ data }: { data: SignalsData }) {
                     </select>
                     {activeTab === 'LOG' && (
                         <>
-                            <select value={actionFilter} onChange={e => setActionFilter(e.target.value)} aria-label="Action">
+                            <select className={filterField} value={actionFilter} onChange={e => setActionFilter(e.target.value)} aria-label="Action">
                                 <option value="ALL">All actions</option>
                                 <option value="BUY">Entries (BUY)</option>
                                 <option value="EXIT">Exits (EXIT)</option>
                                 <option value="WATCH">Exit watch (WATCH_*)</option>
                             </select>
                             <input
+                                className={cn(filterField, 'min-w-[200px] placeholder:text-sg-faint')}
                                 type="search"
                                 placeholder="Filter by token, e.g. NFO:43521"
                                 aria-label="Filter by token"
@@ -152,7 +164,7 @@ function SignalsDesktop({ data }: { data: SignalsData }) {
                             />
                             {filtersActive && (
                                 <button
-                                    className="filter-reset"
+                                    className="h-[34px] py-0 px-[10px] bg-transparent [border:none] rounded-ctrl text-sg-accent text-[0.85rem] cursor-pointer hover:bg-sg-accent-soft"
                                     onClick={() => { setStratFilter('ALL'); setActionFilter('ALL'); setTokenFilter(''); }}
                                 >
                                     Clear filters
@@ -167,11 +179,11 @@ function SignalsDesktop({ data }: { data: SignalsData }) {
             {activeTab === 'LOG' && (
                 <>
                     {loading ? (
-                        <div className="signals-empty">
+                        <div className={emptyState}>
                             <p>Loading signals…</p>
                         </div>
                     ) : filtered.length === 0 ? (
-                        <div className="signals-empty">
+                        <div className={emptyState}>
                             <Zap size={48} strokeWidth={1.5} />
                             <p>
                                 {filtersActive
@@ -180,42 +192,42 @@ function SignalsDesktop({ data }: { data: SignalsData }) {
                             </p>
                         </div>
                     ) : (
-                        <div className="daily-day-list">
+                        <div className={dayList}>
                             {logGroups.map((group) => {
                                 const expanded = !!expandedLogDates[group.date];
 
                                 return (
-                                    <section key={group.date} className="daily-day-card">
+                                    <section key={group.date} className={dayCard}>
                                         <button
-                                            className="daily-day-head"
+                                            className={dayHead}
                                             aria-expanded={expanded}
                                             onClick={() => setExpandedLogDates(prev => ({ ...prev, [group.date]: !prev[group.date] }))}
                                         >
-                                            <span className="daily-day-left">
+                                            <span className={dayLeft}>
                                                 {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                                <span className="daily-day-date">{formatDateKey(group.date)}</span>
+                                                <span className={dayDate}>{formatDateKey(group.date)}</span>
                                             </span>
-                                            <span className="daily-day-right">
-                                                <span className="daily-day-meta">{group.signals.length} signals</span>
-                                                <span className="daily-day-meta">{group.buys} entries · {group.exits} exits</span>
+                                            <span className={dayRight}>
+                                                <span className={dayMeta}>{group.signals.length} signals</span>
+                                                <span className={dayMeta}>{group.buys} entries · {group.exits} exits</span>
                                             </span>
                                         </button>
 
                                         {expanded && (
-                                            <div className="daily-day-body">
-                                                <div className="signals-table-wrap log-table-wrap">
-                                                    <table className="signals-table">
+                                            <div className={dayBody}>
+                                                <div className={tableWrap({ dayBody: true, fullHeight: true })}>
+                                                    <table className={table}>
                                                         <thead>
                                                             <tr>
-                                                                <th style={{ width: '130px' }}>Time</th>
-                                                                <th style={{ width: '76px' }}>Action</th>
-                                                                <th style={{ width: '70px' }}>Side</th>
-                                                                <th style={{ width: '112px' }}>Market</th>
-                                                                <th style={{ width: '130px' }}>Strategy</th>
-                                                                <th style={{ width: '104px' }}>Mode</th>
-                                                                <th style={{ width: '140px' }}>Instrument</th>
-                                                                <th className="num" style={{ width: '110px' }}>Price</th>
-                                                                <th>Reason</th>
+                                                                <th className={th} style={{ width: '130px' }}>Time</th>
+                                                                <th className={th} style={{ width: '76px' }}>Action</th>
+                                                                <th className={th} style={{ width: '70px' }}>Side</th>
+                                                                <th className={th} style={{ width: '112px' }}>Market</th>
+                                                                <th className={th} style={{ width: '130px' }}>Strategy</th>
+                                                                <th className={th} style={{ width: '104px' }}>Mode</th>
+                                                                <th className={th} style={{ width: '140px' }}>Instrument</th>
+                                                                <th className={thNum} style={{ width: '110px' }}>Price</th>
+                                                                <th className={th}>Reason</th>
                                                             </tr>
                                                         </thead>
                                                         <tbody>
@@ -242,13 +254,13 @@ function SignalsDesktop({ data }: { data: SignalsData }) {
                         </div>
                     )}
 
-                    <div className="pagination-bar">
-                        <span className="pagination-info">
+                    <div className="flex items-center gap-[8px] pt-[2px]">
+                        <span className="mr-auto text-sg-muted text-[0.82rem] tabular-nums">
                             {filtered.length} signals
-                            <span className="pagination-total"> over {logGroups.length} day{logGroups.length === 1 ? '' : 's'}</span>
+                            <span className="text-sg-faint"> over {logGroups.length} day{logGroups.length === 1 ? '' : 's'}</span>
                         </span>
                         <button
-                            className="pagination-btn"
+                            className={ctrlBtn}
                             onClick={() => setExpandedLogDates(
                                 logGroups.reduce<Record<string, boolean>>((acc, g) => {
                                     acc[g.date] = true;
@@ -260,7 +272,7 @@ function SignalsDesktop({ data }: { data: SignalsData }) {
                             Expand all
                         </button>
                         <button
-                            className="pagination-btn"
+                            className={ctrlBtn}
                             onClick={() => setExpandedLogDates({})}
                             disabled={Object.keys(expandedLogDates).length === 0}
                         >

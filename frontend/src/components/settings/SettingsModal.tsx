@@ -9,7 +9,7 @@ import { useCandleStore } from '../../store/useCandleStore';
 import { sendSubscribe } from '../../hooks/useWebSocket';
 import { tfLabel, getEntryColor, entryKey } from '../../utils/helpers';
 import type { IndicatorEntry } from '../../types/api';
-import styles from './Settings.module.css';
+import { cn } from '@/lib/utils';
 
 interface Props {
     open: boolean;
@@ -36,6 +36,13 @@ const PRESETS: { type: IndType; period: number }[] = [
 
 // Distinct hues for new lines; avoids the candle green and red.
 const PALETTE = ['#4fb8d6', '#e5a23a', '#a78bfa', '#f472b6', '#facc15', '#60a5fa', '#fb923c', '#e2e8f0'];
+
+const sectionTitle = 'flex items-center gap-[8px] mb-[10px] text-sg-text-2 text-[0.86rem] font-semibold';
+const rowCls = 'flex items-center gap-[12px] pt-[8px] pr-[8px] pb-[8px] pl-[12px] border-b border-b-sg-line-soft last:border-b-0';
+const rowName = 'text-sg-text text-[0.9rem] font-medium';
+const inputCls = 'h-[38px] py-0 px-[10px] bg-sg-bg border border-solid border-sg-line rounded-ctrl text-sg-text [font-family:inherit] text-[0.88rem] placeholder:text-sg-faint hover:border-sg-line-hover focus-visible:outline-none focus-visible:shadow-ring';
+const primaryBtn = 'inline-flex items-center justify-center gap-[6px] h-[38px] py-0 px-[14px] border-none rounded-ctrl bg-sg-accent text-white [font-family:inherit] text-[0.88rem] font-semibold cursor-pointer hover:not-disabled:bg-sg-accent-hover disabled:bg-sg-raised disabled:text-sg-faint disabled:cursor-default';
+const kbd = 'inline-block min-w-[20px] py-0 px-[5px] border border-solid border-sg-line border-b-[2px] rounded-[5px] bg-sg-raised text-sg-text-2 [font-family:inherit] text-[0.72rem] leading-[1.5] text-center';
 
 function displayName(name: string): string {
     return name.replace('_', ' ');
@@ -215,35 +222,36 @@ export function SettingsModal({ open, onClose }: Props) {
 
     const listSection = (
         <section>
-            <h3 className={styles.sectionTitle}>
-                On chart <span className={styles.count}>{draft.length}</span>
+            <h3 className={sectionTitle}>
+                On chart <span className="min-w-[20px] py-0 px-[6px] rounded-pill bg-sg-raised text-sg-muted text-[0.74rem] font-medium text-center tabular-nums">{draft.length}</span>
             </h3>
             {sorted.length === 0 ? (
-                <p className={styles.empty}>No indicators yet. Add one below or pick a quick add.</p>
+                <p className="p-[14px] border border-dashed border-sg-line rounded-[10px] text-sg-muted text-[0.86rem] text-center">No indicators yet. Add one below or pick a quick add.</p>
             ) : (
-                <ul className={styles.list}>
+                <ul className="list-none border border-solid border-sg-line rounded-[12px] bg-sg-bg overflow-hidden">
                     {sorted.map((entry) => {
                         const key = entryKey(entry);
                         const color = getEntryColor(entry);
                         return (
-                            <li key={key} className={styles.row}>
-                                <label className={styles.swatch} style={{ background: color }} title="Change line colour">
+                            <li key={key} className={rowCls}>
+                                <label className="relative w-[18px] h-[18px] rounded-[6px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.15)] cursor-pointer shrink-0 focus-within:shadow-ring" style={{ background: color }} title="Change line colour">
                                     <input
                                         type="color"
+                                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                                         value={color}
                                         onChange={(e) => recolor(key, e.target.value)}
                                         aria-label={`Colour for ${displayName(entry.name)}`}
                                     />
                                 </label>
-                                <span className={styles.rowName}>{displayName(entry.name)}</span>
-                                <span className={styles.tfTag}>{tfLabel(entry.tf)}</span>
+                                <span className={rowName}>{displayName(entry.name)}</span>
+                                <span className="py-[1px] px-[8px] rounded-pill bg-sg-raised text-sg-muted text-[0.76rem] tabular-nums">{tfLabel(entry.tf)}</span>
                                 {entry.tf > chartTF && (
-                                    <span className={styles.hiddenTag} title="Hidden until you switch to this timeframe or higher">
+                                    <span className="text-sg-warn text-[0.76rem]" title="Hidden until you switch to this timeframe or higher">
                                         Hidden on {tfLabel(chartTF)}
                                     </span>
                                 )}
                                 <button
-                                    className={styles.rowRemove}
+                                    className="flex items-center justify-center w-[30px] h-[30px] ml-auto border-none rounded-ctrl bg-transparent text-sg-faint cursor-pointer hover:bg-sg-loss-soft hover:text-sg-loss"
                                     onClick={() => removeEntry(key)}
                                     aria-label={`Remove ${displayName(entry.name)} ${tfLabel(entry.tf)}`}
                                 >
@@ -259,27 +267,27 @@ export function SettingsModal({ open, onClose }: Props) {
 
     const overlaysSection = (
         <section>
-            <h3 className={styles.sectionTitle}>Overlays</h3>
-            <label className={`${styles.row} ${styles.switchRow}`}>
+            <h3 className={sectionTitle}>Overlays</h3>
+            <label className={cn(rowCls, 'portrait-640:flex-row-reverse portrait-640:justify-between portrait-640:py-[10px] portrait-640:px-0 portrait-640:cursor-pointer')}>
                 <input
                     type="checkbox"
-                    className={styles.switchInput}
+                    className="portrait-640:appearance-none portrait-640:relative portrait-640:shrink-0 portrait-640:w-[44px] portrait-640:h-[26px] portrait-640:rounded-[13px] portrait-640:bg-sg-line portrait-640:motion-safe:[transition:background_0.15s] portrait-640:cursor-pointer portrait-640:after:content-[''] portrait-640:after:absolute portrait-640:after:top-[3px] portrait-640:after:left-[3px] portrait-640:after:w-[20px] portrait-640:after:h-[20px] portrait-640:after:rounded-[50%] portrait-640:after:bg-white portrait-640:motion-safe:after:[transition:transform_0.15s] portrait-640:checked:bg-sg-accent portrait-640:checked:after:[transform:translateX(18px)] portrait-640:focus-visible:outline-none portrait-640:focus-visible:shadow-ring"
                     checked={srOverlay}
                     onChange={(e) => setOverlay('srSituation', e.target.checked)}
                 />
-                <span className={styles.rowName}>SR situation: supports/resistances, day lines, sideways box</span>
+                <span className={rowName}>SR situation: supports/resistances, day lines, sideways box</span>
             </label>
         </section>
     );
 
     const presetsBlock = presets.length > 0 && (
-        <div className={styles.presets}>
-            <span className={styles.presetsLabel}>Quick add on {tfLabel(indTF)}</span>
+        <div className="flex items-center flex-wrap gap-[6px] mt-[12px] portrait-640:mt-0">
+            <span className="mr-[4px] text-sg-faint text-[0.8rem]">Quick add on {tfLabel(indTF)}</span>
             {presets.map(p => (
                 <button
                     key={`${p.type}_${p.period}`}
                     type="button"
-                    className={styles.preset}
+                    className="h-[28px] py-0 px-[11px] border border-solid border-sg-line rounded-pill bg-transparent text-sg-text-2 [font-family:inherit] text-[0.8rem] tabular-nums cursor-pointer hover:border-sg-accent hover:text-sg-text hover:bg-sg-accent-soft portrait-640:min-h-[36px] portrait-640:px-[14px]"
                     onClick={() => add(p.type, p.period, indTF)}
                 >
                     {p.type} {p.period}
@@ -290,19 +298,24 @@ export function SettingsModal({ open, onClose }: Props) {
 
     const addSection = (
         <section>
-            <h3 className={styles.sectionTitle}>Add indicator</h3>
+            <h3 className={sectionTitle}>Add indicator</h3>
             <form
-                className={styles.addRow}
+                className="flex gap-[8px] flex-wrap"
                 onSubmit={(e) => { e.preventDefault(); addFromForm(); }}
             >
-                <div className={styles.segmented} role="radiogroup" aria-label="Type">
+                <div className="inline-flex p-[3px] gap-[2px] bg-sg-bg border border-solid border-sg-line rounded-[10px] lte-640:w-full" role="radiogroup" aria-label="Type">
                     {TYPES.map(t => (
                         <button
                             key={t.id}
                             type="button"
                             role="radio"
                             aria-checked={indType === t.id}
-                            className={`${styles.segBtn}${indType === t.id ? ` ${styles.segActive}` : ''}`}
+                            className={cn(
+                                'h-[30px] py-0 px-[12px] border-none rounded-[7px] [font-family:inherit] text-[0.84rem] font-medium cursor-pointer hover:text-sg-text lte-640:flex-1',
+                                indType === t.id
+                                    ? 'bg-sg-hover text-sg-text shadow-[inset_0_0_0_1px_var(--sg-line)]'
+                                    : 'bg-transparent text-sg-muted',
+                            )}
                             onClick={() => setIndType(t.id)}
                         >
                             {t.label}
@@ -311,7 +324,7 @@ export function SettingsModal({ open, onClose }: Props) {
                 </div>
                 <input
                     ref={periodRef}
-                    className={styles.input}
+                    className={cn(inputCls, 'flex-[1_1_120px] min-w-0 tabular-nums')}
                     type="number"
                     inputMode="numeric"
                     min={2}
@@ -322,7 +335,7 @@ export function SettingsModal({ open, onClose }: Props) {
                     onChange={(e) => { setPeriod(e.target.value); setError(''); }}
                 />
                 <select
-                    className={styles.input}
+                    className={inputCls}
                     value={indTF}
                     onChange={(e) => setIndTF(Number(e.target.value))}
                     aria-label="Compute timeframe"
@@ -332,11 +345,11 @@ export function SettingsModal({ open, onClose }: Props) {
                         <option key={t} value={t}>{tfLabel(t)}</option>
                     ))}
                 </select>
-                <button type="submit" className={styles.addBtn} disabled={!period}>
+                <button type="submit" className={primaryBtn} disabled={!period}>
                     <Plus size={15} /> Add
                 </button>
             </form>
-            {error && <p className={styles.error} role="alert">{error}</p>}
+            {error && <p className="mt-[8px] text-sg-loss text-[0.82rem]" role="alert">{error}</p>}
             {/* Phone shows quick adds above the form instead. */}
             {!isPhone && presetsBlock}
         </section>
@@ -344,12 +357,24 @@ export function SettingsModal({ open, onClose }: Props) {
 
     return (
         <div
-            className={`${styles.overlay} ${open ? styles.open : ''}`}
+            className={cn(
+                'fixed inset-0 z-[1000] flex items-center justify-center p-[16px] bg-[rgba(8,11,16,0.6)] lte-640:items-end lte-640:p-0',
+                open
+                    ? 'opacity-100 visible motion-safe:[transition:opacity_0.18s_ease]'
+                    : 'opacity-0 invisible motion-safe:[transition:opacity_0.18s_ease,visibility_0s_linear_0.18s]',
+            )}
             onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
         >
             <div
                 ref={modalRef}
-                className={`${styles.modal}${dragH !== null ? ` ${styles.dragging}` : ''}`}
+                className={cn(
+                    'flex flex-col w-[540px] max-w-full max-h-[min(86vh,720px)] bg-sg-surface border border-solid border-sg-line rounded-[16px] shadow-[0_24px_64px_rgba(0,0,0,0.5)] motion-safe:[transition:transform_0.18s_ease]',
+                    'lte-640:w-full lte-640:max-h-[90dvh] lte-640:rounded-[16px_16px_0_0]',
+                    'portrait-640:relative portrait-640:border-b-0 portrait-640:outline-none',
+                    '[&_button:focus-visible]:outline-none [&_button:focus-visible]:shadow-ring portrait-640:[&_button:active]:[filter:brightness(1.15)]',
+                    open ? '[transform:translateY(0)]' : '[transform:translateY(8px)] portrait-640:[transform:translateY(100%)]',
+                    dragH !== null ? 'portrait-640:[transition:none]' : 'portrait-640:motion-safe:[transition:transform_0.24s_cubic-bezier(0.2,0.8,0.2,1)]',
+                )}
                 style={{
                     ...(dragOffset ? { transform: `translateY(${dragOffset}px)` } : {}),
                     ...(kb ? { marginBottom: kb.bottom, maxHeight: kb.maxH } : {}),
@@ -359,18 +384,18 @@ export function SettingsModal({ open, onClose }: Props) {
                 aria-labelledby="ind-title"
                 tabIndex={-1}
             >
-                {isPhone && <span className={styles.handle} aria-hidden {...handlers} />}
-                <div className={styles.header} {...(isPhone ? handlers : {})}>
+                {isPhone && <span className="hidden portrait-640:flex portrait-640:justify-center portrait-640:items-center portrait-640:h-[20px] portrait-640:shrink-0 portrait-640:touch-none portrait-640:cursor-grab portrait-640:before:content-[''] portrait-640:before:w-[36px] portrait-640:before:h-[4px] portrait-640:before:rounded-[2px] portrait-640:before:bg-sg-line" aria-hidden {...handlers} />}
+                <div className="flex items-start justify-between gap-[12px] pt-[18px] px-[20px] pb-[14px] border-b border-b-sg-line-soft portrait-640:pt-[2px] portrait-640:pr-[16px] portrait-640:pb-[12px] portrait-640:pl-[20px] portrait-640:touch-none portrait-640:select-none" {...(isPhone ? handlers : {})}>
                     <div>
-                        <h2 id="ind-title" className={styles.title}>Indicators</h2>
-                        <p className={styles.subtitle}>Lines drawn on the {tfLabel(chartTF)} chart</p>
+                        <h2 id="ind-title" className="text-sg-text text-[1.1rem] font-semibold">Indicators</h2>
+                        <p className="mt-[2px] text-sg-muted text-[0.84rem]">Lines drawn on the {tfLabel(chartTF)} chart</p>
                     </div>
-                    <button className={styles.iconBtn} onClick={onClose} aria-label="Close">
+                    <button className="flex items-center justify-center w-[32px] h-[32px] border-none rounded-ctrl bg-transparent text-sg-muted cursor-pointer hover:bg-sg-raised hover:text-sg-text" onClick={onClose} aria-label="Close">
                         <X size={18} />
                     </button>
                 </div>
 
-                <div className={styles.body}>
+                <div className="flex flex-col gap-[22px] pt-[18px] px-[20px] pb-[20px] overflow-y-auto portrait-640:gap-[18px] portrait-640:pt-[14px] portrait-640:pb-[16px] portrait-640:overscroll-contain">
                     {isPhone ? (
                         <>
                             {listSection}
@@ -387,19 +412,19 @@ export function SettingsModal({ open, onClose }: Props) {
                     )}
                 </div>
 
-                <div className={styles.footer}>
+                <div className="flex items-center gap-[8px] py-[14px] px-[20px] border-t border-t-sg-line-soft portrait-640:pt-[12px] portrait-640:px-[16px] portrait-640:pb-[calc(12px_+_env(safe-area-inset-bottom))] portrait-640:bg-sg-surface">
                     <button
-                        className={styles.textBtn}
+                        className="h-[34px] py-0 px-[8px] border-none rounded-ctrl bg-transparent text-sg-muted [font-family:inherit] text-[0.84rem] cursor-pointer hover:not-disabled:text-sg-loss disabled:opacity-[0.4] disabled:cursor-default"
                         onClick={() => { setDraft([]); setError(''); }}
                         disabled={draft.length === 0}
                     >
                         Remove all
                     </button>
-                    <span className={styles.hint}>
-                        <kbd>Ctrl</kbd> <kbd>Enter</kbd> to apply, <kbd>Esc</kbd> to close
+                    <span className="ml-auto text-sg-faint text-[0.76rem] whitespace-nowrap lte-640:hidden">
+                        <kbd className={kbd}>Ctrl</kbd> <kbd className={kbd}>Enter</kbd> to apply, <kbd className={kbd}>Esc</kbd> to close
                     </span>
-                    <button className={styles.secondaryBtn} onClick={onClose}>Cancel</button>
-                    <button className={styles.primaryBtn} onClick={handleApply} disabled={!dirty}>
+                    <button className="h-[38px] py-0 px-[14px] border border-solid border-sg-line rounded-ctrl bg-sg-raised text-sg-text [font-family:inherit] text-[0.88rem] font-medium cursor-pointer hover:bg-sg-hover lte-640:ml-auto portrait-640:min-h-[44px]" onClick={onClose}>Cancel</button>
+                    <button className={cn(primaryBtn, 'portrait-640:min-h-[44px]')} onClick={handleApply} disabled={!dirty}>
                         Apply
                     </button>
                 </div>

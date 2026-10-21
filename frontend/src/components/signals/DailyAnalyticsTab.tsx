@@ -8,6 +8,8 @@ import {
 } from '../../services/api';
 import { useSignalStore } from '../../store/useSignalStore';
 import { computeDailyWindowStats, createOrdersByDateMap } from './dailyAnalytics';
+import { cn } from '@/lib/utils';
+import { actionBadge, cell, ctrlBtn, dailyTitle, dayBody, dayCard, dayDate, dayHead, dayLeft, dayList, dayMeta, dayPnl, dayRight, emptyState, pnlTone, rowMono, sectionHeader, slKind, spin, summaryCard, summaryGrid, summaryLabel, summaryValue, table, tableWrap, tabStack, th, thNum } from './classes';
 
 const DEFAULT_DAYS = 30;
 const IST_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
@@ -158,42 +160,40 @@ export function DailyAnalyticsTab() {
 
     if (loading && todayPnLRows.length === 0) {
         return (
-            <div className="signals-empty">
+            <div className={emptyState}>
                 <p>Loading today&apos;s P&amp;L…</p>
             </div>
         );
     }
 
     if (todayPnLRows.length === 0) {
-        const latestPnlClass = latestCompletedDay
-            ? latestCompletedDay.pnl > 0 ? 'price-up' : latestCompletedDay.pnl < 0 ? 'price-down' : 'price-flat'
-            : 'price-flat';
+        const latestPnlClass = pnlTone(latestCompletedDay ? latestCompletedDay.pnl : 0);
 
         return (
-            <div className="daily-analytics">
-                <div className="daily-header">
-                    <div className="daily-title">
+            <div className={tabStack}>
+                <div className={sectionHeader}>
+                    <div className={dailyTitle}>
                         <CalendarDays size={16} />
                         Today's realized P&amp;L
                     </div>
                     <button
-                        className="daily-refresh-btn"
+                        className={ctrlBtn}
                         onClick={() => void load(true)}
                         disabled={loading}
                         title="Refresh daily analytics"
                     >
-                        <RefreshCw size={14} className={loading ? 'spin' : ''} />
+                        <RefreshCw size={14} className={loading ? spin : ''} />
                         Refresh
                     </button>
                 </div>
-                <div className="signals-empty daily-empty-state">
+                <div className={cn(emptyState, 'border border-dashed border-sg-line rounded-[12px]')}>
                     <CalendarDays size={48} strokeWidth={1.5} />
                     <p>No completed trades for today ({todayKey}).</p>
-                    <p className="daily-empty-hint">
+                    <p className="text-sg-faint">
                         Today signal events: {todaySignalCount}. Realized P&amp;L counts only entries that have exited.
                     </p>
                     {latestCompletedDay && (
-                        <div className="daily-empty-latest">
+                        <div className="flex gap-[14px] flex-wrap justify-center mt-[4px] py-[8px] px-[14px] bg-sg-raised rounded-ctrl text-[0.84rem] tabular-nums">
                             <span>Latest completed day: {formatDayDate(latestCompletedDay.date)}</span>
                             <span className={latestPnlClass}>{formatINR(latestCompletedDay.pnl)}</span>
                             <span>{latestCompletedDay.trades} trades</span>
@@ -204,109 +204,107 @@ export function DailyAnalyticsTab() {
         );
     }
 
-    const netClass = windowStats.pnl > 0 ? 'price-up' : windowStats.pnl < 0 ? 'price-down' : 'price-flat';
+    const netClass = pnlTone(windowStats.pnl);
 
     return (
-        <div className="daily-analytics">
-            <div className="daily-header">
-                <div className="daily-title">
+        <div className={tabStack}>
+            <div className={sectionHeader}>
+                <div className={dailyTitle}>
                     <CalendarDays size={16} />
                     Today's realized P&amp;L
                 </div>
                 <button
-                    className="daily-refresh-btn"
+                    className={ctrlBtn}
                     onClick={() => void load(true)}
                     disabled={loading}
                     title="Refresh daily analytics"
                 >
-                    <RefreshCw size={14} className={loading ? 'spin' : ''} />
+                    <RefreshCw size={14} className={loading ? spin : ''} />
                     Refresh
                 </button>
             </div>
 
-            <div className="daily-summary-grid">
-                <div className="daily-summary-card">
-                    <div className="daily-summary-label">Date (IST)</div>
-                    <div className="daily-summary-value">{formatDayDate(todayKey)}</div>
+            <div className={summaryGrid}>
+                <div className={summaryCard}>
+                    <div className={summaryLabel}>Date (IST)</div>
+                    <div className={summaryValue()}>{formatDayDate(todayKey)}</div>
                 </div>
-                <div className="daily-summary-card">
-                    <div className="daily-summary-label">Realized P&amp;L</div>
-                    <div className={`daily-summary-value ${netClass}`}>{formatINR(windowStats.pnl)}</div>
+                <div className={summaryCard}>
+                    <div className={summaryLabel}>Realized P&amp;L</div>
+                    <div className={summaryValue(netClass)}>{formatINR(windowStats.pnl)}</div>
                 </div>
-                <div className="daily-summary-card">
-                    <div className="daily-summary-label">Completed trades</div>
-                    <div className="daily-summary-value">{windowStats.trades}</div>
+                <div className={summaryCard}>
+                    <div className={summaryLabel}>Completed trades</div>
+                    <div className={summaryValue()}>{windowStats.trades}</div>
                 </div>
-                <div className="daily-summary-card">
-                    <div className="daily-summary-label">Win rate</div>
-                    <div className="daily-summary-value">{windowStats.winRate.toFixed(1)}%</div>
+                <div className={summaryCard}>
+                    <div className={summaryLabel}>Win rate</div>
+                    <div className={summaryValue()}>{windowStats.winRate.toFixed(1)}%</div>
                 </div>
             </div>
 
-            <div className="daily-day-list">
+            <div className={dayList}>
                 {todayPnLRows.map((day) => {
                     const orders = ordersByDate.get(day.date)?.orders ?? [];
                     const expanded = !!expandedDays[day.date];
-                    const pnlClass = day.pnl > 0 ? 'price-up' : day.pnl < 0 ? 'price-down' : 'price-flat';
+                    const pnlClass = pnlTone(day.pnl);
 
                     return (
-                        <section key={day.date} className="daily-day-card">
-                            <button className="daily-day-head" aria-expanded={expanded} onClick={() => toggleDay(day.date)}>
-                                <span className="daily-day-left">
+                        <section key={day.date} className={dayCard}>
+                            <button className={dayHead} aria-expanded={expanded} onClick={() => toggleDay(day.date)}>
+                                <span className={dayLeft}>
                                     {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                    <span className="daily-day-date">{formatDayDate(day.date)}</span>
+                                    <span className={dayDate}>{formatDayDate(day.date)}</span>
                                 </span>
-                                <span className="daily-day-right">
-                                    <span className={`daily-day-pnl ${pnlClass}`}>{formatINR(day.pnl)}</span>
-                                    <span className="daily-day-meta">{day.trades} trades</span>
-                                    <span className="daily-day-meta">W {day.wins} / L {day.losses}</span>
-                                    <span className="daily-day-meta">{day.win_rate.toFixed(1)}%</span>
+                                <span className={dayRight}>
+                                    <span className={dayPnl(pnlClass)}>{formatINR(day.pnl)}</span>
+                                    <span className={dayMeta}>{day.trades} trades</span>
+                                    <span className={dayMeta}>W {day.wins} / L {day.losses}</span>
+                                    <span className={dayMeta}>{day.win_rate.toFixed(1)}%</span>
                                 </span>
                             </button>
 
                             {expanded && (
-                                <div className="daily-day-body">
+                                <div className={dayBody}>
                                     {orders.length === 0 ? (
-                                        <div className="daily-empty-orders">No completed trade pairs for this day.</div>
+                                        <div className="p-[14px] text-sg-muted text-[0.85rem]">No completed trade pairs for this day.</div>
                                     ) : (
-                                        <div className="signals-table-wrap">
-                                            <table className="signals-table compact-table daily-orders-table">
+                                        <div className={tableWrap({ dayBody: true })}>
+                                            <table className={table}>
                                                 <thead>
                                                     <tr>
-                                                        <th style={{ width: '140px' }}>Strategy</th>
-                                                        <th style={{ width: '70px' }}>Side</th>
-                                                        <th style={{ width: '130px' }}>Instrument</th>
-                                                        <th className="num" style={{ width: '60px' }}>Qty</th>
-                                                        <th className="num" style={{ width: '100px' }}>Entry</th>
-                                                        <th style={{ width: '120px' }}>Entry time</th>
-                                                        <th className="num" style={{ width: '100px' }}>Exit</th>
-                                                        <th style={{ width: '120px' }}>Exit time</th>
-                                                        <th className="num" style={{ width: '110px' }}>Realized P&amp;L</th>
+                                                        <th className={th} style={{ width: '140px' }}>Strategy</th>
+                                                        <th className={th} style={{ width: '70px' }}>Side</th>
+                                                        <th className={th} style={{ width: '130px' }}>Instrument</th>
+                                                        <th className={thNum} style={{ width: '60px' }}>Qty</th>
+                                                        <th className={thNum} style={{ width: '100px' }}>Entry</th>
+                                                        <th className={th} style={{ width: '120px' }}>Entry time</th>
+                                                        <th className={thNum} style={{ width: '100px' }}>Exit</th>
+                                                        <th className={th} style={{ width: '120px' }}>Exit time</th>
+                                                        <th className={thNum} style={{ width: '110px' }}>Realized P&amp;L</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody>
                                                     {orders.map((order, idx) => {
-                                                        const orderClass =
-                                                            order.realized_pnl > 0 ? 'price-up' :
-                                                                order.realized_pnl < 0 ? 'price-down' : 'price-flat';
+                                                        const orderClass = pnlTone(order.realized_pnl);
                                                         return (
-                                                            <tr key={`${day.date}-${order.strategy}-${order.instrument}-${idx}`} className="signal-row">
-                                                                <td className="strategy-cell" title={order.exit_reason || undefined}>
+                                                            <tr key={`${day.date}-${order.strategy}-${order.instrument}-${idx}`} >
+                                                                <td className={cell(true, 'strategy')} title={order.exit_reason || undefined}>
                                                                     {order.strategy}
-                                                                    {order.real && <span className="sl-kind hard" style={{ marginLeft: 6 }}>real</span>}
+                                                                    {order.real && <span className={slKind('hard')} style={{ marginLeft: 6 }}>real</span>}
                                                                 </td>
-                                                                <td>
-                                                                    <span className={order.side === 'PUT' ? 'action-badge buy-put' : 'action-badge buy-call'}>
+                                                                <td className={cell(true)}>
+                                                                    <span className={actionBadge(order.side === 'PUT' ? 'put' : 'buy')}>
                                                                         {order.side || '—'}
                                                                     </span>
                                                                 </td>
-                                                                <td title={order.instrument}><span className={order.fno_symbol ? 'mono' : undefined}>{order.fno_symbol || order.instrument}</span></td>
-                                                                <td className="price-cell">{order.qty}</td>
-                                                                <td className="price-cell">{formatINR(order.entry_price)}</td>
-                                                                <td className="signal-time">{formatTime(order.entry_time)}</td>
-                                                                <td className="price-cell">{formatINR(order.exit_price)}</td>
-                                                                <td className="signal-time">{formatTime(order.exit_time)}</td>
-                                                                <td className={`price-cell ${orderClass}`}>{formatINR(order.realized_pnl)}</td>
+                                                                <td className={cell(true)} title={order.instrument}><span className={order.fno_symbol ? rowMono : undefined}>{order.fno_symbol || order.instrument}</span></td>
+                                                                <td className={cell(true, 'price')}>{order.qty}</td>
+                                                                <td className={cell(true, 'price')}>{formatINR(order.entry_price)}</td>
+                                                                <td className={cell(true, 'time')}>{formatTime(order.entry_time)}</td>
+                                                                <td className={cell(true, 'price')}>{formatINR(order.exit_price)}</td>
+                                                                <td className={cell(true, 'time')}>{formatTime(order.exit_time)}</td>
+                                                                <td className={cell(true, 'price', orderClass)}>{formatINR(order.realized_pnl)}</td>
                                                             </tr>
                                                         );
                                                     })}

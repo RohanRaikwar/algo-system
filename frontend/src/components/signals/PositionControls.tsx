@@ -3,6 +3,15 @@ import { postPositionCommand } from '../../services/api';
 import type { OpenOrder } from './signalAnalytics';
 import { canEdit, exitCommand, levelCommand, levelOnRightSide, type LevelKind } from './positionCommands';
 
+const posBtnBase = 'py-[2px] px-[8px] border border-solid rounded-ctrl text-[0.72rem] font-semibold cursor-pointer focus-visible:outline-none';
+const posBtn = `${posBtnBase} border-sg-line bg-sg-raised text-sg-text hover:bg-sg-hover`;
+const posBtnDanger = `${posBtnBase} border-sg-loss-soft bg-sg-raised text-sg-loss hover:bg-sg-hover`;
+/* .pos-btn.ghost kept its transparent background on hover. */
+const posBtnGhost = `${posBtnBase} border-sg-line bg-transparent text-sg-muted`;
+const posRow = 'flex flex-wrap items-center gap-[4px]';
+const posLabel = 'inline-flex items-center gap-[3px] text-[0.7rem] text-sg-muted';
+const posInput = 'w-[76px] py-[2px] px-[4px] border border-solid border-sg-line rounded-ctrl bg-sg-surface text-sg-text leading-[inherit] text-[0.74rem]';
+
 const fmt = (v: number | null | undefined) => (v && v > 0 ? v.toFixed(2) : '');
 const num = (s: string) => (s.trim() === '' ? null : Number(s));
 
@@ -18,7 +27,7 @@ export function PositionControls({ order, currentPrice }: { order: OpenOrder; cu
     const [confirmExit, setConfirmExit] = useState(false);
     const [note, setNote] = useState('');
 
-    if (order.real) return <span className="pos-readonly" title="Real orders are not edited from the dashboard">real · read-only</span>;
+    if (order.real) return <span className="text-[0.68rem] text-sg-faint" title="Real orders are not edited from the dashboard">real · read-only</span>;
     if (!canEdit(order)) return null;
 
     const open = (kind: LevelKind) => {
@@ -59,28 +68,28 @@ export function PositionControls({ order, currentPrice }: { order: OpenOrder; cu
     if (editing) {
         const label = editing === 'stop' ? 'SL' : 'TGT';
         return (
-            <div className="pos-edit">
-                <label>{label} ₹<input aria-label={`${label} premium`} type="number" step="0.05" value={premium} onChange={e => setPremium(e.target.value)} /></label>
-                <label>idx<input aria-label={`${label} index`} type="number" step="0.05" value={index} onChange={e => setIndex(e.target.value)} /></label>
-                <button type="button" className="pos-btn" onClick={save}>Save</button>
-                <button type="button" className="pos-btn ghost" onClick={() => setEditing(null)}>Cancel</button>
+            <div className={posRow}>
+                <label className={posLabel}>{label} ₹<input className={posInput} aria-label={`${label} premium`} type="number" step="0.05" value={premium} onChange={e => setPremium(e.target.value)} /></label>
+                <label className={posLabel}>idx<input className={posInput} aria-label={`${label} index`} type="number" step="0.05" value={index} onChange={e => setIndex(e.target.value)} /></label>
+                <button type="button" className={posBtn} onClick={save}>Save</button>
+                <button type="button" className={posBtnGhost} onClick={() => setEditing(null)}>Cancel</button>
             </div>
         );
     }
 
     return (
-        <div className="pos-controls">
-            <button type="button" className="pos-btn" onClick={() => open('stop')}>SL</button>
-            <button type="button" className="pos-btn" onClick={() => open('target')}>TGT</button>
+        <div className={posRow}>
+            <button type="button" className={posBtn} onClick={() => open('stop')}>SL</button>
+            <button type="button" className={posBtn} onClick={() => open('target')}>TGT</button>
             {confirmExit ? (
                 <>
-                    <button type="button" className="pos-btn danger" onClick={() => { setConfirmExit(false); void send(exitCommand(order)); }}>Confirm exit</button>
-                    <button type="button" className="pos-btn ghost" onClick={() => setConfirmExit(false)}>No</button>
+                    <button type="button" className={posBtnDanger} onClick={() => { setConfirmExit(false); void send(exitCommand(order)); }}>Confirm exit</button>
+                    <button type="button" className={posBtnGhost} onClick={() => setConfirmExit(false)}>No</button>
                 </>
             ) : (
-                <button type="button" className="pos-btn danger" onClick={() => setConfirmExit(true)}>Exit</button>
+                <button type="button" className={posBtnDanger} onClick={() => setConfirmExit(true)}>Exit</button>
             )}
-            {note && <span className="pos-note">{note}</span>}
+            {note && <span className="text-[0.68rem] text-sg-muted">{note}</span>}
         </div>
     );
 }

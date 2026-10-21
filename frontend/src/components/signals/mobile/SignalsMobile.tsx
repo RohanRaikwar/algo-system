@@ -14,8 +14,9 @@ import { PositionCard } from './PositionCard';
 import { TradeCard } from './TradeCard';
 import { SignalDetailSheet } from './SignalDetailSheet';
 import { FilterSheet } from './FilterSheet';
-import '../signals.css';
-import styles from './signalsMobile.module.css';
+import { cn } from '@/lib/utils';
+import { cardMid, cardShell, cardTap, instrument, stack, sub } from './classes';
+import { signalsPageBase } from '../classes';
 
 type Tab = 'log' | 'positions' | 'trades' | 'more';
 type MoreView = 'today' | 'pnl';
@@ -31,6 +32,14 @@ const MORE: { id: MoreView; label: string; hint: string; Icon: LucideIcon }[] = 
     { id: 'today', label: 'Today', hint: 'Day analytics and trades', Icon: CalendarDays },
     { id: 'pnl', label: 'P&L', hint: 'Realized P&L by strategy', Icon: TrendingUp },
 ];
+
+/* --bar-h / --seg-h feed the sticky offsets: app bar 48px (+ safe area) →
+   segmented row 52px → day headers. */
+const page = `${signalsPageBase} gap-0 pb-[12px] [--bar-h:calc(48px_+_env(safe-area-inset-top))] [--seg-h:52px]`;
+const todayNum = 'font-semibold tabular-nums';
+const dayHead = 'sticky top-[calc(var(--bar-h)_+_var(--seg-h))] z-40 flex items-center gap-[6px] w-[calc(100%_+_24px)] h-[40px] my-0 mx-[-12px] py-0 pr-[16px] pl-[12px] border-0 bg-sg-bg text-sg-text text-[13px] font-semibold text-left cursor-pointer';
+const dayChev = 'text-sg-muted shrink-0';
+const dayMeta = 'text-sg-muted text-[12px] font-medium tabular-nums';
 
 const ACTION_LABEL: Record<string, string> = { BUY: 'Entries', EXIT: 'Exits', WATCH: 'Exit watch' };
 
@@ -80,14 +89,14 @@ export function SignalsMobile({ data }: { data: SignalsData }) {
     if (view) {
         const item = MORE.find(m => m.id === view)!;
         return (
-            <div className={`signals-page ${styles.page}`}>
-                <header className={styles.subBar}>
-                    <button type="button" className={styles.backBtn} onClick={closeMore} aria-label="Back to More">
+            <div className={page}>
+                <header className="sticky top-0 z-[60] flex items-center gap-[4px] h-[calc(48px_+_env(safe-area-inset-top))] mt-[-12px] mx-[-12px] mb-[12px] pt-[env(safe-area-inset-top)] pr-[12px] pb-0 pl-[4px] bg-sg-bg border-b border-b-sg-line-soft">
+                    <button type="button" className="flex items-center justify-center w-[44px] h-[44px] border-0 rounded-pill bg-transparent text-sg-accent cursor-pointer active:bg-sg-hover" onClick={closeMore} aria-label="Back to More">
                         <ChevronLeft size={22} />
                     </button>
-                    <h1 className={styles.subTitle}>{item.label}</h1>
+                    <h1 className="m-0 text-[17px] font-semibold">{item.label}</h1>
                 </header>
-                <div className={styles.subBody}>
+                <div className="min-w-0">
                     {view === 'today' && <DailyAnalyticsTab />}
                     {view === 'pnl' && <PnLSummaryTab />}
                 </div>
@@ -99,40 +108,48 @@ export function SignalsMobile({ data }: { data: SignalsData }) {
     const showFilter = tab !== 'more';
 
     return (
-        <div className={`signals-page ${styles.page}`}>
+        <div className={page}>
             <PageAppBar title="Signals" />
 
-            <div className={styles.today} aria-label="Today">
-                <span><b>{data.today.entries}</b> entries</span>
-                <span><b>{data.today.exits}</b> exits</span>
-                <button type="button" className={styles.todayOpen} onClick={() => setTab('positions')}>
-                    <b className={data.openOrders.length ? styles.openLive : undefined}>{data.openOrders.length}</b> open
+            <div className="flex items-center gap-[14px] min-h-[40px] pt-0 px-[4px] pb-[8px] text-sg-muted text-[13px] whitespace-nowrap overflow-x-auto [scrollbar-width:none]" aria-label="Today">
+                <span><b className={cn(todayNum, 'text-sg-text')}>{data.today.entries}</b> entries</span>
+                <span><b className={cn(todayNum, 'text-sg-text')}>{data.today.exits}</b> exits</span>
+                <button type="button" className="p-0 border-0 [background:none] text-inherit leading-[inherit] cursor-pointer" onClick={() => setTab('positions')}>
+                    <b className={cn(todayNum, data.openOrders.length ? 'text-sg-accent' : 'text-sg-text')}>{data.openOrders.length}</b> open
                 </button>
-                <span className={styles.todayPnl}>
-                    P&L <b className={todayPnl === null ? undefined : pnlClass(todayPnl)}>{todayPnl === null ? '—' : formatSignedPaise(todayPnl)}</b>
+                <span className="ml-auto">
+                    P&L <b className={cn(todayNum, todayPnl === null ? 'text-sg-text' : pnlClass(todayPnl))}>{todayPnl === null ? '—' : formatSignedPaise(todayPnl)}</b>
                 </span>
             </div>
 
-            <div className={styles.segRow}>
-                <div className={styles.seg} role="tablist" aria-label="Signals views">
+            <div className="sticky top-[var(--bar-h)] z-50 flex items-center gap-[8px] h-[var(--seg-h)] my-0 mx-[-12px] py-0 px-[12px] bg-sg-bg">
+                <div className="flex-1 flex p-[3px] gap-[2px] rounded-[10px] bg-sg-surface border border-solid border-sg-line" role="tablist" aria-label="Signals views">
                     {TABS.map(t => (
                         <button
                             key={t.id}
                             type="button"
                             role="tab"
                             aria-selected={tab === t.id}
-                            className={`${styles.segBtn}${tab === t.id ? ` ${styles.segActive}` : ''}`}
+                            className={cn(
+                                'flex-1 inline-flex items-center justify-center gap-[5px] h-[34px] min-w-0 py-0 px-[4px] border-0 rounded-[7px] text-[13px] cursor-pointer [-webkit-tap-highlight-color:transparent] select-none',
+                                tab === t.id
+                                    ? 'bg-sg-hover text-sg-text font-semibold shadow-[inset_0_0_0_1px_var(--sg-line)]'
+                                    : 'bg-transparent text-sg-muted font-medium active:bg-sg-hover',
+                            )}
                             onClick={() => setTab(t.id)}
                         >
                             {t.label}
-                            {t.id === 'positions' && data.openOrders.length > 0 && <span className={styles.segCount}>{data.openOrders.length}</span>}
+                            {t.id === 'positions' && data.openOrders.length > 0 && <span className="min-w-[17px] py-0 px-[5px] rounded-pill bg-sg-accent text-white text-[10px] leading-[17px]">{data.openOrders.length}</span>}
                         </button>
                     ))}
                 </div>
                 {showFilter && (
                     <button
                         type="button"
-                        className={`${styles.filterBtn}${chips.length ? ` ${styles.filterOn}` : ''}`}
+                        className={cn(
+                            'relative shrink-0 flex items-center justify-center w-[42px] h-[42px] border border-solid rounded-[10px] bg-sg-surface cursor-pointer active:bg-sg-hover',
+                            chips.length ? 'text-sg-accent border-sg-accent' : 'text-sg-text-2 border-sg-line',
+                        )}
                         onClick={() => setFiltersOpen(true)}
                         aria-label={`Filters${chips.length ? `, ${chips.length} active` : ''}`}
                     >
@@ -142,9 +159,9 @@ export function SignalsMobile({ data }: { data: SignalsData }) {
             </div>
 
             {showFilter && chips.length > 0 && (
-                <div className={styles.chips}>
+                <div className="flex flex-wrap gap-[6px] pt-[2px] px-0 pb-[10px]">
                     {chips.map(c => (
-                        <button key={c.key} type="button" className={styles.chip} onClick={c.clear} aria-label={`Remove filter ${c.label}`}>
+                        <button key={c.key} type="button" className="inline-flex items-center gap-[4px] h-[30px] py-0 pr-[10px] pl-[12px] border-0 rounded-pill bg-sg-accent-soft text-sg-accent text-[12px] font-semibold cursor-pointer" onClick={c.clear} aria-label={`Remove filter ${c.label}`}>
                             {c.label} <X size={13} />
                         </button>
                     ))}
@@ -156,7 +173,7 @@ export function SignalsMobile({ data }: { data: SignalsData }) {
             {tab === 'positions' && (
                 data.openOrders.length === 0
                     ? <Empty text="No open positions. New entries show here with live P&L until they exit." />
-                    : <div className={styles.list}>
+                    : <div className={stack}>
                         {data.openOrders.map((o, i) => <PositionCard key={`${o.strategy}-${o.instrument}-${i}`} order={o} />)}
                     </div>
             )}
@@ -164,18 +181,18 @@ export function SignalsMobile({ data }: { data: SignalsData }) {
             {tab === 'trades' && <TradesView trades={trades} />}
 
             {tab === 'more' && (
-                <nav className={styles.moreList} aria-label="More">
+                <nav className={stack} aria-label="More">
                     {MORE.map(m => (
-                        <button key={m.id} type="button" className={styles.moreItem} onClick={() => openMore(m.id)}>
-                            <m.Icon size={20} className={styles.moreIcon} />
-                            <span className={styles.cardMid}>
-                                <span className={styles.instrument}>{m.label}</span>
-                                <span className={styles.sub}>{m.hint}</span>
+                        <button key={m.id} type="button" className={cn(cardShell, cardTap, 'border-sg-line-soft')} onClick={() => openMore(m.id)}>
+                            <m.Icon size={20} className="shrink-0 text-sg-accent" />
+                            <span className={cardMid}>
+                                <span className={instrument}>{m.label}</span>
+                                <span className={sub}>{m.hint}</span>
                             </span>
-                            <ChevronRight size={18} className={styles.chev} />
+                            <ChevronRight size={18} className="shrink-0 text-sg-faint" />
                         </button>
                     ))}
-                    <p className={styles.moreNote}>Account, session health and trading settings are on the Health tab.</p>
+                    <p className="py-[8px] px-[4px] text-sg-faint text-[12px]">Account, session health and trading settings are on the Health tab.</p>
                 </nav>
             )}
 
@@ -187,7 +204,7 @@ export function SignalsMobile({ data }: { data: SignalsData }) {
 
 function Empty({ text }: { text: string }) {
     return (
-        <div className={styles.empty}>
+        <div className="flex flex-col items-center gap-[10px] py-[48px] px-[24px] text-sg-muted text-center text-[13px]">
             <Zap size={36} strokeWidth={1.5} />
             <p>{text}</p>
         </div>
@@ -200,23 +217,23 @@ function LogView({ data, onOpen }: { data: SignalsData; onOpen: (s: SignalRecord
         return <Empty text={data.filtersActive ? 'No signals match these filters.' : 'No signals yet. They appear here as soon as a strategy triggers.'} />;
     }
     return (
-        <div className={styles.days}>
+        <div className={stack}>
             {data.logGroups.map(group => {
                 const expanded = !!data.expandedLogDates[group.date];
                 return (
-                    <section key={group.date} className={styles.day}>
+                    <section key={group.date}>
                         <button
                             type="button"
-                            className={styles.dayHead}
+                            className={dayHead}
                             aria-expanded={expanded}
                             onClick={() => data.setExpandedLogDates(prev => ({ ...prev, [group.date]: !prev[group.date] }))}
                         >
-                            {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                            <span className={styles.dayDate}>{formatDateKey(group.date)}</span>
-                            <span className={styles.dayMeta}>{group.buys} in · {group.exits} out</span>
+                            {expanded ? <ChevronDown size={16} className={dayChev} /> : <ChevronRight size={16} className={dayChev} />}
+                            <span className="flex-1 min-w-0">{formatDateKey(group.date)}</span>
+                            <span className={dayMeta}>{group.buys} in · {group.exits} out</span>
                         </button>
                         {expanded && (
-                            <div className={styles.list}>
+                            <div className={stack}>
                                 {group.signals.map(sig => {
                                     const k = signalKey(sig);
                                     return (
@@ -242,25 +259,25 @@ function TradesView({ trades }: { trades: ReturnType<typeof useDailyOrders> }) {
     if (trades.loading) return <Empty text="Loading trades…" />;
     if (trades.groups.length === 0) return <Empty text={`No completed trades${trades.activeStrategy ? ` for ${trades.activeStrategy}` : ''}.`} />;
     return (
-        <div className={styles.days}>
+        <div className={stack}>
             {trades.groups.map(group => {
                 const expanded = !!trades.expandedDates[group.date];
                 return (
-                    <section key={group.date} className={styles.day}>
+                    <section key={group.date}>
                         <button
                             type="button"
-                            className={styles.dayHead}
+                            className={dayHead}
                             aria-expanded={expanded}
                             onClick={() => trades.setExpandedDates(prev => ({ ...prev, [group.date]: !prev[group.date] }))}
                         >
-                            {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                            <span className={styles.dayDate}>{formatDateKey(group.date)}</span>
-                            <span className={styles.dayMeta}>
+                            {expanded ? <ChevronDown size={16} className={dayChev} /> : <ChevronRight size={16} className={dayChev} />}
+                            <span className="flex-1 min-w-0">{formatDateKey(group.date)}</span>
+                            <span className={dayMeta}>
                                 {group.orders.length} trades · <b className={pnlClass(group.netPnl)}>{formatSignedPaise(group.netPnl)}</b>
                             </span>
                         </button>
                         {expanded && (
-                            <div className={styles.list}>
+                            <div className={stack}>
                                 {group.orders.map((o, i) => <TradeCard key={`${o.strategy}-${o.exit_time}-${i}`} order={o} />)}
                             </div>
                         )}

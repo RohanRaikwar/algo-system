@@ -1,5 +1,4 @@
 import { useMemo, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import styles from './Health.module.css';
 
 interface Point {
     at: number;
@@ -58,7 +57,7 @@ export function Sparkline({ points, label, format, height = 40 }: SparklineProps
     }, [points, height]);
 
     if (!geo) {
-        return <div className={styles.sparkEmpty} style={{ height }}>Collecting data…</div>;
+        return <div className="flex items-center justify-center border border-dashed border-sg-line rounded-[6px] text-sg-faint text-[0.78rem]" style={{ height }}>Collecting data…</div>;
     }
 
     const nearest = (clientX: number, rect: DOMRect) => {
@@ -87,10 +86,11 @@ export function Sparkline({ points, label, format, height = 40 }: SparklineProps
     const leftPct = hp ? (hx / W) * 100 : 0;
 
     return (
-        <div className={styles.spark}>
+        <div className="relative mt-[4px] mb-[2px] mx-0">
             <svg
                 viewBox={`0 0 ${W} ${height}`}
                 preserveAspectRatio="none"
+                className="block overflow-visible rounded-[4px] cursor-crosshair focus-visible:outline-none focus-visible:shadow-[0_0_0_2px_var(--sg-accent)]"
                 width="100%"
                 height={height}
                 role="img"
@@ -101,24 +101,24 @@ export function Sparkline({ points, label, format, height = 40 }: SparklineProps
                 onKeyDown={onKey}
                 onBlur={() => setHover(null)}
             >
-                <line x1={0} x2={W} y1={geo.base} y2={geo.base} className={styles.sparkBase} vectorEffect="non-scaling-stroke" />
-                <path d={geo.d} className={styles.sparkLine} vectorEffect="non-scaling-stroke" />
+                <line x1={0} x2={W} y1={geo.base} y2={geo.base} className="stroke-sg-line stroke-1" vectorEffect="non-scaling-stroke" />
+                <path d={geo.d} className="fill-none stroke-sg-accent stroke-2 [stroke-linejoin:round] [stroke-linecap:round]" vectorEffect="non-scaling-stroke" />
                 {hp && (
-                    <line x1={hx} x2={hx} y1={0} y2={height} className={styles.sparkCross} vectorEffect="non-scaling-stroke" />
+                    <line x1={hx} x2={hx} y1={0} y2={height} className="stroke-sg-muted stroke-1 [stroke-dasharray:2_2]" vectorEffect="non-scaling-stroke" />
                 )}
             </svg>
             {hp && hp.value !== null && (
-                <span className={styles.sparkDot} style={{ left: `${leftPct}%`, top: geo.y(hp.value) }} />
+                <span className="absolute w-[8px] h-[8px] mt-[-4px] ml-[-4px] rounded-[50%] bg-sg-accent shadow-[0_0_0_2px_var(--sg-surface)] pointer-events-none" style={{ left: `${leftPct}%`, top: geo.y(hp.value) }} />
             )}
             {hp && (
                 <div
-                    className={styles.sparkTip}
+                    className="absolute bottom-[calc(100%_+_4px)] [transform:translateX(-50%)] py-[3px] px-[8px] border border-solid border-sg-line rounded-[6px] bg-sg-raised text-sg-muted text-[0.74rem] whitespace-nowrap tabular-nums pointer-events-none z-[2] [&_b]:text-sg-text [&_b]:font-semibold [&_b]:mr-[4px]"
                     style={{ left: `${Math.min(80, Math.max(20, leftPct))}%` }}
                 >
                     <b>{hp.value === null ? 'No data' : format(hp.value)}</b> {fmtClock(hp.at)}
                 </div>
             )}
-            <div className={styles.sparkAxis}>
+            <div className="flex justify-between mt-[3px] text-sg-faint text-[0.72rem] tabular-nums">
                 <span>{geo.spanLabel}</span>
                 <span>peak {format(geo.max)}</span>
                 <span>now</span>
