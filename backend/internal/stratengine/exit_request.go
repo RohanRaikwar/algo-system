@@ -22,8 +22,8 @@ type exitRequester interface {
 }
 
 func (svc *Service) exitRequesterFor(name string) exitRequester {
-	if sr := svc.srByName(name); sr != nil {
-		return sr
+	if c := svc.positionCommanderFor(name); c != nil {
+		return c
 	}
 	return nil
 }

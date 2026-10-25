@@ -85,6 +85,31 @@ const (
 	// stratengine).
 	PositionCommandChannel = "cmd:position"
 
+	// TGSignalChannel carries option calls parsed from Telegram group
+	// messages (tgsignal → stratengine), payload TGSignal.
+	TGSignalChannel = "cmd:tgsignal"
+	// TGFollowUpChannel carries the caller's replies to a call ("exit",
+	// "SL hit", "SL cost") read by the LLM (tgsignal → stratengine),
+	// payload TGFollowUp.
+	TGFollowUpChannel = "cmd:tgfollowup"
+	// TGOutcomeChannel reports what stratengine did with each call
+	// (armed, entered, exited, refused) back to tgsignal's review log,
+	// payload TGOutcome.
+	TGOutcomeChannel = "cmd:tgsignal:outcome"
+	// TGStatusKey holds tgsignal's health (model.TGStatus), refreshed every
+	// 15s with a 60s expiry: a missing key means tgsignal is not running.
+	// TGMessagesKey is a list of the latest messages read (model.TGMessageView,
+	// newest first); TGOutcomesKey a hash of call key → outcome lines;
+	// TGTimelineKey a hash of call key → JSON []model.TGStage. The gateway
+	// serves them at /api/telegram. Keys only.
+	TGStatusKey   = "tgsignal:status"
+	TGMessagesKey = "tgsignal:messages"
+	TGOutcomesKey = "tgsignal:outcomes"
+	TGTimelineKey = "tgsignal:timeline"
+	// TGPositionKey holds TELEGRAM_SIGNAL's open trade (strategy.TGPosition)
+	// so a stratengine restart keeps the call's stop. Key only.
+	TGPositionKey = "tgsignal:position"
+
 	// TradingConfigChannel announces a dashboard config change stored in
 	// TradingConfigKey (gateway → stratengine).
 	TradingConfigChannel = "cmd:config_update"

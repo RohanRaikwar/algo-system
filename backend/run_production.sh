@@ -36,5 +36,10 @@ echo "╚═══════════════════════�
 ./tmp/analyst     2>&1 | sed 's/^/[analyst]     /' &
 ./tmp/exitwatch   2>&1 | sed 's/^/[exitwatch]   /' &
 ./tmp/archiver    2>&1 | sed 's/^/[archiver]    /' &
+# Telegram group calls (TELEGRAM_SIGNAL): only once TG_API_ID is set and
+# the session exists (go run ./cmd/tools/tglogin).
+if [ -n "${TG_API_ID:-}" ]; then
+  ./tmp/tgsignal  2>&1 | sed 's/^/[tgsignal]    /' &
+fi
 
 wait

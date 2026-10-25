@@ -63,6 +63,9 @@ func (svc *Service) entryCancellerFor(name string) entryCanceller {
 	if sr := svc.srByName(name); sr != nil {
 		return sr
 	}
+	if svc.tgStrategy != nil && name == svc.tgStrategy.Name() {
+		return svc.tgStrategy
+	}
 	return nil
 }
 

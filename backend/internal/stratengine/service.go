@@ -44,14 +44,16 @@ type Service struct {
 
 	tfEngine   *strategy.TFEngine
 	srStrategy *strategy.Nifty50SR
-	srExtras   []*srExtra // SR on underlyings beyond NIFTY (INDEX_TOKEN list)
+	srExtras   []*srExtra               // SR on underlyings beyond NIFTY (INDEX_TOKEN list)
+	tgStrategy *strategy.TelegramSignal // nil unless STRAT_TG_ENABLED
+	tgRecv     tgReceipts               // call key → tgsignal receipt time (latency timeline)
 
 	redisReader   *redisstore.Reader
 	redisWriter   *redisstore.Writer
 	journal       *strategy.SignalJournal
 	pnlLedger     *pnlLedger      // closed-trade ledger (pnl_ledger.go); nil when off
 	pnlStore      *pnlstore.Store // its SQLite store
-	sweeps        *sweepWriter // SR liquidity sweeps into journal (sweeps.go)
+	sweeps        *sweepWriter    // SR liquidity sweeps into journal (sweeps.go)
 	notifier      notification.Notifier
 	orderExecutor *orderexec.OrderExecutor
 	strikePicker  atomic.Pointer[instruments.StrikePicker] // swapped by the ATM goroutine
@@ -70,8 +72,8 @@ type Service struct {
 	deltaState                 // entry quality guard (delta_guard.go)
 	futures     futureResolver // test hook; nil = instrument master
 
-	srPublishHook func(payload string) // test hook for publishSRState
-	srxPublishHook func(payload string) // test hook for publishSRXState
+	srPublishHook         func(payload string) // test hook for publishSRState
+	srxPublishHook        func(payload string) // test hook for publishSRXState
 	strikeSelXPublishHook func(payload string) // test hook for publishExtraStrikeSels
 
 	refused            refusedLog           // today's blocked entries (refused.go)
@@ -135,9 +137,9 @@ func New(cfg Config) (*Service, error) {
 	}
 
 	svc := &Service{
-		cfg:        cfg,
-		tfCandleCh: make(chan model.TFCandle, 5000),
-		tickCh:     make(chan model.Tick, 10000),
+		cfg:            cfg,
+		tfCandleCh:     make(chan model.TFCandle, 5000),
+		tickCh:         make(chan model.Tick, 10000),
 		liveOrdersView: liveOrdersView{liveOrders: make(map[string]*liveOrderRuntime)},
 	}
 
@@ -252,6 +254,20 @@ func (svc *Service) buildStrategies(cfg Config) {
 			log.Printf("[stratengine] 🟢 registered %s on %s (options %s, %s)", ex.strat.Name(), ex.prof.IndexKey(), ex.prof.FNOExchange, ex.prof)
 		}
 	}
+	if cfg.TGEnabled {
+		svc.tgStrategy = strategy.NewTelegramSignal(cfg.Qty, strategy.TelegramSignalConfig{
+			TargetPct:      cfg.TGTargetPct,
+			MaxChasePct:    cfg.TGMaxChasePct,
+			MaxPriceGapPct: cfg.TGMaxPriceGapPct,
+			LadderTrailPct: cfg.TGLadderTrailPct,
+			ArmFor:         time.Duration(cfg.TGArmMin) * time.Minute,
+		})
+		svc.tgStrategy.SetOnEvent(svc.publishTGOutcomeAsync)
+		svc.tfEngine.Register(svc.tgStrategy)
+		registered++
+		log.Printf("[stratengine] 🟢 registered %s (Telegram calls on %s, ladder trail %d%%, fixed target %d%%)",
+			strategy.TelegramSignalName, model.TGSignalChannel, cfg.TGLadderTrailPct, cfg.TGTargetPct)
+	}
 	if registered == 0 {
 		log.Println("[stratengine] ⚪ No strategies registered — all detached from engine")
 	}
@@ -282,35 +298,35 @@ func (svc *Service) buildExecution(cfg Config) {
 		LotSizeOf: func(symbol string) (int64, error) {
 			return instruments.GetInstrumentMaster().GetLotSize(symbol)
 		},
-		LiveOrders:       cfg.LiveOrders,
-		Qty:              cfg.Qty,
-		CallFNOToken:     cfg.CallFNOToken,
-		CallFNOSymbol:    cfg.CallFNOSymbol,
-		PutFNOToken:      cfg.PutFNOToken,
-		PutFNOSymbol:     cfg.PutFNOSymbol,
-		FNOExchange:      cfg.FNOExchange,
-		FNOOrderType:     cfg.FNOOrderType,
-		FNOProductType:   cfg.FNOProductType,
-		FNOStopLossPaise: cfg.GTTStopLossPaise,
-		GTTTargetBps:     cfg.GTTTargetBps,
-		LiveStrategies:   cfg.LiveStrategies,
-		LiveLots:         cfg.LiveLots,
-		FreezeQty:        cfg.FreezeQty,
-		MaxDayLossPaise:  cfg.LiveMaxDayLossPaise,
+		LiveOrders:           cfg.LiveOrders,
+		Qty:                  cfg.Qty,
+		CallFNOToken:         cfg.CallFNOToken,
+		CallFNOSymbol:        cfg.CallFNOSymbol,
+		PutFNOToken:          cfg.PutFNOToken,
+		PutFNOSymbol:         cfg.PutFNOSymbol,
+		FNOExchange:          cfg.FNOExchange,
+		FNOOrderType:         cfg.FNOOrderType,
+		FNOProductType:       cfg.FNOProductType,
+		FNOStopLossPaise:     cfg.GTTStopLossPaise,
+		GTTTargetBps:         cfg.GTTTargetBps,
+		LiveStrategies:       cfg.LiveStrategies,
+		LiveLots:             cfg.LiveLots,
+		FreezeQty:            cfg.FreezeQty,
+		MaxDayLossPaise:      cfg.LiveMaxDayLossPaise,
 		MaxDayLossTotalPaise: cfg.LiveMaxDayLossTotalPaise,
-		RequireJournal:   cfg.LiveOrders,
-		ProtectionMode:   cfg.ProtectionMode,
-		ExecMode:         cfg.ExecMode,
-		ChaseTicks:       cfg.ChaseTicks,
-		ChaseReprices:    cfg.ChaseReprices,
-		ChaseMaxBps:      cfg.ChaseMaxBps,
-		MarginBufferPct:  cfg.MarginBufferPct,
-		AngelAPIKey:      cfg.AngelAPIKey,
-		AngelClientID:    cfg.AngelClientID,
-		AngelPassword:    cfg.AngelPassword,
-		AngelTOTP:        cfg.AngelTOTP,
-		LogPrefix:        "[order_executor]",
-		SessionManager:   sessionManager, // Pass session manager for auto-refresh
+		RequireJournal:       cfg.LiveOrders,
+		ProtectionMode:       cfg.ProtectionMode,
+		ExecMode:             cfg.ExecMode,
+		ChaseTicks:           cfg.ChaseTicks,
+		ChaseReprices:        cfg.ChaseReprices,
+		ChaseMaxBps:          cfg.ChaseMaxBps,
+		MarginBufferPct:      cfg.MarginBufferPct,
+		AngelAPIKey:          cfg.AngelAPIKey,
+		AngelClientID:        cfg.AngelClientID,
+		AngelPassword:        cfg.AngelPassword,
+		AngelTOTP:            cfg.AngelTOTP,
+		LogPrefix:            "[order_executor]",
+		SessionManager:       sessionManager, // Pass session manager for auto-refresh
 
 		PaperSlippageBps:      cfg.PaperSlippageBps,
 		PaperSlippageMinPaise: cfg.PaperSlippageMinPaise,
@@ -332,6 +348,7 @@ func (svc *Service) Run(ctx context.Context) error {
 	log.Println("[stratengine] starting Strategy Engine...")
 
 	svc.restoreAndWire(ctx)
+	svc.restoreTGPosition(ctx)
 	svc.warmupRangeStrategies()
 	svc.refreshVolumeToken(ctx, time.Now())
 	stopMetrics := svc.startMetrics()
@@ -413,8 +430,14 @@ func (svc *Service) Run(ctx context.Context) error {
 	}
 
 	// ── Dashboard position commands (cmd:position): paper SL/target/exit ──
-	if svc.cfg.SREnabled {
+	if svc.cfg.SREnabled || svc.tgStrategy != nil {
 		go svc.positionCommandLoop(ctx)
+	}
+
+	// ── Telegram group calls (cmd:tgsignal) for TELEGRAM_SIGNAL ──
+	if svc.tgStrategy != nil {
+		go svc.tgSignalLoop(ctx)
+		go svc.tgFollowUpLoop(ctx)
 	}
 
 	// ── Unified exit layer: minute evaluation + config reload ──
