@@ -45,6 +45,7 @@ type Service struct {
 	tfEngine   *strategy.TFEngine
 	srStrategy *strategy.Nifty50SR
 	srExtras   []*srExtra // SR on underlyings beyond NIFTY (INDEX_TOKEN list)
+	tgStrategy *strategy.TelegramSignal // nil unless STRAT_TG_ENABLED
 
 	redisReader   *redisstore.Reader
 	redisWriter   *redisstore.Writer
@@ -252,6 +253,20 @@ func (svc *Service) buildStrategies(cfg Config) {
 			log.Printf("[stratengine] 🟢 registered %s on %s (options %s, %s)", ex.strat.Name(), ex.prof.IndexKey(), ex.prof.FNOExchange, ex.prof)
 		}
 	}
+	if cfg.TGEnabled {
+		svc.tgStrategy = strategy.NewTelegramSignal(cfg.Qty, strategy.TelegramSignalConfig{
+			TargetPct:      cfg.TGTargetPct,
+			MaxChasePct:    cfg.TGMaxChasePct,
+			MaxPriceGapPct: cfg.TGMaxPriceGapPct,
+			LadderTrailPct: cfg.TGLadderTrailPct,
+			ArmFor:         time.Duration(cfg.TGArmMin) * time.Minute,
+		})
+		svc.tgStrategy.SetOnEvent(svc.publishTGOutcomeAsync)
+		svc.tfEngine.Register(svc.tgStrategy)
+		registered++
+		log.Printf("[stratengine] 🟢 registered %s (Telegram calls on %s, ladder trail %d%%, fixed target %d%%)",
+			strategy.TelegramSignalName, model.TGSignalChannel, cfg.TGLadderTrailPct, cfg.TGTargetPct)
+	}
 	if registered == 0 {
 		log.Println("[stratengine] ⚪ No strategies registered — all detached from engine")
 	}
@@ -332,6 +347,7 @@ func (svc *Service) Run(ctx context.Context) error {
 	log.Println("[stratengine] starting Strategy Engine...")
 
 	svc.restoreAndWire(ctx)
+	svc.restoreTGPosition(ctx)
 	svc.warmupRangeStrategies()
 	svc.refreshVolumeToken(ctx, time.Now())
 	stopMetrics := svc.startMetrics()
@@ -415,6 +431,12 @@ func (svc *Service) Run(ctx context.Context) error {
 	// ── Dashboard position commands (cmd:position): paper SL/target/exit ──
 	if svc.cfg.SREnabled {
 		go svc.positionCommandLoop(ctx)
+	}
+
+	// ── Telegram group calls (cmd:tgsignal) for TELEGRAM_SIGNAL ──
+	if svc.tgStrategy != nil {
+		go svc.tgSignalLoop(ctx)
+		go svc.tgFollowUpLoop(ctx)
 	}
 
 	// ── Unified exit layer: minute evaluation + config reload ──

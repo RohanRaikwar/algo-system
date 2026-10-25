@@ -61,7 +61,7 @@ func TestEveryChannelClassified(t *testing.T) {
 		model.IndChannelPrefix + "EMA_9:60s:NSE:99926000",
 	}
 	internal := []string{
-		model.MarketStateChannel, model.PosContextChannel, model.ExitRequestChannel, model.PositionCommandChannel,
+		model.MarketStateChannel, model.PosContextChannel, model.ExitRequestChannel, model.PositionCommandChannel, model.TGSignalChannel, model.TGFollowUpChannel, model.TGOutcomeChannel,
 		model.TradingConfigChannel, model.ExitPolicyReloadChannel,
 		model.SubscribeTokenChannel, model.IndicatorConfigChannel,
 		// Candles reach the browser via the hub's explicit per-token list

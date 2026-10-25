@@ -92,6 +92,19 @@ type Config struct {
 	RangeMaxBuyIV     float64 // max IV % for a bought option
 	RangeCostMultiple int64   // expected option gain at target ≥ this × round-trip slippage
 
+	// ── TELEGRAM_SIGNAL: option calls from a Telegram group (cmd:tgsignal) ──
+	TGEnabled     bool
+	TGTargetPct   int64 // fixed premium target above entry, % (0 = none; the ladder manages profit)
+	// TGLadderTrailPct trails the stop this % below the best premium once
+	// past the caller's last target (T1 → cost, T[i] → T[i-1] before). 0 = off.
+	TGLadderTrailPct int64
+	TGMaxChasePct int64 // refuse an entry this % above the call's trigger
+	TGArmMin      int   // minutes a call waits for its trigger
+	// TGMaxStrikeGapPct refuses a call whose strike is this % from spot;
+	// TGMaxPriceGapPct one whose entry is this % from the live premium.
+	TGMaxStrikeGapPct int64
+	TGMaxPriceGapPct  int64
+
 	// ── NIFTY50_SR: regime-aware support/resistance, paper only ──
 	SREnabled       bool
 	SRMaxDayLossPts int64   // stop entries after this many index paise lost today, 0 = off
@@ -224,6 +237,13 @@ func LoadConfig() Config {
 		RangeMinLiquidity:     config.GetEnvInt64("STRAT_RANGE_MIN_LIQUIDITY", 5000),
 		RangeMaxBuyIV:         getEnvFloat("STRAT_RANGE_MAX_BUY_IV", 25),
 		RangeCostMultiple:     config.GetEnvInt64("STRAT_RANGE_COST_MULTIPLE", 3),
+		TGEnabled:             config.GetEnvBool("STRAT_TG_ENABLED", false),
+		TGTargetPct:           config.GetEnvInt64("STRAT_TG_TARGET_PCT", 0),
+		TGLadderTrailPct:      config.GetEnvInt64("STRAT_TG_LADDER_TRAIL_PCT", 10),
+		TGMaxChasePct:         config.GetEnvInt64("STRAT_TG_MAX_CHASE_PCT", 5),
+		TGArmMin:              config.GetEnvInt("STRAT_TG_ARM_MIN", 30),
+		TGMaxStrikeGapPct:     config.GetEnvInt64("STRAT_TG_MAX_STRIKE_GAP_PCT", 3),
+		TGMaxPriceGapPct:      config.GetEnvInt64("STRAT_TG_MAX_PRICE_GAP_PCT", 40),
 		SREnabled:             config.GetEnvBool("STRAT_SR_ENABLED", true),
 		SRMaxDayLossPts:       config.GetEnvInt64("STRAT_SR_MAX_DAY_LOSS_PAISE", 6000),
 		SRDeltaMin:            getEnvFloat("STRAT_SR_DELTA_MIN", 0.45),

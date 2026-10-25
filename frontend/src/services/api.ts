@@ -340,3 +340,62 @@ export async function postPositionCommand(cmd: PositionCommand): Promise<void> {
     });
     if (!res.ok) throw new Error(await errorText(res));
 }
+
+/* ── Telegram calls (GET /api/telegram) ─────────────────────────── */
+
+export interface TelegramStatus {
+    updated_at: string;
+    telegram: {
+        connected: boolean;
+        user?: string;
+        chats: number[];
+        since?: string;
+        last_message_at?: string;
+        last_error?: string;
+    };
+    llm: {
+        enabled: boolean;
+        model?: string;
+        provider?: string;
+        ok: boolean;
+        last_read_at?: string;
+        last_error?: string;
+        reads_today: number;
+        errors_today: number;
+        tokens_today: number;
+        avg_tokens: number;
+    };
+    verdicts: Record<string, number>;
+}
+
+export interface TelegramMessage {
+    chat_id: number;
+    msg_id: number;
+    reply_to?: number;
+    edited?: boolean;
+    sent_at: string;
+    text: string;
+    english?: string;
+    verdict: string;
+    reason?: string;
+    summary?: string;
+    outcome?: string;
+}
+
+export interface TelegramView {
+    running: boolean;
+    status: TelegramStatus | null;
+    messages: TelegramMessage[];
+}
+
+/** tgsignal health and the latest group messages it read. Null if the gateway is unreachable. */
+export async function fetchTelegram(): Promise<TelegramView | null> {
+    try {
+        const res = await fetch(`${BASE}/api/telegram`);
+        if (!res.ok) return null;
+        return res.json();
+    } catch (error) {
+        console.error('Failed to fetch telegram view:', error);
+        return null;
+    }
+}

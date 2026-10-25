@@ -516,6 +516,9 @@ func RegisterRoutes(mux *http.ServeMux, hub *Hub, rdb *goredis.Client, ctx conte
 	})
 
 	// REST: NIFTY50_SR strike selection (live greeks pick, rules, last pick)
+	// REST: Telegram calls (tgsignal health + latest messages read)
+	mux.HandleFunc("/api/telegram", makeTelegramHandler(rdb, ctx))
+
 	mux.HandleFunc("/api/strikesel", func(w http.ResponseWriter, r *http.Request) {
 		SetCORS(w, r)
 		w.Header().Set("Content-Type", "application/json")

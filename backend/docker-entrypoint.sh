@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Starts all seven backend services. If any one exits, stop the rest and
+# Starts all backend services (tgsignal only with TG_API_ID). If any one exits, stop the rest and
 # exit non-zero so the platform restarts the container.
 set -uo pipefail
 cd /app
@@ -46,6 +46,28 @@ start exitwatch
 # local SQLite (ARCHIVE_ENABLED=true). Never exits on its own errors.
 start archiver
 start api_gateway
+# tgsignal: Telegram group calls (TELEGRAM_SIGNAL, paper unless named in
+# STRAT_LIVE_STRATEGIES). Only with TG_API_ID. It runs in its own retry
+# loop, so a cancelled Telegram session or a bad LLM key never takes the
+# trading services down through wait -n. The session is seeded from
+# TG_SESSION_B64 on a fresh volume (/app/data/tg.session) and reused after.
+if [ -n "${TG_API_ID:-}" ]; then
+  echo "[entrypoint] starting tgsignal (retry loop)"
+  (
+    trap 'kill -TERM "$child" 2>/dev/null; wait "$child"; exit 0' TERM INT
+    while true; do
+      /app/bin/tgsignal &
+      child=$!
+      wait "$child"
+      echo "[entrypoint] tgsignal exited with code $?; retrying in 60s"
+      sleep 60 &
+      wait $!
+    done
+  ) &
+  pids+=("$!")
+else
+  echo "[entrypoint] TG_API_ID not set; tgsignal not started"
+fi
 
 wait -n
 code=$?
