@@ -217,7 +217,7 @@ func TestTGEvents(t *testing.T) {
 	s.SetOnEvent(func(k, e, _ string) { got = append(got, k+" "+e) })
 	s.OnTick(tgTick("45001", 12100, time.Minute))
 	s.OnTick(tgTick("45001", 9000, 2*time.Minute))
-	if strings.Join(got, ",") != "1:9 ENTERED,1:9 EXIT" {
+	if strings.Join(got, ",") != "1:9 FIRST_TICK,1:9 ENTERED,1:9 EXIT" {
 		t.Fatalf("events %v", got)
 	}
 }
@@ -305,5 +305,60 @@ func TestTGLadderSurvivesRestore(t *testing.T) {
 	r.OnTick(tgTick("45001", 22700, 3*time.Minute))
 	if r.Position().SL != 20430 {
 		t.Fatalf("restored ladder: %d", r.Position().SL)
+	}
+}
+
+func TestTGSetLevels(t *testing.T) {
+	s := newTG(t)
+	var events []string
+	s.SetOnEvent(func(_, ev, _ string) { events = append(events, ev) })
+	if err := s.SetLevels(SideCall, "45001", LevelEdit{FNOSL: 11000}); err == nil {
+		t.Fatal("edit with no position")
+	}
+	s.OnTick(tgTick("45001", 12000, time.Minute))
+
+	refused := map[string]struct {
+		side PositionSide
+		tok  string
+		e    LevelEdit
+	}{
+		"index stop":         {SideCall, "45001", LevelEdit{IndexStop: 2400000}},
+		"wrong side":         {SidePut, "45001", LevelEdit{FNOSL: 11000}},
+		"wrong token":        {SideCall, "45002", LevelEdit{FNOSL: 11000}},
+		"stop above LTP":     {SideCall, "45001", LevelEdit{FNOSL: 12000}},
+		"target below LTP":   {SideCall, "45001", LevelEdit{FNOTarget: 11900}},
+		"stop ok, tgt wrong": {SideCall, "45001", LevelEdit{FNOSL: 11000, FNOTarget: 12000}},
+	}
+	for name, c := range refused {
+		if err := s.SetLevels(c.side, c.tok, c.e); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	if p := s.Position(); p.SL != 10000 || p.Target != 16800 || p.ManualSL {
+		t.Fatalf("refused edit changed position %+v", p)
+	}
+
+	// A hand stop may sit below the call's stop too; the user decides.
+	if err := s.SetLevels(SideCall, "NFO:45001", LevelEdit{FNOSL: 9000, FNOTarget: 15000}); err != nil {
+		t.Fatal(err)
+	}
+	if p := s.Position(); p.SL != 9000 || p.Target != 15000 || !p.ManualSL {
+		t.Fatalf("after edit %+v", p)
+	}
+	if err := s.SetLevels(SideCall, "", LevelEdit{FNOTarget: -1}); err != nil {
+		t.Fatal(err)
+	}
+	if p := s.Position(); p.Target != 0 || p.SL != 9000 {
+		t.Fatalf("target not removed %+v", p)
+	}
+	if strings.Join(events, ",") != "FIRST_TICK,ENTERED,LEVELS_SET,LEVELS_SET" {
+		t.Fatalf("events %v", events)
+	}
+	if sig := s.OnTick(tgTick("45001", 9500, 2*time.Minute)); sig != nil {
+		t.Fatalf("old stop still active: %+v", sig)
+	}
+	sig := s.OnTick(tgTick("45001", 9000, 3*time.Minute))
+	if sig == nil || sig.Action != ActionExit || !strings.HasPrefix(sig.Reason, "TG MANUAL STOP") {
+		t.Fatalf("manual stop exit %+v", sig)
 	}
 }

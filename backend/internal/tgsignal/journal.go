@@ -49,11 +49,44 @@ func OpenJournal(path string) (*Journal, error) {
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 	CREATE INDEX IF NOT EXISTS idx_messages_msg ON messages(chat_id, msg_id);`)
+	if err == nil {
+		err = addColumns(db, map[string]string{
+			"received_at": "DATETIME",
+			"read_ms":     "INTEGER NOT NULL DEFAULT 0",
+		})
+	}
 	if err != nil {
 		db.Close()
 		return nil, err
 	}
 	return &Journal{db: db}, nil
+}
+
+// addColumns adds the columns a log made by an older build lacks.
+func addColumns(db *sql.DB, cols map[string]string) error {
+	rows, err := db.Query(`SELECT name FROM pragma_table_info('messages')`)
+	if err != nil {
+		return err
+	}
+	have := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return err
+		}
+		have[name] = true
+	}
+	rows.Close()
+	for name, def := range cols {
+		if have[name] {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN ` + name + ` ` + def); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Close closes the log.
@@ -71,13 +104,21 @@ type Entry struct {
 	LLM     any // LLMResult, error text or nil
 	Verdict string
 	Reason  string
+	// ReceivedAt is when tgsignal got the message; ReadMS how long the
+	// regex + LLM read took.
+	ReceivedAt time.Time
+	ReadMS     int64
 }
 
 // Record appends one message's reading.
 func (j *Journal) Record(e Entry) error {
-	_, err := j.db.Exec(`INSERT INTO messages (chat_id, msg_id, reply_to, edited, sent_at, text, regex, llm, verdict, reason)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ChatID, e.MsgID, e.ReplyTo, e.Edited, e.SentAt.UTC(), e.Text, asJSON(e.Regex), asJSON(e.LLM), e.Verdict, e.Reason)
+	var recv any
+	if !e.ReceivedAt.IsZero() {
+		recv = e.ReceivedAt.UTC()
+	}
+	_, err := j.db.Exec(`INSERT INTO messages (chat_id, msg_id, reply_to, edited, sent_at, text, regex, llm, verdict, reason, received_at, read_ms)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ChatID, e.MsgID, e.ReplyTo, e.Edited, e.SentAt.UTC(), e.Text, asJSON(e.Regex), asJSON(e.LLM), e.Verdict, e.Reason, recv, e.ReadMS)
 	return err
 }
 

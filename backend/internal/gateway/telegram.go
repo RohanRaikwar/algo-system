@@ -44,12 +44,16 @@ func loadTelegramView(ctx context.Context, rdb *goredis.Client) telegramView {
 	}
 	raws, _ := rdb.LRange(ctx, model.TGMessagesKey, 0, -1).Result()
 	outcomes, _ := rdb.HGetAll(ctx, model.TGOutcomesKey).Result()
+	timelines, _ := rdb.HGetAll(ctx, model.TGTimelineKey).Result()
 	for _, raw := range raws {
 		var m model.TGMessageView
 		if json.Unmarshal([]byte(raw), &m) != nil {
 			continue
 		}
 		m.Outcome = outcomes[m.Key()]
+		if raw := timelines[m.Key()]; raw != "" {
+			_ = json.Unmarshal([]byte(raw), &m.Timeline)
+		}
 		v.Messages = append(v.Messages, m)
 	}
 	return v

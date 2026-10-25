@@ -10,11 +10,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"trading-systemv1/internal/instruments"
 	"trading-systemv1/internal/markethours"
 	"trading-systemv1/internal/model"
+	"trading-systemv1/internal/orderexec"
 	"trading-systemv1/internal/strategy"
 	"trading-systemv1/internal/underlying"
 )
@@ -32,6 +34,11 @@ func (svc *Service) tgSignalLoop(ctx context.Context) {
 			return
 		}
 		now := time.Now()
+		svc.tgRecv.put(call.Key(), call.ReceivedAt, now)
+		if !call.ReceivedAt.IsZero() {
+			log.Printf("[stratengine] ⏱ telegram call %s: sent→recv %dms, read %dms, published→here %dms",
+				call.Key(), call.ReceivedAt.Sub(call.SentAt).Milliseconds(), call.ReadMS, now.Sub(call.PublishedAt).Milliseconds())
+		}
 		res, err := svc.armTGSignal(ctx, call, now)
 		if err != nil {
 			log.Printf("[stratengine] 📵 telegram call %s refused: %v", call.Key(), err)
@@ -193,7 +200,11 @@ func (svc *Service) publishTGOutcome(ctx context.Context, callKey, event, detail
 	if svc.redisWriter == nil {
 		return
 	}
-	b, err := json.Marshal(model.TGOutcome{CallKey: callKey, Event: event, Detail: detail, TS: time.Now()})
+	o := svc.tgOutcome(callKey, event, detail, time.Now())
+	if o.MS > 0 && (event == "ENTERED" || event == "FILLED") {
+		log.Printf("[stratengine] ⏱ telegram call %s %s %dms after the message was received", callKey, event, o.MS)
+	}
+	b, err := json.Marshal(o)
 	if err != nil {
 		return
 	}
@@ -204,14 +215,26 @@ func (svc *Service) publishTGOutcome(ctx context.Context, callKey, event, detail
 	}
 }
 
+// tgOutcome builds an outcome stamped with its time since the call's
+// message was received, when known.
+func (svc *Service) tgOutcome(callKey, event, detail string, now time.Time) model.TGOutcome {
+	o := model.TGOutcome{CallKey: callKey, Event: event, Detail: detail, TS: now}
+	if recv, ok := svc.tgRecv.get(callKey); ok {
+		o.MS = now.Sub(recv).Milliseconds()
+	}
+	return o
+}
+
 // publishTGOutcomeAsync is the strategy's event callback: it runs under the
 // strategy lock, so it must not block.
 func (svc *Service) publishTGOutcomeAsync(callKey, event, detail string) {
 	go func() {
 		ctx := context.Background()
-		// A raised stop (ladder or follow-up) must survive a restart.
+		// A raised stop (ladder or follow-up) must survive a restart and
+		// show on the dashboard.
 		if event == strategy.TGSLRaised {
 			svc.saveTGPosition(ctx)
+			svc.publishLiveOrders(ctx)
 		}
 		svc.publishTGOutcome(ctx, callKey, event, detail)
 	}()
@@ -294,6 +317,8 @@ func (svc *Service) restoreTGPosition(ctx context.Context) {
 		return
 	}
 	svc.tgStrategy.Restore(p)
+	svc.setLiveOrderFromPosition(strategy.TelegramSignalName, &strategy.LiveFNOPosition{
+		Side: p.Arm.Call.Side(), Token: p.Arm.FNOToken, EntryPrice: p.Entry, BestPrice: p.Best})
 	svc.publishSubscriptionMode(ctx, tgExchType(p.Arm.FNOExchange), svc.fnoSubscribeMode(), p.Arm.FNOToken)
 	log.Printf("[stratengine] tgsignal restored %s entry=%d sl=%d target=%d", p.Arm.FNOSymbol, p.Entry, p.SL, p.Target)
 }
@@ -304,4 +329,54 @@ func tgExchType(fnoExchange string) int {
 		return p.FNOExchType
 	}
 	return underlying.Primary().FNOExchType
+}
+
+// tgReceipts remembers when tgsignal received each call, so every outcome
+// can carry its time since receipt. Calls are few; entries older than a
+// day are dropped on insert.
+type tgReceipts struct {
+	mu sync.Mutex
+	at map[string]time.Time
+}
+
+func (r *tgReceipts) put(key string, recv, now time.Time) {
+	if recv.IsZero() {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.at == nil {
+		r.at = make(map[string]time.Time)
+	}
+	for k, t := range r.at {
+		if now.Sub(t) > 24*time.Hour {
+			delete(r.at, k)
+		}
+	}
+	r.at[key] = recv
+}
+
+func (r *tgReceipts) get(key string) (time.Time, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t, ok := r.at[key]
+	return t, ok
+}
+
+// tgFilled reports a TELEGRAM_SIGNAL entry fill to the review log, the
+// last step of the call's latency timeline.
+func (svc *Service) tgFilled(f orderexec.FillReport) {
+	if svc.tgStrategy == nil || f.Signal.StrategyName != strategy.TelegramSignalName || f.Direction != "BUY" {
+		return
+	}
+	p := svc.tgStrategy.Position()
+	if p == nil {
+		return
+	}
+	mode := "paper"
+	if f.Real {
+		mode = "real"
+	}
+	detail := fmt.Sprintf("%s %s fill=%d qty=%d (signal premium %d)", mode, p.Arm.FNOSymbol, f.FillPricePaise, f.Qty, f.Signal.Price)
+	go svc.publishTGOutcome(context.Background(), p.Arm.Call.Key(), "FILLED", detail)
 }

@@ -346,6 +346,7 @@ func (svc *Service) onFill(f orderexec.FillReport) {
 		key := sig.StrategyName + "|" + exchange + ":" + token + "|" + sig.Leg
 		svc.pnlLedger.record(svc.ledgerFill(f, key, exchange, token, qty, realized, opening))
 	}
+	svc.tgFilled(f)
 
 	if svc.redisWriter != nil {
 		go func() {

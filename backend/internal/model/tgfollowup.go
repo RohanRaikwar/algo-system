@@ -62,4 +62,7 @@ type TGOutcome struct {
 	Event   string    `json:"event"`    // ARMED, REFUSED, ENTERED, EXIT, DROPPED, ...
 	Detail  string    `json:"detail"`
 	TS      time.Time `json:"ts"`
+	// MS is the time since tgsignal received the call's message, when
+	// stratengine knows it (0 = unknown).
+	MS int64 `json:"ms,omitempty"`
 }

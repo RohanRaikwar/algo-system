@@ -2,6 +2,7 @@ package tgsignal
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -233,5 +234,84 @@ func TestHandlerStatusAndDashboardList(t *testing.T) {
 	st := h.status.snapshot(time.Now())
 	if st.LLM.Provider != "api.groq.com" || !st.LLM.OK || st.LLM.TokensToday != 700 || st.Verdicts[VerdictSent] != 1 || st.Verdicts[VerdictSkipped] != 1 {
 		t.Fatalf("status %+v", st)
+	}
+}
+
+// slowReader takes d to read, like a remote LLM.
+type slowReader struct {
+	fakeReader
+	d time.Duration
+}
+
+func (s *slowReader) Read(ctx context.Context, text, reply string) (LLMResult, error) {
+	time.Sleep(s.d)
+	return s.fakeReader.Read(ctx, text, reply)
+}
+
+func TestHandlerLatencyStamps(t *testing.T) {
+	r := &slowReader{fakeReader: fakeReader{res: llmCall(22750, "PE", "191", "182")}, d: 20 * time.Millisecond}
+	h, s, j := newTestHandler(t, r)
+	var shown []model.TGMessageView
+	h.sink = func(v model.TGMessageView) { shown = append(shown, v) }
+	recv := tNow.Add(700 * time.Millisecond)
+	h.onMessage(context.Background(), msg(1, realCall), recv)
+
+	if len(s.calls) != 1 {
+		t.Fatalf("calls %+v", s.calls)
+	}
+	c := s.calls[0]
+	if !c.SentAt.Equal(tNow) || !c.ReceivedAt.Equal(recv) || c.ReadMS < 20 || c.PublishedAt.IsZero() {
+		t.Fatalf("stamps sent=%s recv=%s read=%d pub=%s", c.SentAt, c.ReceivedAt, c.ReadMS, c.PublishedAt)
+	}
+	if len(shown) != 1 || !shown[0].ReceivedAt.Equal(recv) || shown[0].ReadMS != c.ReadMS {
+		t.Fatalf("shown %+v", shown)
+	}
+	var readMS int64
+	var gotRecv time.Time
+	if err := j.db.QueryRow(`SELECT read_ms, received_at FROM messages WHERE msg_id = 1`).Scan(&readMS, &gotRecv); err != nil {
+		t.Fatal(err)
+	}
+	if readMS != c.ReadMS || !gotRecv.Equal(recv) {
+		t.Fatalf("journal read_ms=%d received_at=%s", readMS, gotRecv)
+	}
+}
+
+func TestJournalAddsColumnsToOldLog(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER NOT NULL, msg_id INTEGER NOT NULL,
+		reply_to INTEGER NOT NULL DEFAULT 0, edited INTEGER NOT NULL DEFAULT 0, sent_at DATETIME NOT NULL, text TEXT NOT NULL,
+		regex TEXT NOT NULL DEFAULT '', llm TEXT NOT NULL DEFAULT '', verdict TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '',
+		outcome TEXT NOT NULL DEFAULT '', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := OpenJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = j.Record(Entry{ChatID: 1, MsgID: 2, SentAt: tNow, Text: "x", Verdict: VerdictNoise, ReadMS: 5})
+	j.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err = OpenJournal(path) // reopen: columns already there
+	if err != nil {
+		t.Fatal(err)
+	}
+	j.Close()
+}
+
+func TestOutcomeLine(t *testing.T) {
+	ts := time.Date(2026, 10, 26, 10, 0, 3, 0, time.Local)
+	if got := outcomeLine(model.TGOutcome{Event: "ENTERED", Detail: "premium=191", TS: ts, MS: 41250}); got != "10:00:03 ENTERED +41250ms: premium=191" {
+		t.Errorf("got %q", got)
+	}
+	if got := outcomeLine(model.TGOutcome{Event: "DROPPED", TS: ts}); got != "10:00:03 DROPPED" {
+		t.Errorf("got %q", got)
 	}
 }

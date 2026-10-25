@@ -25,6 +25,12 @@ type TGSignal struct {
 	Targets      []int64   `json:"targets,omitempty"` // paise
 	Text         string    `json:"text,omitempty"`
 	ReceivedAt   time.Time `json:"received_at"`
+	// Latency stamps, review only: the Telegram send time (1 s
+	// resolution), how long the regex + LLM read took, and when the call
+	// was published.
+	SentAt      time.Time `json:"sent_at,omitzero"`
+	ReadMS      int64     `json:"read_ms,omitempty"`
+	PublishedAt time.Time `json:"published_at,omitzero"`
 	// Edited marks a call the caller changed after posting: a waiting
 	// call takes the new levels, an open trade only a higher stop.
 	Edited bool `json:"edited,omitempty"`

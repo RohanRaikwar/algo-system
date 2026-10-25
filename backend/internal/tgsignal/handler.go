@@ -65,7 +65,7 @@ func (h *handler) onMessage(ctx context.Context, m inMsg, now time.Time) {
 	if h.status != nil {
 		h.status.message(now)
 	}
-	entry := Entry{ChatID: m.ChatID, MsgID: m.MsgID, ReplyTo: m.ReplyTo, Edited: m.Edited, SentAt: m.Sent, Text: m.Text}
+	entry := Entry{ChatID: m.ChatID, MsgID: m.MsgID, ReplyTo: m.ReplyTo, Edited: m.Edited, SentAt: m.Sent, Text: m.Text, ReceivedAt: now}
 	english := ""
 	if age := now.Sub(m.Sent); age > h.maxAge {
 		entry.Verdict, entry.Reason = VerdictOld, fmt.Sprintf("%s old", age.Round(time.Second))
@@ -82,6 +82,7 @@ func (h *handler) onMessage(ctx context.Context, m inMsg, now time.Time) {
 		return
 	}
 
+	readStart := time.Now()
 	rx, rxErr := Parse(m.Text)
 	entry.Regex = regexView(rx, rxErr)
 	var d decision
@@ -114,18 +115,21 @@ func (h *handler) onMessage(ctx context.Context, m inMsg, now time.Time) {
 		d = decide(rx, rxErr, res, err)
 	}
 	entry.Verdict, entry.Reason = d.verdict, d.reason
+	entry.ReadMS = time.Since(readStart).Milliseconds()
 
 	switch {
 	case d.call != nil:
 		c := *d.call
 		c.ChatID, c.MsgID, c.ReceivedAt, c.Text, c.Edited = m.ChatID, m.MsgID, now, m.Text, m.Edited
+		c.SentAt, c.ReadMS, c.PublishedAt = m.Sent, entry.ReadMS, time.Now()
 		if err := h.publishCall(c); err != nil {
 			entry.Verdict, entry.Reason = VerdictError, "publish: "+err.Error()
 			log.Printf("[tgsignal] 🚨 publish %s: %v", c.Key(), err)
 			break
 		}
-		log.Printf("[tgsignal] 📨 call %s (%s%s): BUY %s %d%s above %d SL %d (their targets %v)",
-			c.Key(), c.Source, editTag(m.Edited), c.Underlying, c.Strike, c.OptionType, c.TriggerPaise, c.SLPaise, c.Targets)
+		log.Printf("[tgsignal] 📨 call %s (%s%s): BUY %s %d%s above %d SL %d (their targets %v) — sent→recv %dms, read %dms",
+			c.Key(), c.Source, editTag(m.Edited), c.Underlying, c.Strike, c.OptionType, c.TriggerPaise, c.SLPaise, c.Targets,
+			now.Sub(m.Sent).Milliseconds(), c.ReadMS)
 	case d.followUp != nil:
 		f := *d.followUp
 		f.ChatID, f.MsgID, f.ReplyToMsgID, f.ReceivedAt, f.Text = m.ChatID, m.MsgID, m.ReplyTo, now, m.Text
@@ -153,6 +157,7 @@ func (h *handler) show(e Entry, english string, d decision) {
 	h.sink(model.TGMessageView{
 		ChatID: e.ChatID, MsgID: e.MsgID, ReplyTo: e.ReplyTo, Edited: e.Edited, SentAt: e.SentAt,
 		Text: e.Text, English: english, Verdict: e.Verdict, Reason: e.Reason, Summary: d.summary(),
+		ReceivedAt: e.ReceivedAt, ReadMS: e.ReadMS,
 	})
 }
 

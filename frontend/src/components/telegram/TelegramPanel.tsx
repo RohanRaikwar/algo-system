@@ -8,6 +8,7 @@ import { Empty } from '@/components/ui/empty';
 import { Spinner } from '@/components/ui/spinner';
 import { Switch } from '@/components/ui/switch';
 import { errorText, footerNote, summaryGrid, summaryLabel, summaryValue } from '../signals/classes';
+import { timelineParts } from './timeline';
 
 const POLL_MS = 10_000;
 
@@ -68,6 +69,7 @@ function Field({ label, value, tone }: { label: string; value: string; tone?: st
 
 function MessageRow({ m }: { m: TelegramMessage }) {
     const v = VERDICT[m.verdict] ?? { tone: 'muted' as BadgeTone, label: m.verdict };
+    const steps = timelineParts(m);
     return (
         <Card className="p-[12px] flex flex-col gap-[6px]">
             <div className="flex items-center gap-[8px] flex-wrap text-[0.8rem] text-sg-muted">
@@ -85,6 +87,11 @@ function MessageRow({ m }: { m: TelegramMessage }) {
             )}
             {m.summary && <div className="font-mono text-[0.82rem] text-sg-accent">{m.summary}</div>}
             {m.reason && <div className="text-[0.78rem] text-sg-faint">{m.reason}</div>}
+            {steps.length > 0 && (
+                <div className="text-[0.78rem] text-sg-muted tabular-nums" title="Time since the message was received">
+                    <span className="font-semibold text-sg-text">Latency: </span>{steps.join(' · ')}
+                </div>
+            )}
             {m.outcome && (
                 <div className="text-[0.8rem] py-[6px] px-[10px] rounded-ctrl bg-sg-raised">
                     <span className="font-semibold">Trade: </span>{m.outcome}

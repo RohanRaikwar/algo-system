@@ -190,14 +190,14 @@ func (svc *Service) outcomeLoop(ctx context.Context) {
 			if !ok {
 				continue
 			}
-			line := o.TS.In(time.Local).Format("15:04:05") + " " + o.Event
-			if o.Detail != "" {
-				line += ": " + o.Detail
-			}
+			line := outcomeLine(o)
 			if err := svc.journal.AddOutcome(chat, id, line); err != nil {
 				log.Printf("[tgsignal] journal outcome: %v", err)
 			}
 			svc.addOutcome(ctx, o.CallKey, line)
+			if o.MS > 0 {
+				svc.addStage(ctx, o.CallKey, model.TGStage{Event: o.Event, MS: o.MS})
+			}
 		}
 		_ = sub.Close()
 		select {
@@ -206,6 +206,18 @@ func (svc *Service) outcomeLoop(ctx context.Context) {
 		case <-time.After(2 * time.Second):
 		}
 	}
+}
+
+// outcomeLine is "15:04:05 EVENT +1234ms: detail" (no +ms when unknown).
+func outcomeLine(o model.TGOutcome) string {
+	line := o.TS.In(time.Local).Format("15:04:05") + " " + o.Event
+	if o.MS > 0 {
+		line += fmt.Sprintf(" +%dms", o.MS)
+	}
+	if o.Detail != "" {
+		line += ": " + o.Detail
+	}
+	return line
 }
 
 func splitCallKey(k string) (int64, int, bool) {
@@ -278,5 +290,26 @@ func (svc *Service) addOutcome(ctx context.Context, callKey, line string) {
 	pipe.Expire(ctx, model.TGOutcomesKey, 48*time.Hour)
 	if _, err := pipe.Exec(ctx); err != nil {
 		log.Printf("[tgsignal] outcome: %v", err)
+	}
+}
+
+// addStage appends a step to the call's timeline (kept two days). Only
+// outcomeLoop writes it, so the read-modify-write does not race.
+func (svc *Service) addStage(ctx context.Context, callKey string, st model.TGStage) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	var stages []model.TGStage
+	if prev, err := svc.rdb.HGet(ctx, model.TGTimelineKey, callKey).Result(); err == nil {
+		_ = json.Unmarshal([]byte(prev), &stages)
+	}
+	b, err := json.Marshal(append(stages, st))
+	if err != nil {
+		return
+	}
+	pipe := svc.rdb.TxPipeline()
+	pipe.HSet(ctx, model.TGTimelineKey, callKey, b)
+	pipe.Expire(ctx, model.TGTimelineKey, 48*time.Hour)
+	if _, err := pipe.Exec(ctx); err != nil {
+		log.Printf("[tgsignal] timeline: %v", err)
 	}
 }

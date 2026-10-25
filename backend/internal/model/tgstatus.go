@@ -48,6 +48,18 @@ type TGMessageView struct {
 	Reason  string    `json:"reason,omitempty"`
 	Summary string    `json:"summary,omitempty"` // what was read: "BUY NIFTY 22800PE above 172 SL 166"
 	Outcome string    `json:"outcome,omitempty"` // filled by the gateway from TGOutcomesKey
+	// ReceivedAt and ReadMS time the read: receipt and regex + LLM
+	// duration. Timeline is what stratengine did, with ms since receipt
+	// (filled by the gateway from TGTimelineKey).
+	ReceivedAt time.Time `json:"received_at,omitzero"`
+	ReadMS     int64     `json:"read_ms,omitempty"`
+	Timeline   []TGStage `json:"timeline,omitempty"`
+}
+
+// TGStage is one step of a call after it was read, ms after receipt.
+type TGStage struct {
+	Event string `json:"event"`
+	MS    int64  `json:"ms"`
 }
 
 // Key is the message's TGSignal/TGFollowUp key.

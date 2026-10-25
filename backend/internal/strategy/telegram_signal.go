@@ -44,6 +44,7 @@ type TGArm struct {
 	FNOSymbol     string
 	ArmedAt       time.Time
 	Seen          bool // a premium tick was checked against the trigger
+	Ticked        bool // FIRST_TICK reported
 }
 
 func (a TGArm) key() string { return a.FNOExchange + ":" + a.FNOToken }
@@ -59,6 +60,7 @@ type TGPosition struct {
 	Best      int64     `json:"best"`              // highest premium since entry (paise)
 	Targets   []int64   `json:"targets,omitempty"` // the caller's targets (paise): the stop ladder
 	EnteredTS time.Time `json:"entered_ts"`
+	ManualSL  bool      `json:"manual_sl,omitempty"` // SL was set by hand (dashboard)
 }
 
 // Arm results.
@@ -67,7 +69,22 @@ const (
 	TGReplaced    = "REPLACED"     // same message or contract was waiting
 	TGSLRaised    = "SL_RAISED"    // edit of the held call raised its stop
 	TGEditIgnored = "EDIT_IGNORED" // edit of the held call that would add risk
+	TGLevelsSet   = "LEVELS_SET"   // stop/target set by hand (dashboard)
 )
+
+// TGFirstTick is the first premium tick of an armed call's contract: the
+// subscription works and the feed delivers.
+const TGFirstTick = "FIRST_TICK"
+
+// firstTickDetail names the premium and the feed's lag (exchange time to
+// arrival) when both stamps are known.
+func firstTickDetail(t model.Tick) string {
+	d := fmt.Sprintf("premium=%d", t.Price)
+	if !t.EventTS.IsZero() && !t.TickTS.IsZero() {
+		d += fmt.Sprintf(" feed lag %dms", t.TickTS.Sub(t.EventTS).Milliseconds())
+	}
+	return d
+}
 
 // TelegramSignal trades option calls from a Telegram group: it buys the
 // named contract when its premium reaches the call's trigger, exits at the
@@ -149,9 +166,50 @@ func (s *TelegramSignal) raiseSL(p *TGPosition, sl int64, why string) (string, e
 		return TGEditIgnored, fmt.Errorf("%s: stop %d not below premium %d", why, sl, p.Last)
 	}
 	old := p.SL
-	p.SL = sl
+	p.SL, p.ManualSL = sl, false
 	s.event(p.Arm.Call.Key(), TGSLRaised, fmt.Sprintf("%s: stop %d → %d", why, old, sl))
 	return TGSLRaised, nil
+}
+
+// SetLevels applies a dashboard edit to the open trade's premium stop and
+// target. Index levels are refused: a call's levels are premiums. A stop
+// must sit below the last premium and a target above it, or the edit is
+// refused whole. A hand stop may be lower than the call's: the user
+// decides. The ladder still raises it from there.
+func (s *TelegramSignal) SetLevels(side PositionSide, fnoToken string, e LevelEdit) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.pos
+	switch {
+	case e.IndexStop != 0 || e.IndexTarget != 0 || e.IndexTrail != 0:
+		return fmt.Errorf("%s levels are option premiums, not index", s.Name())
+	case p == nil || p.Arm.Call.Side() != side:
+		return fmt.Errorf("no open %s %s position", s.Name(), side)
+	case fnoToken != "" && p.Arm.FNOToken != fnoToken && !strings.HasSuffix(fnoToken, ":"+p.Arm.FNOToken):
+		return fmt.Errorf("position holds %s, not %s", p.Arm.FNOToken, fnoToken)
+	}
+	if e.FNOSL > 0 || e.FNOTarget > 0 {
+		if p.Last <= 0 {
+			return fmt.Errorf("no option price yet")
+		}
+		if e.FNOSL > 0 && e.FNOSL >= p.Last {
+			return fmt.Errorf("premium stop %d is not below LTP %d", e.FNOSL, p.Last)
+		}
+		if e.FNOTarget > 0 && e.FNOTarget <= p.Last {
+			return fmt.Errorf("premium target %d is not above LTP %d", e.FNOTarget, p.Last)
+		}
+	}
+	if e.FNOSL > 0 {
+		p.SL, p.ManualSL = e.FNOSL, true
+	}
+	switch {
+	case e.FNOTarget > 0:
+		p.Target = e.FNOTarget
+	case e.FNOTarget < 0:
+		p.Target = 0
+	}
+	s.event(p.Arm.Call.Key(), TGLevelsSet, fmt.Sprintf("by hand: stop %d target %d", p.SL, p.Target))
+	return nil
 }
 
 // FollowUp applies the caller's message about an earlier call. It acts
@@ -316,12 +374,14 @@ func (s *TelegramSignal) OnTick(tick model.Tick) *Signal {
 			p.Best = price
 			if stop, rung := s.ladderStop(p); stop > p.SL && stop < price {
 				old := p.SL
-				p.SL = stop
+				p.SL, p.ManualSL = stop, false
 				s.event(p.Arm.Call.Key(), TGSLRaised, fmt.Sprintf("%s → stop %d (was %d)", rung, stop, old))
 			}
 		}
 		var reason string
 		switch {
+		case price <= p.SL && p.ManualSL:
+			reason = fmt.Sprintf("TG MANUAL STOP premium=%d stop=%d entry=%d best=%d", price, p.SL, p.Entry, p.Best)
 		case price <= p.SL && p.SL > p.Arm.Call.SLPaise:
 			reason = fmt.Sprintf("TG RAISED STOP premium=%d stop=%d entry=%d best=%d", price, p.SL, p.Entry, p.Best)
 		case price <= p.SL:
@@ -342,6 +402,10 @@ func (s *TelegramSignal) OnTick(tick model.Tick) *Signal {
 			continue
 		}
 		c := a.Call
+		if !a.Ticked {
+			a.Ticked = true
+			s.event(c.Key(), TGFirstTick, firstTickDetail(tick))
+		}
 		drop := ""
 		switch {
 		case !a.Seen && s.cfg.MaxPriceGapPct > 0 && gapPct(price, c.TriggerPaise) > s.cfg.MaxPriceGapPct:

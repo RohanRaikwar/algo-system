@@ -34,11 +34,25 @@ func (svc *Service) positionCommand(payload string, now time.Time) (*strategy.Si
 	case cmd.TS.IsZero() || now.Sub(cmd.TS) > exitRequestMaxAge:
 		return nil, fmt.Errorf("stale command from %s", cmd.TS.Format(time.RFC3339))
 	}
-	sr := svc.srByName(cmd.Strategy)
-	if sr == nil {
+	c := svc.positionCommanderFor(cmd.Strategy)
+	if c == nil {
 		return nil, fmt.Errorf("%s not running", cmd.Strategy)
 	}
-	return svc.positionCommandVia(sr, cmd)
+	sig, err := svc.positionCommandVia(c, cmd)
+	if err == nil && sig == nil && cmd.Strategy == strategy.TelegramSignalName {
+		svc.saveTGPosition(context.Background()) // a hand stop must survive a restart
+	}
+	return sig, err
+}
+
+func (svc *Service) positionCommanderFor(name string) positionCommander {
+	if sr := svc.srByName(name); sr != nil {
+		return sr
+	}
+	if name == strategy.TelegramSignalName && svc.tgStrategy != nil {
+		return svc.tgStrategy
+	}
+	return nil
 }
 
 func (svc *Service) positionCommandVia(c positionCommander, cmd model.PositionCommand) (*strategy.Signal, error) {

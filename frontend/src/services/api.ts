@@ -380,6 +380,11 @@ export interface TelegramMessage {
     reason?: string;
     summary?: string;
     outcome?: string;
+    /** When tgsignal got the message, and how long the regex + LLM read took. */
+    received_at?: string;
+    read_ms?: number;
+    /** What stratengine did with the call, ms after receipt. */
+    timeline?: { event: string; ms: number }[];
 }
 
 export interface TelegramView {
