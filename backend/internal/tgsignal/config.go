@@ -40,6 +40,9 @@ type Config struct {
 	LLMAPIKey  string
 	LLMModel   string
 	LLMReason  string // reasoning_effort for reasoning models, "" = none
+	// DefaultSLPct gives a call without a stop ("Stoploss : PAID") a stop
+	// this % below its entry. 0 = such calls are refused.
+	DefaultSLPct int64
 }
 
 // LoadConfig reads all environment variables and returns a Config.
@@ -70,6 +73,7 @@ func LoadConfig() Config {
 		LLMAPIKey:     config.GetEnv("TG_LLM_API_KEY", ""),
 		LLMModel:      config.GetEnv("TG_LLM_MODEL", ""),
 		LLMReason:     config.GetEnv("TG_LLM_REASONING", ""),
+		DefaultSLPct:  int64(config.GetEnvInt("TG_DEFAULT_SL_PCT", 0)),
 	}
 }
 
@@ -82,6 +86,8 @@ func (c Config) Validate() error {
 		return fmt.Errorf("TG_SESSION_PATH cannot be empty")
 	case len(c.ChatIDs) == 0:
 		return fmt.Errorf("TG_CHAT_IDS is empty (go run ./cmd/tools/tglogin -list shows ids)")
+	case c.DefaultSLPct < 0 || c.DefaultSLPct >= 100:
+		return fmt.Errorf("TG_DEFAULT_SL_PCT %d must be 0-99", c.DefaultSLPct)
 	case c.LLM && (c.LLMAPIKey == "" || c.LLMModel == ""):
 		return fmt.Errorf("TG_LLM=on needs TG_LLM_API_KEY and TG_LLM_MODEL")
 	}

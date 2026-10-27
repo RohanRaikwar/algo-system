@@ -495,8 +495,8 @@ func (svc *Service) forceExitAllStrategies(reason string) []strategy.Signal {
 	for _, sr := range svc.srAll() {
 		sigs = append(sigs, sr.ForceExitAll(reason)...)
 	}
-	if svc.tgStrategy != nil {
-		sigs = append(sigs, svc.tgStrategy.ForceExitAll(reason)...)
+	for _, tg := range svc.tgStrategies {
+		sigs = append(sigs, tg.ForceExitAll(reason)...)
 	}
 	return sigs
 }

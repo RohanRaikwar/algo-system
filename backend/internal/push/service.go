@@ -13,6 +13,7 @@ import (
 const (
 	signalChannel  = model.SignalChannel
 	refusedChannel = model.RefusedChannel
+	tgOutcomeChan  = model.TGOutcomeChannel
 
 	backoffMin = 500 * time.Millisecond
 	backoffMax = 30 * time.Second
@@ -22,8 +23,9 @@ const (
 	queueSize = 64
 )
 
-// Service listens on pub:signal and pub:refused and pushes a notification
-// for each BUY/SELL/EXIT/WATCH_EXIT signal and each new refused entry.
+// Service listens on pub:signal, pub:refused and cmd:tgsignal:outcome and
+// pushes a notification for each BUY/SELL/EXIT/WATCH_EXIT signal, each new
+// refused entry and each Telegram call armed or stop raised.
 type Service struct {
 	sender  *Sender
 	rdb     *goredis.Client
@@ -46,7 +48,7 @@ func (svc *Service) Run(ctx context.Context) {
 
 	backoff := backoffMin
 	for ctx.Err() == nil {
-		ps := svc.rdb.Subscribe(ctx, signalChannel, refusedChannel)
+		ps := svc.rdb.Subscribe(ctx, signalChannel, refusedChannel, tgOutcomeChan)
 		if _, err := ps.Receive(ctx); err != nil {
 			ps.Close()
 			if ctx.Err() != nil {
@@ -59,7 +61,7 @@ func (svc *Service) Run(ctx context.Context) {
 			backoff = min(backoff*2, backoffMax)
 			continue
 		}
-		log.Println("[push] subscribed to pub:signal, pub:refused")
+		log.Println("[push] subscribed to pub:signal, pub:refused, cmd:tgsignal:outcome")
 		backoff = backoffMin
 		svc.route(ctx, ps.Channel())
 		ps.Close()
@@ -82,6 +84,10 @@ func (svc *Service) route(ctx context.Context, ch <-chan *goredis.Message) {
 				}
 			case refusedChannel:
 				for _, n := range svc.refused.Next([]byte(msg.Payload)) {
+					svc.enqueue(n)
+				}
+			case tgOutcomeChan:
+				if n, ok := FormatTGOutcome([]byte(msg.Payload)); ok {
 					svc.enqueue(n)
 				}
 			}

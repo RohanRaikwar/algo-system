@@ -24,7 +24,7 @@ func tgTick(token string, price int64, at time.Duration) model.Tick {
 }
 
 func newTG(t *testing.T) *TelegramSignal {
-	s := NewTelegramSignal(65, TelegramSignalConfig{TargetPct: 40, MaxChasePct: 5, MaxPriceGapPct: 40, ArmFor: 30 * time.Minute})
+	s := NewTelegramSignal("", 65, TelegramSignalConfig{TargetPct: 40, MaxChasePct: 5, MaxPriceGapPct: 40, ArmFor: 30 * time.Minute})
 	if _, err := s.Arm(tgArm()); err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +224,7 @@ func TestTGEvents(t *testing.T) {
 
 // The 22800 PE call: entry 172, SL 166, T1 184, T2 194. No caller exit.
 func ladderTG(t *testing.T, targets []int64) *TelegramSignal {
-	s := NewTelegramSignal(65, TelegramSignalConfig{MaxChasePct: 5, MaxPriceGapPct: 40, LadderTrailPct: 10, ArmFor: 30 * time.Minute})
+	s := NewTelegramSignal("", 65, TelegramSignalConfig{MaxChasePct: 5, MaxPriceGapPct: 40, LadderTrailPct: 10, ArmFor: 30 * time.Minute})
 	a := tgArm()
 	a.Call.TriggerPaise, a.Call.SLPaise, a.Call.Targets = 17200, 16600, targets
 	if _, err := s.Arm(a); err != nil {
@@ -300,7 +300,7 @@ func TestTGLadderSurvivesRestore(t *testing.T) {
 	s.OnTick(tgTick("45001", 19400, 2*time.Minute))
 	p := *s.Position()
 
-	r := NewTelegramSignal(65, TelegramSignalConfig{LadderTrailPct: 10})
+	r := NewTelegramSignal("", 65, TelegramSignalConfig{LadderTrailPct: 10})
 	r.Restore(p)
 	r.OnTick(tgTick("45001", 22700, 3*time.Minute))
 	if r.Position().SL != 20430 {
@@ -360,5 +360,98 @@ func TestTGSetLevels(t *testing.T) {
 	sig := s.OnTick(tgTick("45001", 9000, 3*time.Minute))
 	if sig == nil || sig.Action != ActionExit || !strings.HasPrefix(sig.Reason, "TG MANUAL STOP") {
 		t.Fatalf("manual stop exit %+v", sig)
+	}
+}
+
+// Every way a waiting call leaves without an entry reaches the drop hook.
+func TestTGDropHook(t *testing.T) {
+	cases := []struct {
+		name string
+		run  func(s *TelegramSignal)
+		want string
+	}{
+		{"stop before entry", func(s *TelegramSignal) { s.OnTick(tgTick("45001", 9900, time.Minute)) }, "hit stop"},
+		{"chase miss", func(s *TelegramSignal) { s.OnTick(tgTick("45001", 12700, time.Minute)) }, "missed"},
+		{"expired", func(s *TelegramSignal) { s.OnTick(tgTick("45001", 11000, 31*time.Minute)) }, "expired"},
+		{"caller cancel", func(s *TelegramSignal) { s.FollowUp(tgFollow(9, model.TGCancel, 0)) }, ""},
+		{"EOD", func(s *TelegramSignal) { s.ForceExitAll("EOD") }, "EOD"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := newTG(t)
+			var got []string
+			s.SetOnDrop(func(a TGArm, reason string) {
+				if a.IndexToken != "99926000" || a.Call.Strike != 24500 {
+					t.Errorf("arm %+v", a)
+				}
+				got = append(got, reason)
+			})
+			c.run(s)
+			if len(got) != 1 || !strings.Contains(got[0], c.want) {
+				t.Fatalf("drops %q, want one containing %q", got, c.want)
+			}
+		})
+	}
+
+	s := newTG(t)
+	s.SetOnDrop(func(TGArm, string) { t.Fatal("entry reported as drop") })
+	if sig := s.OnTick(tgTick("45001", 12100, time.Minute)); sig == nil {
+		t.Fatal("no entry")
+	}
+}
+
+// TRADE WITH VIKASH: a call waits for the caller's "Active" reply, never
+// for the price, and buys on it within the chase limit.
+func TestTGWaitActive(t *testing.T) {
+	newWait := func(t *testing.T) *TelegramSignal {
+		s := NewTelegramSignal("TG_VIKASH", 65, TelegramSignalConfig{MaxChasePct: 5, MaxPriceGapPct: 40, ArmFor: 15 * time.Minute, WaitActive: true})
+		if _, err := s.Arm(tgArm()); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	active := tgFollow(9, model.TGActivate, 0)
+
+	// Price through the entry does not buy; Active then buys at once.
+	s := newWait(t)
+	if sig := s.OnTick(tgTick("45001", 12300, time.Minute)); sig != nil {
+		t.Fatalf("bought on price: %+v", sig)
+	}
+	sig, res, err := s.FollowUp(active)
+	if err != nil || res != "ENTERED" || sig == nil || sig.Action != ActionBuy || sig.Price != 12300 || sig.StrategyName != "TG_VIKASH" {
+		t.Fatalf("active: %+v %s %v", sig, res, err)
+	}
+
+	// Active before any price: buys on the next tick, even below the entry.
+	s = newWait(t)
+	if sig, res, err := s.FollowUp(active); sig != nil || res != "ACTIVE" || err != nil {
+		t.Fatalf("active without price: %+v %s %v", sig, res, err)
+	}
+	if sig := s.OnTick(tgTick("45001", 11800, time.Minute)); sig == nil || sig.Price != 11800 {
+		t.Fatalf("no entry after Active: %+v", sig)
+	}
+
+	// Active with the premium past the chase limit: dropped, no trade.
+	s = newWait(t)
+	s.OnTick(tgTick("45001", 13000, time.Minute))
+	if sig, res, _ := s.FollowUp(active); sig != nil || res != "DROPPED" || len(s.Arms()) != 0 {
+		t.Fatalf("chased on Active: %+v %s", sig, res)
+	}
+
+	// The stop still drops a waiting call.
+	s = newWait(t)
+	s.OnTick(tgTick("45001", 9900, time.Minute))
+	if len(s.Arms()) != 0 {
+		t.Fatal("call kept after its stop")
+	}
+
+	// A strategy that buys on price ignores Active, and Active never exits a held trade.
+	s = newTG(t)
+	if _, _, err := s.FollowUp(active); err == nil {
+		t.Fatal("price strategy acted on Active")
+	}
+	s.OnTick(tgTick("45001", 12100, time.Minute))
+	if sig, _, err := s.FollowUp(active); sig != nil || err == nil || s.Position() == nil {
+		t.Fatalf("Active on a held trade: %+v %v", sig, err)
 	}
 }

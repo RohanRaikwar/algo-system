@@ -74,8 +74,8 @@ type signalOutcome struct {
 // publish and notify. The order is dispatched before the side work so
 // none of it can delay an exit.
 func (svc *Service) handleSignal(ctx context.Context, book *signalBook, sig strategy.Signal, now time.Time) {
-	if sig.StrategyName == strategy.TelegramSignalName {
-		defer svc.saveTGPosition(ctx)
+	if strategy.IsTelegramStrategy(sig.StrategyName) {
+		defer svc.saveTGPosition(ctx, sig.StrategyName)
 	}
 	if !svc.admitSignal(ctx, &sig, now) {
 		return
@@ -187,7 +187,7 @@ func (svc *Service) admitSignal(ctx context.Context, sig *strategy.Signal, now t
 			svc.cancelStrategyEntry(ctx, *sig, err.Error(), now)
 			return false
 		}
-	} else if sig.Action == strategy.ActionBuy && sig.StrategyName != strategy.TelegramSignalName {
+	} else if sig.Action == strategy.ActionBuy && !strategy.IsTelegramStrategy(sig.StrategyName) {
 		// A Telegram call names its own contract; it must not move the
 		// shared picker's tokens.
 		svc.applyOptionAutomation(ctx, sig, now)

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"slices"
 	"sync"
 	"time"
 
@@ -39,20 +40,24 @@ func (svc *Service) tgSignalLoop(ctx context.Context) {
 			log.Printf("[stratengine] ⏱ telegram call %s: sent→recv %dms, read %dms, published→here %dms",
 				call.Key(), call.ReceivedAt.Sub(call.SentAt).Milliseconds(), call.ReadMS, now.Sub(call.PublishedAt).Milliseconds())
 		}
+		tg := svc.tgForChat(call.ChatID)
 		res, err := svc.armTGSignal(ctx, call, now)
 		if err != nil {
 			log.Printf("[stratengine] 📵 telegram call %s refused: %v", call.Key(), err)
 			svc.publishTGOutcome(ctx, call.Key(), "REFUSED", err.Error())
+			token, exch := svc.tgIndexOf(call.Underlying)
 			svc.recordRefusedEntry(ctx, strategy.Signal{
-				StrategyName: strategy.TelegramSignalName,
+				StrategyName: tg.Name(),
 				Side:         call.Side(),
+				Token:        token,
+				Exchange:     exch,
 				Strike:       call.Strike,
 				Reason:       call.Text,
 			}, "telegram call: "+err.Error(), now)
 			return
 		}
 		if res == strategy.TGSLRaised {
-			svc.saveTGPosition(ctx)
+			svc.saveTGPosition(ctx, tg.Name())
 		}
 	})
 }
@@ -80,7 +85,7 @@ func (svc *Service) tgFollowUpLoop(ctx context.Context) {
 			svc.tfEngine.SendSignal(*sig)
 			return // handleSignal saves the position
 		}
-		svc.saveTGPosition(ctx)
+		svc.saveTGPosition(ctx, svc.tgForChat(f.ChatID).Name())
 	})
 }
 
@@ -89,7 +94,7 @@ func (svc *Service) tgFollowUp(f model.TGFollowUp, now time.Time) (*strategy.Sig
 	if !f.ReceivedAt.IsZero() && now.Sub(f.ReceivedAt) > tgSignalMaxAge {
 		return nil, "", fmt.Errorf("stale follow-up from %s", f.ReceivedAt.Format(time.RFC3339))
 	}
-	return svc.tgStrategy.FollowUp(f)
+	return svc.tgForChat(f.ChatID).FollowUp(f)
 }
 
 // tgSubscribe runs handle for each message on channel, resubscribing if
@@ -150,9 +155,10 @@ func (svc *Service) armTGSignal(ctx context.Context, call model.TGSignal, now ti
 		FNOExchange:   prof.FNOExchange,
 		FNOToken:      info.Token,
 		FNOSymbol:     info.Symbol,
+		Qty:           svc.tgQtyOf(prof),
 		ArmedAt:       now,
 	}
-	res, err := svc.tgStrategy.Arm(arm)
+	res, err := svc.tgForChat(call.ChatID).Arm(arm)
 	if err != nil {
 		return res, err
 	}
@@ -225,19 +231,106 @@ func (svc *Service) tgOutcome(callKey, event, detail string, now time.Time) mode
 	return o
 }
 
-// publishTGOutcomeAsync is the strategy's event callback: it runs under the
-// strategy lock, so it must not block.
-func (svc *Service) publishTGOutcomeAsync(callKey, event, detail string) {
+// publishTGOutcomeAsync is the event callback of the Telegram strategy
+// called name: it runs under the strategy lock, so it must not block.
+func (svc *Service) publishTGOutcomeAsync(name, callKey, event, detail string) {
 	go func() {
 		ctx := context.Background()
 		// A raised stop (ladder or follow-up) must survive a restart and
 		// show on the dashboard.
 		if event == strategy.TGSLRaised {
-			svc.saveTGPosition(ctx)
+			svc.saveTGPosition(ctx, name)
 			svc.publishLiveOrders(ctx)
 		}
 		svc.publishTGOutcome(ctx, callKey, event, detail)
 	}()
+}
+
+// onTGDrop puts a call dropped before entry on the chart as a refused
+// entry at its index. It runs on the tick path with the strategy locked,
+// so the Redis write is in a goroutine.
+func (svc *Service) onTGDrop(name string, a strategy.TGArm, reason string) {
+	sig := strategy.Signal{
+		StrategyName: name,
+		Side:         a.Call.Side(),
+		Token:        a.IndexToken,
+		Exchange:     a.IndexExchange,
+		Strike:       a.Call.Strike,
+		Reason:       a.Call.Text,
+	}
+	now := time.Now()
+	go svc.recordRefusedEntry(context.Background(), sig, "telegram call dropped: "+reason, now)
+}
+
+// buildTGStrategies makes TELEGRAM_SIGNAL plus one strategy per
+// STRAT_TG_CHANNELS chat, and the chat routing. Each holds its own trade.
+func (svc *Service) buildTGStrategies(cfg Config) []*strategy.TelegramSignal {
+	scfg := strategy.TelegramSignalConfig{
+		TargetPct:      cfg.TGTargetPct,
+		MaxChasePct:    cfg.TGMaxChasePct,
+		MaxPriceGapPct: cfg.TGMaxPriceGapPct,
+		LadderTrailPct: cfg.TGLadderTrailPct,
+		ArmFor:         time.Duration(cfg.TGArmMin) * time.Minute,
+	}
+	svc.tgStrategies = []*strategy.TelegramSignal{strategy.NewTelegramSignal(strategy.TelegramSignalName, cfg.Qty, scfg)}
+	svc.tgChats = make(map[int64]*strategy.TelegramSignal)
+	byName := make(map[string]*strategy.TelegramSignal)
+	for chat, name := range cfg.TGChannels {
+		s := byName[name]
+		if s == nil {
+			c := scfg
+			c.WaitActive = slices.Contains(cfg.TGWaitActive, name)
+			s = strategy.NewTelegramSignal(name, cfg.Qty, c)
+			byName[name] = s
+			svc.tgStrategies = append(svc.tgStrategies, s)
+		}
+		svc.tgChats[chat] = s
+	}
+	return svc.tgStrategies
+}
+
+// tgQtyOf is a Telegram call's signal quantity: STRAT_QTY for NIFTY, lots
+// × lot size for another underlying (SENSEX 20), as the executor sizes
+// the paper trade.
+func (svc *Service) tgQtyOf(p underlying.Profile) int64 {
+	if p.Key == underlying.Primary().Key {
+		return svc.cfg.Qty
+	}
+	return extraQty(svc.cfg.LiveLots, p)
+}
+
+// tgByName is the Telegram strategy called name, nil if none.
+func (svc *Service) tgByName(name string) *strategy.TelegramSignal {
+	for _, s := range svc.tgStrategies {
+		if s.Name() == name {
+			return s
+		}
+	}
+	return nil
+}
+
+// tgForChat is the strategy that trades chat's calls: its own channel
+// strategy, else TELEGRAM_SIGNAL.
+func (svc *Service) tgForChat(chat int64) *strategy.TelegramSignal {
+	if s := svc.tgChats[chat]; s != nil {
+		return s
+	}
+	return svc.tgByName(strategy.TelegramSignalName)
+}
+
+// tgIndexOf is the index token and exchange of a call's underlying, empty
+// when the underlying is not configured.
+func (svc *Service) tgIndexOf(key string) (token, exchange string) {
+	if key == underlying.Primary().Key {
+		p := underlying.Primary()
+		return p.IndexToken, p.IndexExchange
+	}
+	for _, ex := range svc.srExtras {
+		if ex.prof.Key == key {
+			return ex.prof.IndexToken, ex.prof.IndexExchange
+		}
+	}
+	return "", ""
 }
 
 // tgContract finds the call's contract offline: on expiry day today's
@@ -268,40 +361,49 @@ func (svc *Service) tgContract(call model.TGSignal, now time.Time) (underlying.P
 	return underlying.Profile{}, instruments.StrikeInfo{}, fmt.Errorf("%s not configured (INDEX_TOKEN)", call.Underlying)
 }
 
-// saveTGPosition stores the strategy's open trade, or clears it. Called
-// after every TELEGRAM_SIGNAL signal.
-func (svc *Service) saveTGPosition(ctx context.Context) {
-	if svc.tgStrategy == nil || svc.redisWriter == nil {
+// saveTGPosition stores the named Telegram strategy's open trade, or
+// clears it. Called after every Telegram strategy signal.
+func (svc *Service) saveTGPosition(ctx context.Context, name string) {
+	tg := svc.tgByName(name)
+	if tg == nil || svc.redisWriter == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	client := svc.redisWriter.Client()
-	p := svc.tgStrategy.Position()
+	key := model.TGPositionKeyFor(name)
+	p := tg.Position()
 	if p == nil {
-		if err := client.Del(ctx, model.TGPositionKey).Err(); err != nil {
+		if err := client.Del(ctx, key).Err(); err != nil {
 			log.Printf("[stratengine] tgsignal clear position: %v", err)
 		}
 		return
 	}
 	b, err := json.Marshal(p)
 	if err == nil {
-		err = client.Set(ctx, model.TGPositionKey, b, 24*time.Hour).Err()
+		err = client.Set(ctx, key, b, 24*time.Hour).Err()
 	}
 	if err != nil {
 		log.Printf("[stratengine] tgsignal save position: %v", err)
 	}
 }
 
-// restoreTGPosition reinstates the saved trade when the executor still
-// holds it, so its stop keeps working after a restart.
+// restoreTGPosition reinstates each Telegram strategy's saved trade when
+// the executor still holds it, so its stop keeps working after a restart.
 func (svc *Service) restoreTGPosition(ctx context.Context) {
-	if svc.tgStrategy == nil || svc.redisWriter == nil {
+	for _, tg := range svc.tgStrategies {
+		svc.restoreTGPositionOf(ctx, tg)
+	}
+}
+
+func (svc *Service) restoreTGPositionOf(ctx context.Context, tg *strategy.TelegramSignal) {
+	if svc.redisWriter == nil {
 		return
 	}
+	name := tg.Name()
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	raw, err := svc.redisWriter.Client().Get(ctx, model.TGPositionKey).Result()
+	raw, err := svc.redisWriter.Client().Get(ctx, model.TGPositionKeyFor(name)).Result()
 	if err != nil {
 		return
 	}
@@ -310,17 +412,17 @@ func (svc *Service) restoreTGPosition(ctx context.Context) {
 		log.Printf("[stratengine] tgsignal bad saved position: %v", err)
 		return
 	}
-	rec, ok := svc.orderExecutor.GetEntryOrder(strategy.TelegramSignalName, p.Arm.Call.Side())
+	rec, ok := svc.orderExecutor.GetEntryOrder(name, p.Arm.Call.Side())
 	if !ok || svc.unqualifyToken(rec.Token) != p.Arm.FNOToken {
-		log.Printf("[stratengine] tgsignal saved position %s no longer held — dropped", p.Arm.FNOSymbol)
-		svc.saveTGPosition(ctx)
+		log.Printf("[stratengine] %s saved position %s no longer held — dropped", name, p.Arm.FNOSymbol)
+		svc.saveTGPosition(ctx, name)
 		return
 	}
-	svc.tgStrategy.Restore(p)
-	svc.setLiveOrderFromPosition(strategy.TelegramSignalName, &strategy.LiveFNOPosition{
+	tg.Restore(p)
+	svc.setLiveOrderFromPosition(name, &strategy.LiveFNOPosition{
 		Side: p.Arm.Call.Side(), Token: p.Arm.FNOToken, EntryPrice: p.Entry, BestPrice: p.Best})
 	svc.publishSubscriptionMode(ctx, tgExchType(p.Arm.FNOExchange), svc.fnoSubscribeMode(), p.Arm.FNOToken)
-	log.Printf("[stratengine] tgsignal restored %s entry=%d sl=%d target=%d", p.Arm.FNOSymbol, p.Entry, p.SL, p.Target)
+	log.Printf("[stratengine] %s restored %s entry=%d sl=%d target=%d", name, p.Arm.FNOSymbol, p.Entry, p.SL, p.Target)
 }
 
 // tgExchType is the Angel WS exchange type of an option segment.
@@ -363,13 +465,14 @@ func (r *tgReceipts) get(key string) (time.Time, bool) {
 	return t, ok
 }
 
-// tgFilled reports a TELEGRAM_SIGNAL entry fill to the review log, the
-// last step of the call's latency timeline.
+// tgFilled reports a Telegram strategy's entry fill to the review log,
+// the last step of the call's latency timeline.
 func (svc *Service) tgFilled(f orderexec.FillReport) {
-	if svc.tgStrategy == nil || f.Signal.StrategyName != strategy.TelegramSignalName || f.Direction != "BUY" {
+	tg := svc.tgByName(f.Signal.StrategyName)
+	if tg == nil || f.Direction != "BUY" {
 		return
 	}
-	p := svc.tgStrategy.Position()
+	p := tg.Position()
 	if p == nil {
 		return
 	}

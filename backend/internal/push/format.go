@@ -7,6 +7,8 @@ package push
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"trading-systemv1/internal/model"
@@ -113,6 +115,42 @@ func FormatSignal(payload []byte) (n Notification, ok bool) {
 		}, true
 	}
 	return Notification{}, false
+}
+
+// tgPaise matches the paise levels in a TG outcome detail ("above 18000 SL 17200").
+var tgPaise = regexp.MustCompile(`\b(above|SL) (\d+)\b`)
+
+// FormatTGOutcome turns a cmd:tgsignal:outcome payload into a notification
+// for a call that starts waiting for its entry (ARMED) or a stop raised by
+// the caller or the ladder (SL_RAISED). Entries, exits and dropped calls
+// already notify through pub:signal and pub:refused.
+func FormatTGOutcome(payload []byte) (n Notification, ok bool) {
+	var o model.TGOutcome
+	if err := json.Unmarshal(payload, &o); err != nil {
+		return Notification{}, false
+	}
+	body := tgPaise.ReplaceAllStringFunc(o.Detail, func(m string) string {
+		parts := tgPaise.FindStringSubmatch(m)
+		p, err := strconv.ParseInt(parts[2], 10, 64)
+		if err != nil {
+			return m
+		}
+		return parts[1] + " " + Rupees(p)
+	})
+	var title string
+	switch o.Event {
+	case "ARMED":
+		title = "Telegram call waiting for entry"
+	case "SL_RAISED":
+		title = "Telegram stop raised"
+	default:
+		return Notification{}, false
+	}
+	var ts int64
+	if !o.TS.IsZero() {
+		ts = o.TS.UnixMilli()
+	}
+	return Notification{Title: title, Body: body, Tag: "tg-" + o.CallKey, URL: "/", TS: ts}, true
 }
 
 func joinReason(body, reason string) string {

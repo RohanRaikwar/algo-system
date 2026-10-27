@@ -44,9 +44,12 @@ type Service struct {
 
 	tfEngine   *strategy.TFEngine
 	srStrategy *strategy.Nifty50SR
-	srExtras   []*srExtra               // SR on underlyings beyond NIFTY (INDEX_TOKEN list)
-	tgStrategy *strategy.TelegramSignal // nil unless STRAT_TG_ENABLED
-	tgRecv     tgReceipts               // call key → tgsignal receipt time (latency timeline)
+	srExtras   []*srExtra // SR on underlyings beyond NIFTY (INDEX_TOKEN list)
+	// Telegram call strategies: TELEGRAM_SIGNAL first, then one per
+	// STRAT_TG_CHANNELS chat (tgChats routes those chats).
+	tgStrategies []*strategy.TelegramSignal
+	tgChats      map[int64]*strategy.TelegramSignal
+	tgRecv       tgReceipts // call key → tgsignal receipt time (latency timeline)
 
 	redisReader   *redisstore.Reader
 	redisWriter   *redisstore.Writer
@@ -255,18 +258,14 @@ func (svc *Service) buildStrategies(cfg Config) {
 		}
 	}
 	if cfg.TGEnabled {
-		svc.tgStrategy = strategy.NewTelegramSignal(cfg.Qty, strategy.TelegramSignalConfig{
-			TargetPct:      cfg.TGTargetPct,
-			MaxChasePct:    cfg.TGMaxChasePct,
-			MaxPriceGapPct: cfg.TGMaxPriceGapPct,
-			LadderTrailPct: cfg.TGLadderTrailPct,
-			ArmFor:         time.Duration(cfg.TGArmMin) * time.Minute,
-		})
-		svc.tgStrategy.SetOnEvent(svc.publishTGOutcomeAsync)
-		svc.tfEngine.Register(svc.tgStrategy)
-		registered++
-		log.Printf("[stratengine] 🟢 registered %s (Telegram calls on %s, ladder trail %d%%, fixed target %d%%)",
-			strategy.TelegramSignalName, model.TGSignalChannel, cfg.TGLadderTrailPct, cfg.TGTargetPct)
+		for _, s := range svc.buildTGStrategies(cfg) {
+			s.SetOnEvent(func(callKey, event, detail string) { svc.publishTGOutcomeAsync(s.Name(), callKey, event, detail) })
+			s.SetOnDrop(func(a strategy.TGArm, reason string) { svc.onTGDrop(s.Name(), a, reason) })
+			svc.tfEngine.Register(s)
+			registered++
+			log.Printf("[stratengine] 🟢 registered %s (Telegram calls on %s, ladder trail %d%%, fixed target %d%%)",
+				s.Name(), model.TGSignalChannel, cfg.TGLadderTrailPct, cfg.TGTargetPct)
+		}
 	}
 	if registered == 0 {
 		log.Println("[stratengine] ⚪ No strategies registered — all detached from engine")
@@ -430,12 +429,12 @@ func (svc *Service) Run(ctx context.Context) error {
 	}
 
 	// ── Dashboard position commands (cmd:position): paper SL/target/exit ──
-	if svc.cfg.SREnabled || svc.tgStrategy != nil {
+	if svc.cfg.SREnabled || len(svc.tgStrategies) > 0 {
 		go svc.positionCommandLoop(ctx)
 	}
 
 	// ── Telegram group calls (cmd:tgsignal) for TELEGRAM_SIGNAL ──
-	if svc.tgStrategy != nil {
+	if len(svc.tgStrategies) > 0 {
 		go svc.tgSignalLoop(ctx)
 		go svc.tgFollowUpLoop(ctx)
 	}

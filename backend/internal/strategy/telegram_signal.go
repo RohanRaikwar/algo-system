@@ -11,8 +11,18 @@ import (
 )
 
 // TelegramSignalName is the strategy name of trades taken from Telegram
-// calls. It is paper unless STRAT_LIVE_STRATEGIES names it.
-const TelegramSignalName = "TELEGRAM_SIGNAL"
+// calls. It is paper unless STRAT_LIVE_STRATEGIES names it. Channels with
+// their own trade (STRAT_TG_CHANNELS) run under names starting with
+// TelegramChannelPrefix, e.g. TG_VIKASH.
+const (
+	TelegramSignalName    = "TELEGRAM_SIGNAL"
+	TelegramChannelPrefix = "TG_"
+)
+
+// IsTelegramStrategy reports whether name is a Telegram call strategy.
+func IsTelegramStrategy(name string) bool {
+	return name == TelegramSignalName || strings.HasPrefix(name, TelegramChannelPrefix)
+}
 
 // TelegramSignalConfig tunes TelegramSignal.
 type TelegramSignalConfig struct {
@@ -32,6 +42,11 @@ type TelegramSignalConfig struct {
 	// the price is past the caller's last target. The ladder below it: T1
 	// moves the stop to our entry, each later target to the one before.
 	LadderTrailPct int64
+	// WaitActive: the caller confirms each call with an "Active" reply
+	// (TRADE WITH VIKASH). A call never buys on price; it buys on that
+	// reply, within MaxChasePct above the entry, and is dropped if the
+	// reply does not come within ArmFor.
+	WaitActive bool
 }
 
 // TGArm is a call waiting for its trigger, with its contract resolved.
@@ -42,9 +57,14 @@ type TGArm struct {
 	FNOExchange   string // NFO, BFO
 	FNOToken      string // bare option token
 	FNOSymbol     string
-	ArmedAt       time.Time
-	Seen          bool // a premium tick was checked against the trigger
-	Ticked        bool // FIRST_TICK reported
+	// Qty is the signal quantity for the contract's underlying (SENSEX:
+	// lots × 20); 0 = the strategy's qty (NIFTY STRAT_QTY).
+	Qty     int64
+	ArmedAt time.Time
+	Active  bool  // WaitActive: the caller said "Active", buy on the next price
+	Last    int64 // last premium seen (paise), 0 = none yet
+	Seen    bool  // a premium tick was checked against the trigger
+	Ticked  bool  // FIRST_TICK reported
 }
 
 func (a TGArm) key() string { return a.FNOExchange + ":" + a.FNOToken }
@@ -92,6 +112,7 @@ func firstTickDetail(t model.Tick) string {
 // trade at a time.
 type TelegramSignal struct {
 	mu   sync.Mutex
+	name string
 	qty  int64
 	cfg  TelegramSignalConfig
 	arms []TGArm
@@ -100,14 +121,21 @@ type TelegramSignal struct {
 	// onEvent reports what happened to a call (callKey = TGSignal.Key).
 	// Called with s.mu held: it must not block or call back.
 	onEvent func(callKey, event, detail string)
+	// onDrop reports a call dropped before entry (chart marker). Called
+	// with s.mu held: it must not block or call back.
+	onDrop func(a TGArm, reason string)
 }
 
 // NewTelegramSignal builds the strategy.
-func NewTelegramSignal(qty int64, cfg TelegramSignalConfig) *TelegramSignal {
+// name "" = TelegramSignalName.
+func NewTelegramSignal(name string, qty int64, cfg TelegramSignalConfig) *TelegramSignal {
+	if name == "" {
+		name = TelegramSignalName
+	}
 	if cfg.ArmFor <= 0 {
 		cfg.ArmFor = 30 * time.Minute
 	}
-	return &TelegramSignal{qty: qty, cfg: cfg}
+	return &TelegramSignal{name: name, qty: qty, cfg: cfg}
 }
 
 // SetOnEvent sets the event callback (review log). It must not block.
@@ -117,6 +145,22 @@ func (s *TelegramSignal) SetOnEvent(f func(callKey, event, detail string)) {
 	s.mu.Unlock()
 }
 
+// SetOnDrop sets the callback for calls dropped before entry. It must not
+// block.
+func (s *TelegramSignal) SetOnDrop(f func(a TGArm, reason string)) {
+	s.mu.Lock()
+	s.onDrop = f
+	s.mu.Unlock()
+}
+
+// drop reports a call that leaves the arms without an entry.
+func (s *TelegramSignal) drop(a TGArm, reason string) {
+	s.event(a.Call.Key(), "DROPPED", reason)
+	if s.onDrop != nil {
+		s.onDrop(a, reason)
+	}
+}
+
 func (s *TelegramSignal) event(callKey, event, detail string) {
 	log.Printf("[strategy] %s: call %s %s %s", s.Name(), callKey, event, detail)
 	if s.onEvent != nil {
@@ -124,7 +168,15 @@ func (s *TelegramSignal) event(callKey, event, detail string) {
 	}
 }
 
-func (s *TelegramSignal) Name() string { return TelegramSignalName }
+func (s *TelegramSignal) Name() string { return s.name }
+
+// qtyOf is a's signal quantity: its own, else the strategy's.
+func (s *TelegramSignal) qtyOf(a TGArm) int64 {
+	if a.Qty > 0 {
+		return a.Qty
+	}
+	return s.qty
+}
 
 func (s *TelegramSignal) OnTFCandle(model.TFCandle) *Signal { return nil }
 
@@ -228,6 +280,9 @@ func (s *TelegramSignal) FollowUp(f model.TGFollowUp) (*Signal, string, error) {
 		return nil, "", err
 	}
 	reason := fmt.Sprintf("TG CALLER %s msg=%s", strings.ToUpper(string(f.Action)), f.Key())
+	if f.Action == model.TGActivate {
+		return s.activate(held, armIdx, f)
+	}
 	switch {
 	case held && f.Action == model.TGMoveSL:
 		res, err := s.raiseSL(s.pos, f.NewSLPaise, "caller "+f.Key())
@@ -248,9 +303,52 @@ func (s *TelegramSignal) FollowUp(f model.TGFollowUp) (*Signal, string, error) {
 	default: // exit / sl_hit / target_hit / cancel before entry
 		a := s.arms[armIdx]
 		s.arms = append(s.arms[:armIdx], s.arms[armIdx+1:]...)
-		s.event(a.Call.Key(), "DROPPED", reason)
+		s.drop(a, reason)
 		return nil, "DROPPED", nil
 	}
+}
+
+// activate applies the caller's "Active" reply. Only a WaitActive
+// strategy acts on it; the others already buy on price. With a premium
+// already seen it buys now, else on the next tick. The caller holds s.mu.
+func (s *TelegramSignal) activate(held bool, armIdx int, f model.TGFollowUp) (*Signal, string, error) {
+	switch {
+	case !s.cfg.WaitActive:
+		return nil, "", fmt.Errorf("%s buys on price, not on Active", s.Name())
+	case held:
+		return nil, "", fmt.Errorf("call already held")
+	}
+	a := &s.arms[armIdx]
+	a.Active = true
+	s.event(a.Call.Key(), "ACTIVE", "caller "+f.Key())
+	if a.Last <= 0 {
+		return nil, "ACTIVE", nil
+	}
+	sig := s.tryActiveEntry(armIdx, a.Last, time.Now())
+	if sig == nil {
+		return nil, "DROPPED", nil
+	}
+	return sig, "ENTERED", nil
+}
+
+// tryActiveEntry buys an activated call at price, or drops it when the
+// premium is at its stop or ran past the chase limit. The caller holds s.mu.
+func (s *TelegramSignal) tryActiveEntry(i int, price int64, now time.Time) *Signal {
+	a := s.arms[i]
+	c := a.Call
+	drop := ""
+	switch {
+	case price <= c.SLPaise:
+		drop = fmt.Sprintf("premium %d at stop %d when Active", price, c.SLPaise)
+	case price*100 > c.TriggerPaise*(100+s.cfg.MaxChasePct):
+		drop = fmt.Sprintf("missed: premium %d more than %d%% above entry %d when Active", price, s.cfg.MaxChasePct, c.TriggerPaise)
+	}
+	if drop != "" {
+		s.drop(a, drop)
+		s.arms = append(s.arms[:i], s.arms[i+1:]...)
+		return nil
+	}
+	return s.enter(a, price, now)
 }
 
 // linkFollowUp finds the call f is about: held is true for the open
@@ -328,7 +426,7 @@ func (s *TelegramSignal) ForceExitAll(reason string) []Signal {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, a := range s.arms {
-		s.event(a.Call.Key(), "DROPPED", reason)
+		s.drop(a, reason)
 	}
 	s.arms = nil
 	if s.pos == nil {
@@ -410,6 +508,12 @@ func (s *TelegramSignal) OnTick(tick model.Tick) *Signal {
 		switch {
 		case !a.Seen && s.cfg.MaxPriceGapPct > 0 && gapPct(price, c.TriggerPaise) > s.cfg.MaxPriceGapPct:
 			drop = fmt.Sprintf("premium %d is more than %d%% from entry %d — call misread or wrong contract", price, s.cfg.MaxPriceGapPct, c.TriggerPaise)
+		case s.cfg.WaitActive && a.Active:
+			return s.tryActiveEntry(i, price, now)
+		case s.cfg.WaitActive && price > c.SLPaise:
+			// Waits for the caller's "Active", not for the price.
+			a.Seen, a.Last = true, price
+			return nil
 		case price <= c.SLPaise:
 			drop = fmt.Sprintf("premium %d hit stop %d before entry %d", price, c.SLPaise, c.TriggerPaise)
 		case price < c.TriggerPaise:
@@ -419,7 +523,7 @@ func (s *TelegramSignal) OnTick(tick model.Tick) *Signal {
 			drop = fmt.Sprintf("missed: premium %d more than %d%% above entry %d", price, s.cfg.MaxChasePct, c.TriggerPaise)
 		}
 		if drop != "" {
-			s.event(c.Key(), "DROPPED", drop)
+			s.drop(*a, drop)
 			s.arms = append(s.arms[:i], s.arms[i+1:]...)
 			return nil
 		}
@@ -476,7 +580,7 @@ func (s *TelegramSignal) expire(now time.Time) {
 	kept := s.arms[:0]
 	for _, a := range s.arms {
 		if now.Sub(a.ArmedAt) > s.cfg.ArmFor {
-			s.event(a.Call.Key(), "DROPPED", fmt.Sprintf("expired: no entry %d within %s", a.Call.TriggerPaise, s.cfg.ArmFor))
+			s.drop(a, fmt.Sprintf("expired: no entry %d within %s", a.Call.TriggerPaise, s.cfg.ArmFor))
 			continue
 		}
 		kept = append(kept, a)
@@ -499,7 +603,7 @@ func (s *TelegramSignal) enter(a TGArm, price int64, now time.Time) *Signal {
 		Side:         c.Side(),
 		Token:        a.IndexToken,
 		Exchange:     a.IndexExchange,
-		Qty:          s.qty,
+		Qty:          s.qtyOf(a),
 		Price:        price,
 		FNOToken:     a.FNOToken,
 		FNOSymbol:    a.FNOSymbol,
@@ -520,7 +624,7 @@ func (s *TelegramSignal) exit(reason string) *Signal {
 		Side:          p.Arm.Call.Side(),
 		Token:         p.Arm.IndexToken,
 		Exchange:      p.Arm.IndexExchange,
-		Qty:           s.qty,
+		Qty:           s.qtyOf(p.Arm),
 		EntryFNOPrice: p.Entry,
 		FNOToken:      p.Arm.FNOToken,
 		FNOSymbol:     p.Arm.FNOSymbol,

@@ -34,6 +34,8 @@ type LLMResult struct {
 	Reason     string   `json:"reason"`
 	// Usage is the request's token count (set by the reader, not the model).
 	Usage Usage `json:"-"`
+	// slDefault: SL was missing and set by llmWithDefaultSL.
+	slDefault bool
 }
 
 // Call converts a new_call reading into a TGSignal (without message ids).
@@ -44,6 +46,7 @@ func (r LLMResult) Call() model.TGSignal {
 		OptionType:   strings.ToUpper(r.OptionType),
 		TriggerPaise: toPaise(cleanPrice(r.Trigger)),
 		SLPaise:      toPaise(cleanPrice(r.SL)),
+		SLDefault:    r.slDefault,
 	}
 	for _, t := range r.Targets {
 		if p := toPaise(cleanPrice(t)); p > 0 {
@@ -78,7 +81,7 @@ type CallReader interface {
 const llmSystemPrompt = `Extract trade instructions from an Indian options Telegram group (Hinglish) as JSON.
 First write "english": the message translated to plain English (short). Then decide every other field from that English meaning.
 
-kind new_call: a NEW option buy, even if it also says "Wait for entry", "Candle closing ka wait karna" or has a disclaimer. "BUY NIFTY PE 22750" = strike 22750, PE (CALL=CE, PUT=PE). "Near Above 191"/"above 191"/"@191" -> trigger "191". "Stop Loss ₹182"/"SL 182" -> sl "182"; "SL 15 point" -> sl = trigger-15. targets: all target prices in order, skip 1st/2nd words. Prices are premiums, never the strike. Two different contracts, levels for tomorrow, or a missing entry/SL -> confidence "low".
+kind new_call: a NEW option buy, even if it also says "Wait for entry", "Candle closing ka wait karna" or has a disclaimer. "BUY NIFTY PE 22750" = strike 22750, PE (CALL=CE, PUT=PE). "Near Above 191"/"above 191"/"@191" -> trigger "191". "Stop Loss ₹182"/"SL 182" -> sl "182"; "SL 15 point" -> sl = trigger-15. targets: all target prices in order, skip 1st/2nd words. Prices are premiums, never the strike. "ENTRY PRICE ➖ 50" -> trigger "50" (a call even without the word BUY). "Stoploss : PAID"/"SL paid" (stop kept for paid members) -> sl "" and does not lower confidence; numbered "Target 1 60, Target 2 80" -> targets ["60","80"]. Two different contracts, levels for tomorrow, or a missing entry -> confidence "low".
 
 kind follow_up: about an earlier call (reply text given).
 - exit: "exit", "ctc exit", "close", "book full profit", "niklo", "jaldi niklo", "nikal jao", "bahar aa jao", "exit kar do". An exit needs no price: English "get out"/"exit"/"close" about the call = exit.
@@ -87,7 +90,7 @@ kind follow_up: about an earlier call (reply text given).
 - move_sl: "Sl ctc kar lena"/"SL cost" -> new_sl = replied call's entry; "sl 112 par le aao" -> new_sl "112"; no price -> new_sl ""
 - cancel: "avoid", "cancel", "skip"
 
-kind noise: messages with no call or follow-up: price ticks "193🔥", "Active", a lone "wait for entry", "First target done", "Abi ctc h", partial booking "Kuchh profit book kar lena", optional advice "Safe trader exit kar sakte h"/"Only risky traders", promotions, gold/forex.
+kind noise: messages with no call or follow-up: price ticks "193🔥"/"55 ✅", result recaps "280 To 400"/"70 ➜ 150 Target HIT", "Active", a lone "wait for entry", "First target done", "Abi ctc h", partial booking "Kuchh profit book kar lena", optional advice "Safe trader exit kar sakte h"/"Only risky traders", promotions, gold/forex.
 
 Unused: "" strings, 0 strike, [] targets, action "none". confidence "high" only if every needed field is explicit. reason: few words.`
 

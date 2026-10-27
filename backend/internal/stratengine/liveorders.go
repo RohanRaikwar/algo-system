@@ -269,7 +269,7 @@ func (svc *Service) liveOrderPayload(strategyName string, side strategy.Position
 // and any hand-set premium stop to a single-leg order.
 func (svc *Service) addPositionLevels(p *liveOrderPayload) {
 	p.Real = svc.isRealStrategy(p.StrategyName)
-	if p.StrategyName == strategy.TelegramSignalName {
+	if strategy.IsTelegramStrategy(p.StrategyName) {
 		svc.addTGLevels(p)
 		return
 	}
@@ -290,10 +290,11 @@ func (svc *Service) addPositionLevels(p *liveOrderPayload) {
 // addTGLevels adds a Telegram trade's premium stop and target. Its stop is
 // the call's (raised by the ladder, the caller or by hand), not a %.
 func (svc *Service) addTGLevels(p *liveOrderPayload) {
-	if svc.tgStrategy == nil || p.Leg != "" {
+	tg := svc.tgByName(p.StrategyName)
+	if tg == nil || p.Leg != "" {
 		return
 	}
-	pos := svc.tgStrategy.Position()
+	pos := tg.Position()
 	if pos == nil || pos.Arm.Call.Side() != p.Side || pos.Arm.FNOToken != svc.unqualifyToken(p.FNOToken) {
 		return
 	}

@@ -34,6 +34,7 @@ const maxEditAge = 30 * time.Minute
 type handler struct {
 	chats   map[int64]bool
 	maxAge  time.Duration
+	slPct   int64      // default stop % for calls without one, 0 = refuse
 	reader  CallReader // nil = regex only
 	journal *Journal   // nil = no review log
 
@@ -49,7 +50,7 @@ type handler struct {
 
 func newHandler(cfg Config, reader CallReader, journal *Journal, publishCall func(model.TGSignal) error, publishFollowUp func(model.TGFollowUp) error) *handler {
 	h := &handler{
-		chats: make(map[int64]bool), maxAge: cfg.MaxAge, reader: reader, journal: journal,
+		chats: make(map[int64]bool), maxAge: cfg.MaxAge, slPct: cfg.DefaultSLPct, reader: reader, journal: journal,
 		publishCall: publishCall, publishFollowUp: publishFollowUp, seen: make(map[string]time.Time),
 	}
 	for _, id := range cfg.ChatIDs {
@@ -84,9 +85,12 @@ func (h *handler) onMessage(ctx context.Context, m inMsg, now time.Time) {
 
 	readStart := time.Now()
 	rx, rxErr := Parse(m.Text)
+	rx, rxErr = withDefaultSL(rx, rxErr, h.slPct)
 	entry.Regex = regexView(rx, rxErr)
 	var d decision
 	switch {
+	case reActive.MatchString(m.Text) && h.replyToCall(m):
+		d = activeReply()
 	case h.reader == nil:
 		d = decideRegex(rx, rxErr)
 	case !needsLLM(m.Text, h.replyToCall(m)):
@@ -112,7 +116,7 @@ func (h *handler) onMessage(ctx context.Context, m inMsg, now time.Time) {
 			entry.LLM = res
 			log.Printf("[tgsignal] 🗣 %d:%d in English: %q → %s", m.ChatID, m.MsgID, res.English, res.Kind)
 		}
-		d = decide(rx, rxErr, res, err)
+		d = decide(rx, rxErr, llmWithDefaultSL(res, h.slPct), err)
 	}
 	entry.Verdict, entry.Reason = d.verdict, d.reason
 	entry.ReadMS = time.Since(readStart).Milliseconds()
@@ -166,7 +170,11 @@ func (d decision) summary() string {
 	switch {
 	case d.call != nil:
 		c := d.call
-		return fmt.Sprintf("BUY %s %d%s above %s SL %s (%s)", c.Underlying, c.Strike, c.OptionType, rupees(c.TriggerPaise), rupees(c.SLPaise), c.Source)
+		sl := rupees(c.SLPaise)
+		if c.SLDefault {
+			sl += " default"
+		}
+		return fmt.Sprintf("BUY %s %d%s above %s SL %s (%s)", c.Underlying, c.Strike, c.OptionType, rupees(c.TriggerPaise), sl, c.Source)
 	case d.followUp != nil:
 		f := d.followUp
 		if f.Action == model.TGMoveSL {
@@ -185,8 +193,7 @@ func (h *handler) replyToCall(m inMsg) bool {
 	if m.ReplyTo == 0 || h.journal == nil {
 		return false
 	}
-	_, err := Parse(h.journal.TextOf(m.ChatID, m.ReplyTo))
-	return err == nil
+	return isCall(h.journal.TextOf(m.ChatID, m.ReplyTo))
 }
 
 func (h *handler) record(e Entry) {
