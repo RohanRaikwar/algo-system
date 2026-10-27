@@ -104,6 +104,15 @@ describe('levelsLine', () => {
         expect(levelsLine(reason)).toBe('LVL 22736.20  SL 22775.40  TGT 22663.32');
         expect(levelsLine('EMA cross up')).toBe('');
     });
+
+    it('reads TELEGRAM_SIGNAL levels as premiums', () => {
+        const reason = 'TG ENTRY NIFTY 22700CE trigger=18000 premium=18050 sl=17200 target=20700 msg=1:1836 src=AGREE';
+        expect(levelsLine(reason, 'TELEGRAM_SIGNAL')).toBe('Entry ₹180.00  SL ₹172.00  TGT ₹207.00 (premium)');
+        expect(levelsLine('TG ENTRY NIFTY 22700CE trigger=18000 premium=18050 sl=17200 target=0', 'TELEGRAM_SIGNAL'))
+            .toBe('Entry ₹180.00  SL ₹172.00 (premium)');
+        expect(levelsLine('TG ENTRY SENSEX 74700CE trigger=28000 premium=28000 sl=25200 target=0', 'TG_TCI'))
+            .toBe('Entry ₹280.00  SL ₹252.00 (premium)');
+    });
 });
 
 describe('reasonLines', () => {

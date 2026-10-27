@@ -2,6 +2,7 @@ package stratengine
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -104,6 +105,14 @@ type Config struct {
 	// TGMaxPriceGapPct one whose entry is this % from the live premium.
 	TGMaxStrikeGapPct int64
 	TGMaxPriceGapPct  int64
+	// TGChannels gives a Telegram chat its own strategy (one trade per
+	// channel): chat id → name starting with TG_. Other chats trade as
+	// TELEGRAM_SIGNAL. STRAT_TG_CHANNELS=4340040418=TG_VIKASH,…
+	TGChannels map[int64]string
+	// TGWaitActive names the channel strategies whose caller confirms each
+	// call with an "Active" reply: they buy on that reply, not on price.
+	// STRAT_TG_WAIT_ACTIVE=TG_VIKASH
+	TGWaitActive []string
 
 	// ── NIFTY50_SR: regime-aware support/resistance, paper only ──
 	SREnabled       bool
@@ -238,6 +247,8 @@ func LoadConfig() Config {
 		RangeMaxBuyIV:         getEnvFloat("STRAT_RANGE_MAX_BUY_IV", 25),
 		RangeCostMultiple:     config.GetEnvInt64("STRAT_RANGE_COST_MULTIPLE", 3),
 		TGEnabled:             config.GetEnvBool("STRAT_TG_ENABLED", false),
+		TGChannels:            parseTGChannels(config.GetEnv("STRAT_TG_CHANNELS", "")),
+		TGWaitActive:          splitList(strings.ToUpper(config.GetEnv("STRAT_TG_WAIT_ACTIVE", ""))),
 		TGTargetPct:           config.GetEnvInt64("STRAT_TG_TARGET_PCT", 0),
 		TGLadderTrailPct:      config.GetEnvInt64("STRAT_TG_LADDER_TRAIL_PCT", 10),
 		TGMaxChasePct:         config.GetEnvInt64("STRAT_TG_MAX_CHASE_PCT", 5),
@@ -388,6 +399,25 @@ func splitList(v string) []string {
 		if s = strings.TrimSpace(s); s != "" {
 			out = append(out, s)
 		}
+	}
+	return out
+}
+
+// parseTGChannels reads "chat=NAME,chat=NAME". Chat ids may be Bot API
+// style ("-100…"). Entries with a bad id or a name not starting with TG_
+// are skipped with a log line.
+func parseTGChannels(v string) map[int64]string {
+	out := make(map[int64]string)
+	for _, item := range splitList(v) {
+		id, name, ok := strings.Cut(item, "=")
+		name = strings.ToUpper(strings.TrimSpace(name))
+		id = strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(id), "-100"), "-")
+		chat, err := strconv.ParseInt(id, 10, 64)
+		if !ok || err != nil || chat <= 0 || !strings.HasPrefix(name, "TG_") || len(name) <= len("TG_") {
+			log.Printf("[stratengine] STRAT_TG_CHANNELS: skipped %q (want chat=TG_NAME)", item)
+			continue
+		}
+		out[chat] = name
 	}
 	return out
 }

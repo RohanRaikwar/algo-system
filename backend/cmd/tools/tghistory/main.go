@@ -76,7 +76,7 @@ func main() {
 				reply = fmt.Sprintf(" ↩ #%d", m.ReplyTo)
 			}
 			fmt.Printf("── #%d %s%s\n%s\n", m.MsgID, m.Sent.Local().Format("01-02 15:04"), reply, strings.TrimSpace(m.Text))
-			fmt.Printf("   => %s\n", tgsignal.Explain(ctx, reader, m.Text, texts[m.ReplyTo], m.ReplyTo != 0))
+			fmt.Printf("   => %s\n", tgsignal.Explain(ctx, reader, m.Text, texts[m.ReplyTo], m.ReplyTo != 0, cfg.DefaultSLPct))
 		}
 		if out != nil {
 			fmt.Printf("wrote %d messages to %s\n", len(msgs), *dump)

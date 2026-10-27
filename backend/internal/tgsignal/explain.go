@@ -2,8 +2,12 @@ package tgsignal
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"regexp"
 	"time"
+
+	"trading-systemv1/internal/model"
 )
 
 // HistoryMsg is one past message (tghistory, golden test set).
@@ -15,11 +19,14 @@ type HistoryMsg struct {
 }
 
 // Explain runs the service's decision on one message and describes it.
-// reader nil = regex only.
-func Explain(ctx context.Context, reader CallReader, text, replyText string, isReply bool) string {
+// reader nil = regex only. slPct is TG_DEFAULT_SL_PCT.
+func Explain(ctx context.Context, reader CallReader, text, replyText string, isReply bool, slPct int64) string {
 	rx, rxErr := Parse(text)
+	rx, rxErr = withDefaultSL(rx, rxErr, slPct)
 	var d decision
 	switch {
+	case isReply && reActive.MatchString(text) && isCall(replyText):
+		d = activeReply()
 	case reader == nil:
 		d = decideRegex(rx, rxErr)
 	case !needsLLM(text, isReply && replyText != "" && isCall(replyText)):
@@ -28,7 +35,7 @@ func Explain(ctx context.Context, reader CallReader, text, replyText string, isR
 		rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		res, err := reader.Read(rctx, text, replyText)
 		cancel()
-		d = decide(rx, rxErr, res, err)
+		d = decide(rx, rxErr, llmWithDefaultSL(res, slPct), err)
 		if err == nil {
 			d.reason = fmt.Sprintf("EN: %s | %s (tokens %d)", res.English, d.reason, res.Usage.Total)
 		}
@@ -45,5 +52,13 @@ func Explain(ctx context.Context, reader CallReader, text, replyText string, isR
 
 func isCall(text string) bool {
 	_, err := Parse(text)
-	return err == nil
+	return err == nil || errors.Is(err, ErrNoSL)
+}
+
+// reActive is the caller's "Active 🔥🔥" reply: the call is live, take it.
+var reActive = regexp.MustCompile(`(?i)^\W*active\b`)
+
+// activeReply is the activate follow-up for an "Active" reply to a call.
+func activeReply() decision {
+	return decision{verdict: VerdictFollowUp, reason: "caller says Active", followUp: &model.TGFollowUp{Action: model.TGActivate}}
 }

@@ -15,16 +15,19 @@ import (
 // Prices are option premiums in paise. Targets are the caller's and are
 // only logged; the trade uses its own target.
 type TGSignal struct {
-	ChatID       int64     `json:"chat_id"`
-	MsgID        int       `json:"msg_id"`
-	Underlying   string    `json:"underlying"`  // NIFTY, SENSEX
-	Strike       int64     `json:"strike"`      // index points
-	OptionType   string    `json:"option_type"` // CE or PE
-	TriggerPaise int64     `json:"trigger_paise"`
-	SLPaise      int64     `json:"sl_paise"`
-	Targets      []int64   `json:"targets,omitempty"` // paise
-	Text         string    `json:"text,omitempty"`
-	ReceivedAt   time.Time `json:"received_at"`
+	ChatID       int64  `json:"chat_id"`
+	MsgID        int    `json:"msg_id"`
+	Underlying   string `json:"underlying"`  // NIFTY, SENSEX
+	Strike       int64  `json:"strike"`      // index points
+	OptionType   string `json:"option_type"` // CE or PE
+	TriggerPaise int64  `json:"trigger_paise"`
+	SLPaise      int64  `json:"sl_paise"`
+	// SLDefault: the message gave no stop ("Stoploss : PAID"), so SLPaise
+	// is TG_DEFAULT_SL_PCT below the trigger.
+	SLDefault  bool      `json:"sl_default,omitempty"`
+	Targets    []int64   `json:"targets,omitempty"` // paise
+	Text       string    `json:"text,omitempty"`
+	ReceivedAt time.Time `json:"received_at"`
 	// Latency stamps, review only: the Telegram send time (1 s
 	// resolution), how long the regex + LLM read took, and when the call
 	// was published.

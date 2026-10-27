@@ -14,6 +14,9 @@ const (
 	TGTargetHit TGFollowUpAction = "target_hit" // "all targets done"
 	TGMoveSL    TGFollowUpAction = "move_sl"    // "SL cost", "trail SL 200"
 	TGCancel    TGFollowUpAction = "cancel"     // "avoid", "cancel this call"
+	// TGActivate is the caller's "Active 🔥" reply: take the waiting call
+	// now. Only channels that wait for it (STRAT_TG_WAIT_ACTIVE) act on it.
+	TGActivate TGFollowUpAction = "activate"
 )
 
 // TGFollowUp is the caller's message about an earlier call. ReplyToMsgID
@@ -45,7 +48,7 @@ func (f TGFollowUp) Key() string { return fmt.Sprintf("%d:%d", f.ChatID, f.MsgID
 // Validate checks the action is known and a stop move names a stop.
 func (f TGFollowUp) Validate() error {
 	switch f.Action {
-	case TGExit, TGSLHit, TGTargetHit, TGCancel:
+	case TGExit, TGSLHit, TGTargetHit, TGCancel, TGActivate:
 	case TGMoveSL:
 		if f.NewSLPaise <= 0 {
 			return fmt.Errorf("move_sl without a stop")

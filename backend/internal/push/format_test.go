@@ -147,3 +147,23 @@ func TestRupees(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatTGOutcome(t *testing.T) {
+	armed := `{"call_key":"4319557491:1836","event":"ARMED","detail":"NIFTY27OCT2622700CE above 18000 SL 17200 (AGREE), waits 30m","ts":"2026-10-27T04:41:52Z"}`
+	n, ok := FormatTGOutcome([]byte(armed))
+	if !ok || n.Title != "Telegram call waiting for entry" || n.Tag != "tg-4319557491:1836" ||
+		n.Body != "NIFTY27OCT2622700CE above ₹180.00 SL ₹172.00 (AGREE), waits 30m" || n.TS != 1793076112000 {
+		t.Fatalf("armed = %+v", n)
+	}
+	if n, ok := FormatTGOutcome([]byte(`{"call_key":"1:2","event":"SL_RAISED","detail":"ladder T1: stop to entry"}`)); !ok || n.Title != "Telegram stop raised" {
+		t.Fatalf("sl raised = %+v %v", n, ok)
+	}
+	for _, ev := range []string{"ENTERED", "EXIT", "DROPPED", "REFUSED", "FIRST_TICK"} {
+		if _, ok := FormatTGOutcome([]byte(`{"call_key":"1:2","event":"` + ev + `"}`)); ok {
+			t.Fatalf("%s notified: covered by pub:signal / pub:refused", ev)
+		}
+	}
+	if _, ok := FormatTGOutcome([]byte(`not json`)); ok {
+		t.Fatal("bad payload notified")
+	}
+}

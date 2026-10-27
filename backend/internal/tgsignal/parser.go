@@ -16,6 +16,11 @@ import (
 // updates like "target done", exits).
 var ErrNotACall = errors.New("not a buy call")
 
+// ErrNoSL is returned, with the parsed call, for a call that is complete
+// except for its stop ("Stoploss : PAID"). The reader may give it a
+// default stop (TG_DEFAULT_SL_PCT).
+var ErrNoSL = errors.New("no stop loss")
+
 var (
 	reBuy        = regexp.MustCompile(`\bBUY\b`)
 	reUnderlying = regexp.MustCompile(`\b(BANKNIFTY|FINNIFTY|MIDCPNIFTY|NIFTY|SENSEX|BANKEX)\b`)
@@ -24,6 +29,10 @@ var (
 	reTrigger  = regexp.MustCompile(`\b(?:ENTRY|ABOVE|NEAR|AROUND|BUY\s+AT)\b|@`)
 	reSL       = regexp.MustCompile(`\b(?:SL|STOP\s*LOSS|STOPLOSS)\b`)
 	reTarget   = regexp.MustCompile(`\b(?:TARGETS?|TGTS?)\b`)
+	// "Target 1 ⛔️ 60": a numbered target line, one price each.
+	reTargetN = regexp.MustCompile(`\b(?:TARGETS?|TGTS?)\s*\d\b[^\d\n]*(\d+(?:\.\d+)?)`)
+	// "ENTRY PRICE ➖ 50" with targets is a call even without the word BUY.
+	reEntry = regexp.MustCompile(`\bENTRY\b`)
 	// "SL 15 point" / "SL 15 pts": a distance below the entry, not a price.
 	reSLPoints = regexp.MustCompile(`\b(?:SL|STOP\s*LOSS|STOPLOSS)\b\s*[:=\-]?\s*₹?\s*(\d+(?:\.\d+)?)\s*(?:POINTS?|PTS?|POINT)\b`)
 	reOrdinal  = regexp.MustCompile(`\b\d+\s*(?:ST|ND|RD|TH)\b`)
@@ -39,7 +48,7 @@ var supported = map[string]bool{"NIFTY": true, "SENSEX": true}
 func Parse(text string) (model.TGSignal, error) {
 	up := strings.ToUpper(text)
 	var sig model.TGSignal
-	if !reBuy.MatchString(up) {
+	if !reBuy.MatchString(up) && !(reEntry.MatchString(up) && reTarget.MatchString(up)) {
 		return sig, ErrNotACall
 	}
 	c := reContract.FindStringSubmatch(up)
@@ -79,8 +88,23 @@ func Parse(text string) (model.TGSignal, error) {
 	} else if n := numbersAfter(rest, reSL); len(n) > 0 {
 		sig.SLPaise = n[0]
 	}
-	sig.Targets = numbersAfter(rest, reTarget)
+	if m := reTargetN.FindAllStringSubmatch(rest, -1); len(m) > 0 {
+		for _, t := range m {
+			sig.Targets = append(sig.Targets, toPaise(t[1]))
+		}
+	} else {
+		sig.Targets = numbersAfter(rest, reTarget)
+	}
 	sig.Text = text
+	if sig.SLPaise == 0 {
+		// Complete but for the stop: ErrNoSL, else the real problem.
+		withSL := sig
+		withSL.SLPaise = 1
+		if err := withSL.Validate(); err != nil {
+			return sig, err
+		}
+		return sig, ErrNoSL
+	}
 	if err := sig.Validate(); err != nil {
 		return sig, err
 	}

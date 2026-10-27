@@ -107,7 +107,8 @@ const (
 	TGOutcomesKey = "tgsignal:outcomes"
 	TGTimelineKey = "tgsignal:timeline"
 	// TGPositionKey holds TELEGRAM_SIGNAL's open trade (strategy.TGPosition)
-	// so a stratengine restart keeps the call's stop. Key only.
+	// so a stratengine restart keeps the call's stop. Key only. A channel
+	// strategy (TG_VIKASH, …) uses TGPositionKeyFor.
 	TGPositionKey = "tgsignal:position"
 
 	// TradingConfigChannel announces a dashboard config change stored in
@@ -126,3 +127,13 @@ const (
 	// IndicatorConfigChannel pushes indicator config (gateway → indengine).
 	IndicatorConfigChannel = "config:indicators"
 )
+
+// TGPositionKeyFor is the saved-trade key of a Telegram strategy:
+// TGPositionKey for TELEGRAM_SIGNAL, "tgsignal:position:<NAME>" for a
+// channel strategy.
+func TGPositionKeyFor(name string) string {
+	if name == "" || name == "TELEGRAM_SIGNAL" {
+		return TGPositionKey
+	}
+	return TGPositionKey + ":" + name
+}

@@ -64,9 +64,29 @@ function metaLine(strategy: string, ts: string, ...extra: string[]): string {
 // Price levels the strategy writes into its reason as paise ints, e.g. "level=2273620".
 const LEVEL_KEYS: Array<[string, string]> = [['level', 'LVL'], ['stop', 'SL'], ['target', 'TGT']];
 
+/** TELEGRAM_SIGNAL or a channel's own Telegram strategy (TG_VIKASH, …). */
+export function isTelegramStrategy(name: string | undefined): boolean {
+    return name === 'TELEGRAM_SIGNAL' || (name ?? '').startsWith('TG_');
+}
+
+// Telegram levels are option premiums, not index points.
+const TG_LEVEL_KEYS: Array<[string, string]> = [['trigger', 'Entry'], ['sl', 'SL'], ['target', 'TGT']];
+
+/** "Entry ₹180.00  SL ₹172.00  TGT ₹207.00 (premium)" from a TG reason; empty when none. */
+function tgLevelsLine(reason: string): string {
+    const parts: string[] = [];
+    for (const [key, short] of TG_LEVEL_KEYS) {
+        const m = reason.match(new RegExp(`\\b${key}=(\\d+)\\b`));
+        const paise = m ? parseInt(m[1], 10) : 0;
+        if (paise > 0) parts.push(`${short} ${rupees(paise)}`);
+    }
+    return parts.length > 0 ? `${parts.join('  ')} (premium)` : '';
+}
+
 /** "LVL 22736.20  SL 22775.40  TGT 22663.32" from the reason; empty when none. */
-export function levelsLine(reason: string | undefined): string {
+export function levelsLine(reason: string | undefined, strategy?: string): string {
     if (!reason) return '';
+    if (isTelegramStrategy(strategy)) return tgLevelsLine(reason);
     const parts: string[] = [];
     for (const [key, short] of LEVEL_KEYS) {
         const m = reason.match(new RegExp(`\\b${key}\\s*[=:]\\s*(\\d+)\\b`, 'i'));
@@ -134,7 +154,7 @@ function entryLines(s: SignalRecord): string[] {
     const pick = pickLine(s);
     if (pick) lines.push(pick);
     if (s.qty && s.qty > 0) lines.push(`qty ${s.qty}`);
-    const levels = levelsLine(s.reason);
+    const levels = levelsLine(s.reason, s.strategy);
     if (levels) lines.push(levels);
     const warns = reasonWarnings(s.reason);
     if (warns.length > 0) lines.push(`⚠ ${warns.map(warnLabel).join(', ')}`);
