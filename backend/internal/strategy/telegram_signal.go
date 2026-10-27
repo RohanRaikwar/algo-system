@@ -63,8 +63,12 @@ type TGArm struct {
 	ArmedAt time.Time
 	Active  bool  // WaitActive: the caller said "Active", buy on the next price
 	Last    int64 // last premium seen (paise), 0 = none yet
-	Seen    bool  // a premium tick was checked against the trigger
-	Ticked  bool  // FIRST_TICK reported
+	// AboveSL: a premium above the call's stop was seen. Only then does a
+	// fall to the stop drop the call; a premium that starts below the stop
+	// is a breakout call ("buy above 130, SL 122" at 99) and keeps waiting.
+	AboveSL bool
+	Seen    bool // a premium tick was checked against the trigger
+	Ticked  bool // FIRST_TICK reported
 }
 
 func (a TGArm) key() string { return a.FNOExchange + ":" + a.FNOToken }
@@ -324,11 +328,15 @@ func (s *TelegramSignal) activate(held bool, armIdx int, f model.TGFollowUp) (*S
 	if a.Last <= 0 {
 		return nil, "ACTIVE", nil
 	}
+	n := len(s.arms)
 	sig := s.tryActiveEntry(armIdx, a.Last, time.Now())
-	if sig == nil {
+	switch {
+	case sig != nil:
+		return sig, "ENTERED", nil
+	case len(s.arms) < n:
 		return nil, "DROPPED", nil
 	}
-	return sig, "ENTERED", nil
+	return nil, "ACTIVE", nil
 }
 
 // tryActiveEntry buys an activated call at price, or drops it when the
@@ -338,8 +346,12 @@ func (s *TelegramSignal) tryActiveEntry(i int, price int64, now time.Time) *Sign
 	c := a.Call
 	drop := ""
 	switch {
-	case price <= c.SLPaise:
+	case price <= c.SLPaise && a.AboveSL:
 		drop = fmt.Sprintf("premium %d at stop %d when Active", price, c.SLPaise)
+	case price <= c.SLPaise:
+		// Never above the stop yet: buy once it is, never below it.
+		s.arms[i].Seen, s.arms[i].Last = true, price
+		return nil
 	case price*100 > c.TriggerPaise*(100+s.cfg.MaxChasePct):
 		drop = fmt.Sprintf("missed: premium %d more than %d%% above entry %d when Active", price, s.cfg.MaxChasePct, c.TriggerPaise)
 	}
@@ -510,14 +522,15 @@ func (s *TelegramSignal) OnTick(tick model.Tick) *Signal {
 			drop = fmt.Sprintf("premium %d is more than %d%% from entry %d — call misread or wrong contract", price, s.cfg.MaxPriceGapPct, c.TriggerPaise)
 		case s.cfg.WaitActive && a.Active:
 			return s.tryActiveEntry(i, price, now)
-		case s.cfg.WaitActive && price > c.SLPaise:
-			// Waits for the caller's "Active", not for the price.
-			a.Seen, a.Last = true, price
-			return nil
-		case price <= c.SLPaise:
+		case price <= c.SLPaise && a.AboveSL:
 			drop = fmt.Sprintf("premium %d hit stop %d before entry %d", price, c.SLPaise, c.TriggerPaise)
-		case price < c.TriggerPaise:
-			a.Seen = true
+		case price <= c.SLPaise || price < c.TriggerPaise || s.cfg.WaitActive:
+			// Below the entry (a premium still under the stop is a breakout
+			// call), or waiting for the caller's "Active", not for the price.
+			a.Seen, a.Last = true, price
+			if price > c.SLPaise {
+				a.AboveSL = true
+			}
 			return nil
 		case price*100 > c.TriggerPaise*(100+s.cfg.MaxChasePct):
 			drop = fmt.Sprintf("missed: premium %d more than %d%% above entry %d", price, s.cfg.MaxChasePct, c.TriggerPaise)

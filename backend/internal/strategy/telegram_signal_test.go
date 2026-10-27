@@ -82,7 +82,8 @@ func TestTGChaseCapAndStopBeforeTrigger(t *testing.T) {
 	}
 
 	s = newTG(t)
-	s.OnTick(tgTick("45001", 9900, time.Minute))
+	s.OnTick(tgTick("45001", 11000, time.Minute))
+	s.OnTick(tgTick("45001", 9900, 2*time.Minute))
 	if len(s.Arms()) != 0 {
 		t.Fatal("call kept after stop hit before trigger")
 	}
@@ -370,7 +371,10 @@ func TestTGDropHook(t *testing.T) {
 		run  func(s *TelegramSignal)
 		want string
 	}{
-		{"stop before entry", func(s *TelegramSignal) { s.OnTick(tgTick("45001", 9900, time.Minute)) }, "hit stop"},
+		{"stop before entry", func(s *TelegramSignal) {
+			s.OnTick(tgTick("45001", 11000, time.Minute))
+			s.OnTick(tgTick("45001", 9900, 2*time.Minute))
+		}, "hit stop"},
 		{"chase miss", func(s *TelegramSignal) { s.OnTick(tgTick("45001", 12700, time.Minute)) }, "missed"},
 		{"expired", func(s *TelegramSignal) { s.OnTick(tgTick("45001", 11000, 31*time.Minute)) }, "expired"},
 		{"caller cancel", func(s *TelegramSignal) { s.FollowUp(tgFollow(9, model.TGCancel, 0)) }, ""},
@@ -438,9 +442,10 @@ func TestTGWaitActive(t *testing.T) {
 		t.Fatalf("chased on Active: %+v %s", sig, res)
 	}
 
-	// The stop still drops a waiting call.
+	// The stop still drops a waiting call that was above it.
 	s = newWait(t)
-	s.OnTick(tgTick("45001", 9900, time.Minute))
+	s.OnTick(tgTick("45001", 11000, time.Minute))
+	s.OnTick(tgTick("45001", 9900, 2*time.Minute))
 	if len(s.Arms()) != 0 {
 		t.Fatal("call kept after its stop")
 	}
@@ -453,5 +458,61 @@ func TestTGWaitActive(t *testing.T) {
 	s.OnTick(tgTick("45001", 12100, time.Minute))
 	if sig, _, err := s.FollowUp(active); sig != nil || err == nil || s.Position() == nil {
 		t.Fatalf("Active on a held trade: %+v %v", sig, err)
+	}
+}
+
+// A premium that starts below the call's stop is a breakout call: it
+// waits for the entry instead of being dropped. Indian Operator #1850 on
+// 27 Oct: "CE 22700 above 130, SL 122" with the premium at 99.60; the
+// caller then posted 132…150 and "First target done".
+func TestTGBreakoutFromBelowStop(t *testing.T) {
+	s := NewTelegramSignal("", 65, TelegramSignalConfig{MaxChasePct: 5, MaxPriceGapPct: 40, LadderTrailPct: 10, ArmFor: 15 * time.Minute})
+	a := tgArm()
+	a.Call.TriggerPaise, a.Call.SLPaise, a.Call.Targets = 13000, 12200, []int64{14200, 15400}
+	if _, err := s.Arm(a); err != nil {
+		t.Fatal(err)
+	}
+	if sig := s.OnTick(tgTick("45001", 9960, time.Minute)); sig != nil || len(s.Arms()) != 1 {
+		t.Fatalf("breakout call dropped or entered below its stop: %+v", sig)
+	}
+	s.OnTick(tgTick("45001", 12500, 4*time.Minute)) // between stop and entry
+	sig := s.OnTick(tgTick("45001", 13200, 5*time.Minute))
+	if sig == nil || sig.Action != ActionBuy || sig.Price != 13200 {
+		t.Fatalf("no entry at 132: %+v", sig)
+	}
+	s.OnTick(tgTick("45001", 14400, 8*time.Minute)) // T1: stop to cost
+	if p := s.Position(); p == nil || p.SL != 13200 {
+		t.Fatalf("ladder after T1: %+v", p)
+	}
+
+	// Once above the stop, a fall back to it drops the call.
+	s = NewTelegramSignal("", 65, TelegramSignalConfig{MaxChasePct: 5, MaxPriceGapPct: 40, ArmFor: 15 * time.Minute})
+	if _, err := s.Arm(a); err != nil {
+		t.Fatal(err)
+	}
+	s.OnTick(tgTick("45001", 9960, time.Minute))
+	s.OnTick(tgTick("45001", 12500, 2*time.Minute))
+	s.OnTick(tgTick("45001", 12100, 3*time.Minute))
+	if len(s.Arms()) != 0 {
+		t.Fatal("call kept after falling back to its stop")
+	}
+}
+
+// WaitActive with the premium below the stop: Active waits, buys once
+// the premium is above the stop.
+func TestTGWaitActiveBelowStop(t *testing.T) {
+	s := NewTelegramSignal("TG_VIKASH", 65, TelegramSignalConfig{MaxChasePct: 5, MaxPriceGapPct: 40, ArmFor: 15 * time.Minute, WaitActive: true})
+	if _, err := s.Arm(tgArm()); err != nil { // trigger 120, SL 100
+		t.Fatal(err)
+	}
+	s.OnTick(tgTick("45001", 9000, time.Minute))
+	if sig, res, err := s.FollowUp(tgFollow(9, model.TGActivate, 0)); sig != nil || res != "ACTIVE" || err != nil || len(s.Arms()) != 1 {
+		t.Fatalf("active below stop: %+v %s %v", sig, res, err)
+	}
+	if sig := s.OnTick(tgTick("45001", 9500, 2*time.Minute)); sig != nil {
+		t.Fatalf("bought below stop: %+v", sig)
+	}
+	if sig := s.OnTick(tgTick("45001", 11000, 3*time.Minute)); sig == nil || sig.Price != 11000 {
+		t.Fatalf("no entry above stop: %+v", sig)
 	}
 }
