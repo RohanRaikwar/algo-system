@@ -1,4 +1,4 @@
-import { LayoutDashboard, BarChart3, Activity } from 'lucide-react';
+import { LayoutDashboard, BarChart3, Activity, Send } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { SignalBadge } from '../signals/SignalBadge';
 import { haptic } from '../../utils/haptic';
@@ -16,7 +16,7 @@ const iconWrap = 'relative flex items-center justify-center w-[52px] h-[28px] ro
 /** Bottom tab bar for phones; hidden above 640px where the header nav shows. */
 export function MobileNav() {
     return (
-        <nav className="hidden lte-640:sticky lte-640:bottom-0 lte-640:z-[100] lte-640:grid lte-640:grid-cols-[repeat(3,1fr)] lte-640:shrink-0 lte-640:pb-[env(safe-area-inset-bottom)] lte-640:bg-sg-surface lte-640:border-t lte-640:border-t-sg-line" aria-label="Primary" onClick={(e) => { if ((e.target as HTMLElement).closest('a')) haptic(); }}>
+        <nav className="hidden lte-640:sticky lte-640:bottom-0 lte-640:z-[100] lte-640:grid lte-640:grid-cols-[repeat(4,1fr)] lte-640:shrink-0 lte-640:pb-[env(safe-area-inset-bottom)] lte-640:bg-sg-surface lte-640:border-t lte-640:border-t-sg-line" aria-label="Primary" onClick={(e) => { if ((e.target as HTMLElement).closest('a')) haptic(); }}>
             <NavLink to="/" end className={linkClass}>
                 <span className={iconWrap}>
                     <LayoutDashboard size={20} />
@@ -29,6 +29,12 @@ export function MobileNav() {
                     <SignalBadge />
                 </span>
                 <span>Signals</span>
+            </NavLink>
+            <NavLink to="/telegram" className={linkClass}>
+                <span className={iconWrap}>
+                    <Send size={20} />
+                </span>
+                <span>Telegram</span>
             </NavLink>
             <NavLink to="/health" className={linkClass}>
                 <span className={iconWrap}>

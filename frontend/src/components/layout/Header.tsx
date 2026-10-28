@@ -1,4 +1,4 @@
-import { Zap, LayoutDashboard, BarChart3, Activity } from 'lucide-react';
+import { Zap, LayoutDashboard, BarChart3, Activity, Send } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { useMarketFeedStatus, type Tone } from '../../hooks/useMarketFeedStatus';
 import { SignalBadge } from '../signals/SignalBadge';
@@ -54,6 +54,9 @@ export function Header() {
                 </NavLink>
                 <NavLink to="/signals" className={navClass}>
                     <BarChart3 size={15} /> Signals <SignalBadge />
+                </NavLink>
+                <NavLink to="/telegram" className={navClass}>
+                    <Send size={15} /> Telegram
                 </NavLink>
                 <NavLink to="/health" className={navClass}>
                     <Activity size={15} /> Health
