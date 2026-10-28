@@ -272,7 +272,9 @@ func (svc *Service) buildTGStrategies(cfg Config) []*strategy.TelegramSignal {
 		LadderTrailPct: cfg.TGLadderTrailPct,
 		ArmFor:         time.Duration(cfg.TGArmMin) * time.Minute,
 	}
-	svc.tgStrategies = []*strategy.TelegramSignal{strategy.NewTelegramSignal(strategy.TelegramSignalName, cfg.Qty, scfg)}
+	main := scfg
+	main.WaitActive = slices.Contains(cfg.TGWaitActive, strategy.TelegramSignalName)
+	svc.tgStrategies = []*strategy.TelegramSignal{strategy.NewTelegramSignal(strategy.TelegramSignalName, cfg.Qty, main)}
 	svc.tgChats = make(map[int64]*strategy.TelegramSignal)
 	byName := make(map[string]*strategy.TelegramSignal)
 	for chat, name := range cfg.TGChannels {

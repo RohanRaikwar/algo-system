@@ -40,6 +40,17 @@ type Config struct {
 	LLMAPIKey  string
 	LLMModel   string
 	LLMReason  string // reasoning_effort for reasoning models, "" = none
+	// LLM budget and concurrency (TG_LLM_TPM, TG_LLM_RPM,
+	// TG_LLM_CONCURRENCY). 0 TPM/RPM = no budget.
+	LLMTPM, LLMRPM, LLMWorkers int
+	// LLMCacheTTL reuses the reading of an identical prompt (same text,
+	// same context) this long; 0 = off.
+	LLMCacheTTL time.Duration
+	// LLMExtra are more LLM APIs or keys (TG_LLM_2_*, TG_LLM_3_*, …, and
+	// the older TG_LLM_FALLBACK_*). Each has its own budget; the
+	// scheduler sends a read to the first one with budget left, so they
+	// add up. A missing base URL or model takes the primary's.
+	LLMExtra []LLMEndpoint
 	// DefaultSLPct gives a call without a stop ("Stoploss : PAID") a stop
 	// this % below its entry. 0 = such calls are refused.
 	DefaultSLPct int64
@@ -73,7 +84,13 @@ func LoadConfig() Config {
 		LLMAPIKey:     config.GetEnv("TG_LLM_API_KEY", ""),
 		LLMModel:      config.GetEnv("TG_LLM_MODEL", ""),
 		LLMReason:     config.GetEnv("TG_LLM_REASONING", ""),
-		DefaultSLPct:  int64(config.GetEnvInt("TG_DEFAULT_SL_PCT", 0)),
+		LLMTPM:        config.GetEnvInt("TG_LLM_TPM", 8000),
+		LLMRPM:        config.GetEnvInt("TG_LLM_RPM", 30),
+		LLMWorkers:    config.GetEnvInt("TG_LLM_CONCURRENCY", 4),
+		LLMCacheTTL:   10 * time.Minute,
+
+		LLMExtra:     loadLLMExtra(),
+		DefaultSLPct: int64(config.GetEnvInt("TG_DEFAULT_SL_PCT", 0)),
 	}
 }
 
@@ -91,7 +108,66 @@ func (c Config) Validate() error {
 	case c.LLM && (c.LLMAPIKey == "" || c.LLMModel == ""):
 		return fmt.Errorf("TG_LLM=on needs TG_LLM_API_KEY and TG_LLM_MODEL")
 	}
+	for _, e := range c.LLMExtra {
+		if e.APIKey == "" {
+			return fmt.Errorf("%s_API_KEY is empty", e.Env)
+		}
+	}
 	return nil
+}
+
+// LLMEndpoint is one extra LLM API or key.
+type LLMEndpoint struct {
+	Env     string // env prefix, e.g. TG_LLM_2
+	BaseURL string // "" = TG_LLM_BASE_URL
+	APIKey  string
+	Model   string // "" = TG_LLM_MODEL
+	TPM     int    // 0 = TG_LLM_TPM
+	RPM     int    // 0 = TG_LLM_RPM
+}
+
+// llmExtraMax is the highest TG_LLM_<n>_ prefix read.
+const llmExtraMax = 9
+
+// loadLLMExtra reads TG_LLM_FALLBACK_* then TG_LLM_2_* … TG_LLM_9_*; an
+// endpoint with neither key nor base URL is skipped.
+func loadLLMExtra() []LLMEndpoint {
+	prefixes := []string{"TG_LLM_FALLBACK"}
+	for n := 2; n <= llmExtraMax; n++ {
+		prefixes = append(prefixes, fmt.Sprintf("TG_LLM_%d", n))
+	}
+	var out []LLMEndpoint
+	for _, p := range prefixes {
+		e := LLMEndpoint{
+			Env:     p,
+			BaseURL: config.GetEnv(p+"_BASE_URL", ""),
+			APIKey:  config.GetEnv(p+"_API_KEY", ""),
+			Model:   config.GetEnv(p+"_MODEL", ""),
+			TPM:     config.GetEnvInt(p+"_TPM", 0),
+			RPM:     config.GetEnvInt(p+"_RPM", 0),
+		}
+		if e.APIKey != "" || e.BaseURL != "" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// withDefaults fills an extra endpoint's blanks from the primary.
+func (e LLMEndpoint) withDefaults(c Config) LLMEndpoint {
+	if e.BaseURL == "" {
+		e.BaseURL = c.LLMBaseURL
+	}
+	if e.Model == "" {
+		e.Model = c.LLMModel
+	}
+	if e.TPM == 0 {
+		e.TPM = c.LLMTPM
+	}
+	if e.RPM == 0 {
+		e.RPM = c.LLMRPM
+	}
+	return e
 }
 
 // normalizeChatID turns a Bot API id ("-1001234567890", "-123") or a bare

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,14 +29,49 @@ type LLMResult struct {
 	Trigger    string   `json:"trigger"`
 	SL         string   `json:"sl"`
 	Targets    []string `json:"targets"`
-	Action     string   `json:"action"` // follow_up: exit | sl_hit | target_hit | move_sl | cancel | none
+	Action     string   `json:"action"` // follow_up: activate | exit | sl_hit | target_hit | move_sl | cancel | none
 	NewSL      string   `json:"new_sl"`
-	Confidence string   `json:"confidence"` // high | medium | low
-	Reason     string   `json:"reason"`
+	// AboutCall: with a trade context, the message is about that call.
+	AboutCall  bool   `json:"about_call"`
+	Confidence string `json:"confidence"` // high | medium | low
+	Reason     string `json:"reason"`
 	// Usage is the request's token count (set by the reader, not the model).
 	Usage Usage `json:"-"`
+	// rate is the provider's rate-limit state after the request, if sent.
+	rate rateInfo
 	// slDefault: SL was missing and set by llmWithDefaultSL.
 	slDefault bool
+}
+
+// rateInfo is a provider's token budget as its response headers state it.
+type rateInfo struct {
+	ok              bool
+	remainingTokens int
+	reset           time.Duration // until the token budget is full again
+}
+
+// rateError is a request the provider refused for now (429, 5xx, network):
+// the scheduler tries again, on another provider or after wait.
+type rateError struct {
+	wait time.Duration
+	rate rateInfo
+	err  error
+}
+
+func (e *rateError) Error() string { return e.err.Error() }
+func (e *rateError) Unwrap() error { return e.err }
+
+// readRate reads Groq/OpenAI rate-limit headers.
+func readRate(h http.Header) rateInfo {
+	n, err := strconv.Atoi(h.Get("x-ratelimit-remaining-tokens"))
+	if err != nil {
+		return rateInfo{}
+	}
+	r := rateInfo{ok: true, remainingTokens: n}
+	if d, err := time.ParseDuration(h.Get("x-ratelimit-reset-tokens")); err == nil {
+		r.reset = d
+	}
+	return r
 }
 
 // Call converts a new_call reading into a TGSignal (without message ids).
@@ -71,34 +107,75 @@ var rePrice = regexp.MustCompile(`\d+(?:\.\d+)?`)
 // cleanPrice keeps the first number of "₹191.00" or "191".
 func cleanPrice(s string) string { return rePrice.FindString(s) }
 
-// CallReader reads one message (and the message it replies to, if any).
+// CallReader reads one message. contextText is the message it replies
+// to, or a trade context block (starting with ctxHeader), or "".
 type CallReader interface {
-	Read(ctx context.Context, text, replyText string) (LLMResult, error)
+	Read(ctx context.Context, text, contextText string) (LLMResult, error)
 }
 
-// llmSystemPrompt teaches the model this group's style. Examples are real
-// messages from the group.
-const llmSystemPrompt = `Extract trade instructions from an Indian options Telegram group (Hinglish) as JSON.
-First write "english": the message translated to plain English (short). Then decide every other field from that English meaning.
+// The system prompt teaches the model this group's style; examples are
+// real messages from the group. It is the bulk of every request, so each
+// read gets only the parts it can need (systemPromptFor).
+const (
+	promptHead = `Extract trade instructions from an Indian options Telegram group (Hinglish) as JSON.
+First write "english": the message in plain English, at most 15 words. Then decide every other field from that English meaning.`
 
-kind new_call: a NEW option buy, even if it also says "Wait for entry", "Candle closing ka wait karna" or has a disclaimer. "BUY NIFTY PE 22750" = strike 22750, PE (CALL=CE, PUT=PE). "Near Above 191"/"above 191"/"@191" -> trigger "191". "Stop Loss ₹182"/"SL 182" -> sl "182"; "SL 15 point" -> sl = trigger-15. targets: all target prices in order, skip 1st/2nd words. Prices are premiums, never the strike. "ENTRY PRICE ➖ 50" -> trigger "50" (a call even without the word BUY). "Stoploss : PAID"/"SL paid" (stop kept for paid members) -> sl "" and does not lower confidence; numbered "Target 1 60, Target 2 80" -> targets ["60","80"]. Two different contracts, levels for tomorrow, or a missing entry -> confidence "low".
+	promptNewCall = `kind new_call: a NEW option buy, even if it also says "Wait for entry", "Candle closing ka wait karna" or has a disclaimer. "BUY NIFTY PE 22750" = strike 22750, PE (CALL=CE, PUT=PE). "Near Above 191"/"above 191"/"@191" -> trigger "191". "Stop Loss ₹182"/"SL 182" -> sl "182"; "SL 15 point" -> sl = trigger-15. targets: all target prices in order, skip 1st/2nd words. Prices are premiums, never the strike. "ENTRY PRICE ➖ 50" -> trigger "50" (a call even without the word BUY). "Stoploss : PAID"/"SL paid" (stop kept for paid members) -> sl "" and does not lower confidence; numbered "Target 1 60, Target 2 80" -> targets ["60","80"]. Two different contracts, levels for tomorrow, or a missing entry -> confidence "low".`
 
-kind follow_up: about an earlier call (reply text given).
+	// promptNewCallShort stands in for promptNewCall where a new call is
+	// unlikely (a message in a call's thread).
+	promptNewCallShort = `kind new_call: only a message that posts a NEW contract with its own entry: fill underlying, strike, option_type (CALL=CE, PUT=PE), trigger, sl, targets (premiums, never the strike).`
+
+	promptFollowUp = `kind follow_up: about an earlier call (reply text or trade context given).
+- activate: the caller says the call is live now: "Active", "Active 🔥", "entry active", "entry done", "abhi le lo", "entry le lo". Not: "active hone ka wait karna", "abi active nhi hua", "wait for entry" (those are noise).
 - exit: "exit", "ctc exit", "close", "book full profit", "niklo", "jaldi niklo", "nikal jao", "bahar aa jao", "exit kar do". An exit needs no price: English "get out"/"exit"/"close" about the call = exit.
 - sl_hit: "Sl hit", "Trailing sl hit"
 - target_hit: "All target done"
-- move_sl: "Sl ctc kar lena"/"SL cost" -> new_sl = replied call's entry; "sl 112 par le aao" -> new_sl "112"; no price -> new_sl ""
-- cancel: "avoid", "cancel", "skip"
+- move_sl: "Sl ctc kar lena"/"SL cost" -> new_sl = the call's entry; "sl 112 par le aao" -> new_sl "112"; no price -> new_sl ""
+- cancel: "avoid", "cancel", "skip"`
 
-kind noise: messages with no call or follow-up: price ticks "193🔥"/"55 ✅", result recaps "280 To 400"/"70 ➜ 150 Target HIT", "Active", a lone "wait for entry", "First target done", "Abi ctc h", partial booking "Kuchh profit book kar lena", optional advice "Safe trader exit kar sakte h"/"Only risky traders", promotions, gold/forex.
+	// promptFollowUpShort stands in for promptFollowUp when the message
+	// is itself a call.
+	promptFollowUpShort = `kind follow_up: a message about an earlier call (exit, stop moved, target hit, cancel).`
 
+	promptNoise = `kind noise: messages with no call or follow-up: price ticks "193🔥"/"55 ✅", result recaps "280 To 400"/"70 ➜ 150 Target HIT", a lone "wait for entry", "not active yet", "First target done", "Abi ctc h", partial booking "Kuchh profit book kar lena", optional advice "Safe trader exit kar sakte h"/"Only risky traders", promotions, gold/forex.`
+
+	promptContext = `Trade context: it shows the call, our state and the earlier messages about it. Read the new message in that context. about_call: true if the new message is about that call, false if about something else (another contract, promotion, chat).`
+
+	promptTail = `about_call: false when no trade context is given.
 Unused: "" strings, 0 strike, [] targets, action "none". confidence "high" only if every needed field is explicit. reason: few words.`
+)
+
+// llmSystemPrompt is the whole prompt (any message).
+var llmSystemPrompt = joinPrompt(promptHead, promptNewCall, promptFollowUp, promptNoise, promptContext, promptTail)
+
+// Smaller prompts: a message the regex reads as a call (its check), and a
+// message in a call's trade context.
+var (
+	llmCallPrompt    = joinPrompt(promptHead, promptNewCall, promptFollowUpShort, promptNoise, promptTail)
+	llmContextPrompt = joinPrompt(promptHead, promptNewCallShort, promptFollowUp, promptNoise, promptContext, promptTail)
+)
+
+func joinPrompt(parts ...string) string { return strings.Join(parts, "\n\n") }
+
+// systemPromptFor picks the prompt a read needs: the context prompt for a
+// message read with its trade context, the call prompt for a message the
+// regex reads as a call, else the whole prompt.
+func systemPromptFor(text, contextText string) string {
+	switch {
+	case strings.HasPrefix(contextText, ctxHeader):
+		return llmContextPrompt
+	case contextText == "" && isCall(text):
+		return llmCallPrompt
+	}
+	return llmSystemPrompt
+}
 
 // llmSchema is the strict JSON schema of LLMResult.
 var llmSchema = map[string]any{
 	"type":                 "object",
 	"additionalProperties": false,
-	"required":             []string{"english", "kind", "underlying", "strike", "option_type", "trigger", "sl", "targets", "action", "new_sl", "confidence", "reason"},
+	"required":             []string{"english", "kind", "underlying", "strike", "option_type", "trigger", "sl", "targets", "action", "new_sl", "about_call", "confidence", "reason"},
 	"properties": map[string]any{
 		"english":     map[string]any{"type": "string"},
 		"kind":        map[string]any{"type": "string", "enum": []string{"new_call", "follow_up", "noise"}},
@@ -108,16 +185,30 @@ var llmSchema = map[string]any{
 		"trigger":     map[string]any{"type": "string"},
 		"sl":          map[string]any{"type": "string"},
 		"targets":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-		"action":      map[string]any{"type": "string", "enum": []string{"exit", "sl_hit", "target_hit", "move_sl", "cancel", "none"}},
+		"action":      map[string]any{"type": "string", "enum": []string{"activate", "exit", "sl_hit", "target_hit", "move_sl", "cancel", "none"}},
 		"new_sl":      map[string]any{"type": "string"},
+		"about_call":  map[string]any{"type": "boolean"},
 		"confidence":  map[string]any{"type": "string", "enum": []string{"high", "medium", "low"}},
 		"reason":      map[string]any{"type": "string"},
 	},
 }
 
-// llmMaxTokens caps the reply; reasoning models need room for hidden
-// reasoning at effort low.
-const llmMaxTokens = 400
+// Reply caps. Providers count max_tokens against the per-minute budget up
+// front, so the cap is kept near the reply's size: the JSON reply is
+// 80-150 tokens. Reasoning models need room for hidden reasoning at
+// effort low.
+const (
+	llmMaxTokens          = 200
+	llmMaxTokensReasoning = 400
+)
+
+// maxTokens is r's reply cap.
+func (r *OpenAIReader) maxTokens() int {
+	if r.reasoning != "" {
+		return llmMaxTokensReasoning
+	}
+	return llmMaxTokens
+}
 
 // OpenAIReader reads messages with any OpenAI-compatible chat API (Groq,
 // xAI, OpenAI) using a strict JSON schema response.
@@ -183,22 +274,24 @@ func (r *OpenAIReader) CheckModel(ctx context.Context) error {
 	return fmt.Errorf("model %q not served; available: %s", r.model, strings.Join(ids, ", "))
 }
 
-// Read asks the model for one message's reading. On 429/5xx it waits the
-// server's retry-after (capped) and tries again, up to 3 attempts, within
-// ctx.
-func (r *OpenAIReader) Read(ctx context.Context, text, replyText string) (LLMResult, error) {
+// Read asks the model for one message's reading, once. A 429, 5xx or
+// network failure comes back as *rateError; the scheduler owns retries.
+func (r *OpenAIReader) Read(ctx context.Context, text, contextText string) (LLMResult, error) {
 	user := "Message:\n" + text
-	if replyText != "" {
-		user = "This message is a reply to:\n" + replyText + "\n\n" + user
+	switch {
+	case strings.HasPrefix(contextText, ctxHeader):
+		user = contextText + "\n\nNew message:\n" + text
+	case contextText != "":
+		user = "This message is a reply to:\n" + contextText + "\n\n" + user
 	}
 	req := map[string]any{
 		"model":       r.model,
 		"temperature": 0,
 		// The JSON reply is ~60 tokens. A cap keeps the request inside
 		// per-minute output-token limits, which count max_tokens up front.
-		"max_tokens": llmMaxTokens,
+		"max_tokens": r.maxTokens(),
 		"messages": []map[string]string{
-			{"role": "system", "content": llmSystemPrompt},
+			{"role": "system", "content": systemPromptFor(text, contextText)},
 			{"role": "user", "content": user},
 		},
 		"response_format": map[string]any{
@@ -213,45 +306,42 @@ func (r *OpenAIReader) Read(ctx context.Context, text, replyText string) (LLMRes
 	if err != nil {
 		return LLMResult{}, err
 	}
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		res, wait, err := r.post(ctx, body)
-		if err == nil {
-			return res, nil
+	res, err := r.post(ctx, body)
+	if errors.Is(err, errTruncated) && req["max_tokens"] != llmMaxTokensReasoning {
+		// A reply longer than the small cap: once more with room.
+		req["max_tokens"] = llmMaxTokensReasoning
+		if body, err = json.Marshal(req); err != nil {
+			return LLMResult{}, err
 		}
-		lastErr = err
-		if wait == 0 {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			return LLMResult{}, fmt.Errorf("%w (last: %v)", ctx.Err(), lastErr)
-		case <-time.After(wait):
-		}
+		return r.post(ctx, body)
 	}
-	return LLMResult{}, lastErr
+	return res, err
 }
 
-// post sends one request. wait > 0 means retry after wait.
-func (r *OpenAIReader) post(ctx context.Context, body []byte) (LLMResult, time.Duration, error) {
+// errTruncated is a reply cut off at max_tokens.
+var errTruncated = errors.New("reply cut off at max_tokens")
+
+// post sends one request.
+func (r *OpenAIReader) post(ctx context.Context, body []byte) (LLMResult, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return LLMResult{}, 0, err
+		return LLMResult{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+r.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := r.client.Do(req)
 	if err != nil {
-		return LLMResult{}, 2 * time.Second, err
+		return LLMResult{}, &rateError{wait: 2 * time.Second, err: err}
 	}
 	defer resp.Body.Close()
+	rate := readRate(resp.Header)
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
-		var wait time.Duration
+		err := fmt.Errorf("HTTP %d: %s", resp.StatusCode, b)
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
-			wait = retryAfter(resp.Header.Get("Retry-After"))
+			return LLMResult{}, &rateError{wait: retryAfter(resp.Header.Get("Retry-After")), rate: rate, err: err}
 		}
-		return LLMResult{}, wait, fmt.Errorf("HTTP %d: %s", resp.StatusCode, b)
+		return LLMResult{}, err
 	}
 	var out struct {
 		Choices []struct {
@@ -263,17 +353,20 @@ func (r *OpenAIReader) post(ctx context.Context, body []byte) (LLMResult, time.D
 		Usage Usage `json:"usage"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return LLMResult{}, 0, err
+		return LLMResult{}, err
 	}
 	if len(out.Choices) == 0 {
-		return LLMResult{}, 0, fmt.Errorf("no choices")
+		return LLMResult{}, fmt.Errorf("no choices")
 	}
 	var res LLMResult
 	if err := json.Unmarshal([]byte(out.Choices[0].Message.Content), &res); err != nil {
-		return LLMResult{}, 0, fmt.Errorf("bad JSON from model (%s): %w", out.Choices[0].FinishReason, err)
+		if out.Choices[0].FinishReason == "length" {
+			return LLMResult{}, fmt.Errorf("%w: %v", errTruncated, err)
+		}
+		return LLMResult{}, fmt.Errorf("bad JSON from model (%s): %w", out.Choices[0].FinishReason, err)
 	}
-	res.Usage = out.Usage
-	return res, 0, nil
+	res.Usage, res.rate = out.Usage, rate
+	return res, nil
 }
 
 // retryAfter parses a Retry-After seconds value: 1s to 20s, 3s if absent.

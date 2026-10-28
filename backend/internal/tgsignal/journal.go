@@ -24,6 +24,11 @@ const (
 	VerdictSkipped  = "SKIPPED" // prefilter: price tick / chat, no LLM call
 	VerdictOld      = "OLD"     // older than TG_MAX_AGE
 	VerdictError    = "ERROR"
+	VerdictContext  = "CONTEXT"   // added to a call's trade context, no action
+	VerdictStale    = "LLM_STALE" // the LLM read did not start in time (queue full)
+	// VerdictAuditDisagree: the LLM read a fast exit as something else
+	// (outcome line and status count only; the exit stands).
+	VerdictAuditDisagree = "AUDIT_DISAGREE"
 )
 
 // OpenJournal opens (or creates) the review log.

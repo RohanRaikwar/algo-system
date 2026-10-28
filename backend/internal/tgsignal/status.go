@@ -10,9 +10,10 @@ import (
 // statusTracker keeps the service's health for the dashboard. Daily
 // counters reset at local midnight.
 type statusTracker struct {
-	mu  sync.Mutex
-	st  model.TGStatus
-	day string
+	mu    sync.Mutex
+	st    model.TGStatus
+	day   string
+	sched *llmScheduler // nil = no LLM queue to show
 }
 
 func newStatusTracker(cfg Config) *statusTracker {
@@ -87,6 +88,11 @@ func (t *statusTracker) snapshot(now time.Time) model.TGStatus {
 	t.rollDay(now)
 	s := t.st
 	s.UpdatedAt = now
+	if t.sched != nil {
+		q := t.sched.stats()
+		s.LLM.Queue, s.LLM.Running, s.LLM.BudgetTokens, s.LLM.ProviderInUse = q.Queue, q.Running, q.Budget, q.Provider
+		s.LLM.Providers = q.Providers
+	}
 	s.Telegram.Chats = append([]int64(nil), t.st.Telegram.Chats...)
 	s.Verdicts = make(map[string]int, len(t.st.Verdicts))
 	for k, v := range t.st.Verdicts {

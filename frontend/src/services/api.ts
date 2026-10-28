@@ -364,6 +364,14 @@ export interface TelegramStatus {
         errors_today: number;
         tokens_today: number;
         avg_tokens: number;
+        /** Reads waiting, by priority (exit, confirm, verify, new, audit, noise). */
+        queue?: Record<string, number>;
+        running?: number;
+        /** Primary provider tokens left now; -1 = no budget. */
+        budget_tokens?: number;
+        provider_in_use?: string;
+        /** LLM APIs/keys in use (primary + TG_LLM_2…). */
+        providers?: number;
     };
     verdicts: Record<string, number>;
 }

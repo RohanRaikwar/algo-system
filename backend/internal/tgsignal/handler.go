@@ -44,6 +44,12 @@ type handler struct {
 	status *statusTracker              // nil = not tracked
 	sink   func(v model.TGMessageView) // nil = not shown (dashboard list)
 
+	ctxs  *contexts     // each published call's trade context
+	sched *llmScheduler // nil = no LLM (regex only)
+	r     *router
+	// note adds an outcome line to a message on the dashboard; nil = none.
+	note func(msgKey, line string)
+
 	mu   sync.Mutex
 	seen map[string]time.Time
 }
@@ -51,103 +57,48 @@ type handler struct {
 func newHandler(cfg Config, reader CallReader, journal *Journal, publishCall func(model.TGSignal) error, publishFollowUp func(model.TGFollowUp) error) *handler {
 	h := &handler{
 		chats: make(map[int64]bool), maxAge: cfg.MaxAge, slPct: cfg.DefaultSLPct, reader: reader, journal: journal,
-		publishCall: publishCall, publishFollowUp: publishFollowUp, seen: make(map[string]time.Time),
+		publishCall: publishCall, publishFollowUp: publishFollowUp, seen: make(map[string]time.Time), ctxs: newContexts(),
 	}
 	for _, id := range cfg.ChatIDs {
 		h.chats[id] = true
 	}
+	if reader != nil {
+		lim := llmLimits{TPM: cfg.LLMTPM, RPM: cfg.LLMRPM, Workers: cfg.LLMWorkers, CacheTTL: cfg.LLMCacheTTL}
+		h.sched = newLLMScheduler(lim)
+		h.sched.addProvider(hostOf(cfg.LLMBaseURL), reader, lim)
+	}
+	h.r = newRouter(h)
 	return h
 }
 
-func (h *handler) onMessage(ctx context.Context, m inMsg, now time.Time) {
-	if !h.chats[m.ChatID] || m.Text == "" {
-		return
-	}
-	if h.status != nil {
-		h.status.message(now)
-	}
-	entry := Entry{ChatID: m.ChatID, MsgID: m.MsgID, ReplyTo: m.ReplyTo, Edited: m.Edited, SentAt: m.Sent, Text: m.Text, ReceivedAt: now}
-	english := ""
-	if age := now.Sub(m.Sent); age > h.maxAge {
-		entry.Verdict, entry.Reason = VerdictOld, fmt.Sprintf("%s old", age.Round(time.Second))
-		h.record(entry)
-		h.show(entry, "", decision{})
-		return
-	}
-	if m.Edited && !m.Posted.IsZero() && now.Sub(m.Posted) > maxEditAge {
-		entry.Verdict, entry.Reason = VerdictOld, fmt.Sprintf("edit of a message posted %s ago", now.Sub(m.Posted).Round(time.Minute))
-		h.record(entry)
-		return
-	}
-	if !h.firstSeen(seenKey(m), now) {
-		return
-	}
+// onMessage handles one message and waits until it and everything it
+// started are settled. The service calls router.dispatch, which does not
+// wait; tests use this.
+func (h *handler) onMessage(_ context.Context, m inMsg, now time.Time) {
+	h.r.dispatch(m, now)
+	h.r.waitIdle()
+}
 
-	readStart := time.Now()
-	rx, rxErr := Parse(m.Text)
-	rx, rxErr = withDefaultSL(rx, rxErr, h.slPct)
-	entry.Regex = regexView(rx, rxErr)
-	var d decision
-	switch {
-	case reActive.MatchString(m.Text) && h.replyToCall(m):
-		d = activeReply()
-	case h.reader == nil:
-		d = decideRegex(rx, rxErr)
-	case !needsLLM(m.Text, h.replyToCall(m)):
-		d = decision{verdict: VerdictSkipped, reason: "no trade words"}
-		if rxErr == nil { // cannot happen with the keyword list; never drop a call silently
-			d = decideRegex(rx, rxErr)
-		}
-	default:
-		replyText := ""
-		if m.ReplyTo != 0 && h.journal != nil {
-			replyText = h.journal.TextOf(m.ChatID, m.ReplyTo)
-		}
-		rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-		res, err := h.reader.Read(rctx, m.Text, replyText)
-		cancel()
-		if h.status != nil {
-			h.status.llmRead(res.Usage.Total, err, now)
-		}
-		english = res.English
-		if err != nil {
-			entry.LLM = "error: " + err.Error()
-		} else {
-			entry.LLM = res
-			log.Printf("[tgsignal] 🗣 %d:%d in English: %q → %s", m.ChatID, m.MsgID, res.English, res.Kind)
-		}
-		d = decide(rx, rxErr, llmWithDefaultSL(res, h.slPct), err)
+// replyText is the text of the message m replies to, "" if none.
+func (h *handler) replyText(m inMsg) string {
+	if m.ReplyTo == 0 || h.journal == nil {
+		return ""
 	}
-	entry.Verdict, entry.Reason = d.verdict, d.reason
-	entry.ReadMS = time.Since(readStart).Milliseconds()
+	return h.journal.TextOf(m.ChatID, m.ReplyTo)
+}
 
-	switch {
-	case d.call != nil:
-		c := *d.call
-		c.ChatID, c.MsgID, c.ReceivedAt, c.Text, c.Edited = m.ChatID, m.MsgID, now, m.Text, m.Edited
-		c.SentAt, c.ReadMS, c.PublishedAt = m.Sent, entry.ReadMS, time.Now()
-		if err := h.publishCall(c); err != nil {
-			entry.Verdict, entry.Reason = VerdictError, "publish: "+err.Error()
-			log.Printf("[tgsignal] 🚨 publish %s: %v", c.Key(), err)
-			break
+// noteOutcome adds a line to a message's outcome (review log and
+// dashboard).
+func (h *handler) noteOutcome(chat int64, msgID int, line string) {
+	line = time.Now().In(time.Local).Format("15:04:05") + " " + line
+	if h.journal != nil {
+		if err := h.journal.AddOutcome(chat, msgID, line); err != nil {
+			log.Printf("[tgsignal] journal outcome: %v", err)
 		}
-		log.Printf("[tgsignal] 📨 call %s (%s%s): BUY %s %d%s above %d SL %d (their targets %v) — sent→recv %dms, read %dms",
-			c.Key(), c.Source, editTag(m.Edited), c.Underlying, c.Strike, c.OptionType, c.TriggerPaise, c.SLPaise, c.Targets,
-			now.Sub(m.Sent).Milliseconds(), c.ReadMS)
-	case d.followUp != nil:
-		f := *d.followUp
-		f.ChatID, f.MsgID, f.ReplyToMsgID, f.ReceivedAt, f.Text = m.ChatID, m.MsgID, m.ReplyTo, now, m.Text
-		if err := h.publishFollowUp(f); err != nil {
-			entry.Verdict, entry.Reason = VerdictError, "publish: "+err.Error()
-			log.Printf("[tgsignal] 🚨 publish follow-up %s: %v", f.Key(), err)
-			break
-		}
-		log.Printf("[tgsignal] ↩️ follow-up %s → call %q: %s new_sl=%d", f.Key(), f.CallKey(), f.Action, f.NewSLPaise)
-	case d.verdict == VerdictDisagree || d.verdict == VerdictRefused || d.verdict == VerdictError:
-		log.Printf("[tgsignal] ⚠️ %d:%d %s: %s — %q", m.ChatID, m.MsgID, d.verdict, d.reason, m.Text)
 	}
-	h.record(entry)
-	h.show(entry, english, d)
+	if h.note != nil {
+		h.note(model.TGMsgKey(chat, msgID), line)
+	}
 }
 
 // show sends the message and its verdict to the dashboard list.
@@ -167,6 +118,14 @@ func (h *handler) show(e Entry, english string, d decision) {
 
 // summary is a one-line description of what was read.
 func (d decision) summary() string {
+	s := d.what()
+	if d.callMsgID != 0 && s != "" {
+		s = fmt.Sprintf("call %d: %s", d.callMsgID, s)
+	}
+	return s
+}
+
+func (d decision) what() string {
 	switch {
 	case d.call != nil:
 		c := d.call
@@ -245,6 +204,9 @@ type decision struct {
 	reason   string
 	call     *model.TGSignal
 	followUp *model.TGFollowUp
+	// callMsgID is the call a context message is about; its follow-up is
+	// sent as a reply to that call.
+	callMsgID int
 }
 
 func regexView(rx model.TGSignal, err error) any {
@@ -334,4 +296,9 @@ func callDiff(a, b model.TGSignal) string {
 	add("entry", a.TriggerPaise, b.TriggerPaise)
 	add("sl", a.SLPaise, b.SLPaise)
 	return out
+}
+
+// confirmed is the activate follow-up for a call its caller confirmed.
+func confirmed(callMsgID int, why string) decision {
+	return decision{verdict: VerdictFollowUp, reason: why, callMsgID: callMsgID, followUp: &model.TGFollowUp{Action: model.TGActivate}}
 }

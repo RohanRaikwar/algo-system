@@ -21,11 +21,26 @@ const VERDICT: Record<string, { tone: BadgeTone; label: string }> = {
     ERROR: { tone: 'loss', label: 'Error' },
     NOISE: { tone: 'muted', label: 'Noise' },
     SKIPPED: { tone: 'muted', label: 'Skipped' },
+    CONTEXT: { tone: 'muted', label: 'In trade context' },
+    LLM_STALE: { tone: 'warn', label: 'LLM too slow' },
+    AUDIT_DISAGREE: { tone: 'warn', label: 'Fast exit: LLM disagrees' },
     OLD: { tone: 'muted', label: 'Too old' },
 };
 
+function queueSize(q?: Record<string, number>): number {
+    return q ? Object.values(q).reduce((a, b) => a + b, 0) : 0;
+}
+
+/** "2 waiting (exit 1, noise 1) · 1 running" */
+function queueText(q?: Record<string, number>, running?: number): string {
+    const n = queueSize(q);
+    const parts = q ? Object.entries(q).map(([k, v]) => `${k} ${v}`).join(', ') : '';
+    const run = running ? ` · ${running} running` : '';
+    return n ? `${n} waiting (${parts})${run}` : `empty${run}`;
+}
+
 /** Verdicts hidden by "Only trade messages". */
-const QUIET = new Set(['NOISE', 'SKIPPED', 'OLD']);
+const QUIET = new Set(['NOISE', 'SKIPPED', 'OLD', 'CONTEXT']);
 
 /** A real timestamp (Go sends year 1 for "never"). */
 function has(ts?: string): boolean {
@@ -181,10 +196,13 @@ export function TelegramPanel() {
                     {llm?.last_error && <div className="text-sg-loss text-[0.82rem] break-words">{llm.last_error}</div>}
                     <div className={summaryGrid}>
                         <Field label="Model" value={llm?.model || '—'} />
-                        <Field label="Provider" value={llm?.provider || '—'} />
+                        <Field label="Provider" value={`${llm?.provider || '—'}${llm?.providers && llm.providers > 1 ? ` (+${llm.providers - 1} more)` : ''}`} />
                         <Field label="Reads today" value={`${llm?.reads_today ?? 0}${llm?.errors_today ? ` (${llm.errors_today} failed)` : ''}`} tone={llm?.errors_today ? 'text-sg-warn' : undefined} />
                         <Field label="Tokens today" value={`${(llm?.tokens_today ?? 0).toLocaleString('en-IN')} · avg ${llm?.avg_tokens ?? 0}`} />
                         <Field label="Last read" value={ago(llm?.last_read_at)} />
+                        <Field label="Queue" value={queueText(llm?.queue, llm?.running)} tone={queueSize(llm?.queue) > 5 ? 'text-sg-warn' : undefined} />
+                        <Field label="Budget left" value={llm?.budget_tokens === undefined || llm.budget_tokens < 0 ? 'no limit' : `${llm.budget_tokens.toLocaleString('en-IN')} tokens`} />
+                        {llm?.provider_in_use && llm.provider_in_use !== llm.provider && <Field label="Using" value={llm.provider_in_use} tone="text-sg-warn" />}
                     </div>
                 </Card>
             </div>

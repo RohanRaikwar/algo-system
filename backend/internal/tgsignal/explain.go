@@ -55,8 +55,10 @@ func isCall(text string) bool {
 	return err == nil || errors.Is(err, ErrNoSL)
 }
 
-// reActive is the caller's "Active 🔥🔥" reply: the call is live, take it.
-var reActive = regexp.MustCompile(`(?i)^\W*active\b`)
+// reActive is the caller's bare "Active 🔥🔥" reply: the call is live,
+// take it. Any other words ("Active hone ka wait karna" = wait for it to
+// go active) leave the message to the LLM.
+var reActive = regexp.MustCompile(`(?i)^\W*active(\s+now)?\W*$`)
 
 // activeReply is the activate follow-up for an "Active" reply to a call.
 func activeReply() decision {

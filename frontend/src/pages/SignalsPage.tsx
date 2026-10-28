@@ -1,5 +1,5 @@
 import { Fragment, useState } from 'react';
-import { ClipboardList, CircleDot, BarChart3, Zap, ChevronDown, ChevronRight, TrendingUp, CalendarDays, User, Settings, Activity, Send, type LucideIcon } from 'lucide-react';
+import { ClipboardList, CircleDot, BarChart3, Zap, ChevronDown, ChevronRight, TrendingUp, CalendarDays, User, Settings, Activity, type LucideIcon } from 'lucide-react';
 import { SignalRow } from '../components/signals/SignalRow';
 import { LiveOrdersTab } from '../components/signals/LiveOrdersTab';
 import { EventPriceTab } from '../components/signals/EventPriceTab';
@@ -8,7 +8,6 @@ import { DailyAnalyticsTab } from '../components/signals/DailyAnalyticsTab';
 import { AccountTab } from '../components/signals/AccountTab';
 import { TradingSettingsTab } from '../components/signals/TradingSettingsTab';
 import { SessionHealthTab } from '../components/signals/SessionHealthTab';
-import { TelegramPanel } from '../components/telegram/TelegramPanel';
 import { formatDateKey, signalKey, useSignalsData, type SignalsData } from '../components/signals/useSignalsData';
 import { SignalsMobile } from '../components/signals/mobile/SignalsMobile';
 import { PHONE_PORTRAIT_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
@@ -25,7 +24,7 @@ import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { dayBody, dayDate, dayHead, dayLeft, dayList, dayMeta, dayRight, signalsPage, tableWrap } from '../components/signals/classes';
 
-type SignalTab = 'LOG' | 'LIVE' | 'EVENT_PRICE' | 'DAILY' | 'PNL' | 'ACCOUNT' | 'SETTINGS' | 'SESSION' | 'TELEGRAM';
+type SignalTab = 'LOG' | 'LIVE' | 'EVENT_PRICE' | 'DAILY' | 'PNL' | 'ACCOUNT' | 'SETTINGS' | 'SESSION';
 
 type TabGroup = 'activity' | 'performance' | 'system';
 
@@ -43,7 +42,6 @@ const TABS: { id: SignalTab; label: string; Icon: LucideIcon; group: TabGroup }[
     { id: 'PNL', label: 'P&L', Icon: TrendingUp, group: 'performance' },
     { id: 'ACCOUNT', label: 'Account', Icon: User, group: 'system' },
     { id: 'SESSION', label: 'Session health', Icon: Activity, group: 'system' },
-    { id: 'TELEGRAM', label: 'Telegram', Icon: Send, group: 'system' },
     { id: 'SETTINGS', label: 'Settings', Icon: Settings, group: 'system' },
 ];
 
@@ -275,7 +273,6 @@ function SignalsDesktop({ data }: { data: SignalsData }) {
 
             {activeTab === 'SESSION' && <SessionHealthTab />}
 
-            {activeTab === 'TELEGRAM' && <TelegramPanel />}
 
             {activeTab === 'SETTINGS' && <TradingSettingsTab />}
             </TabsContent>

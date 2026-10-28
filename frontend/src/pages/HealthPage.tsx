@@ -4,19 +4,17 @@ import { PageAppBar } from '../components/layout/PageAppBar';
 import { AccountTab } from '../components/signals/AccountTab';
 import { SessionHealthTab } from '../components/signals/SessionHealthTab';
 import { TradingSettingsTab } from '../components/signals/TradingSettingsTab';
-import { TelegramPanel } from '../components/telegram/TelegramPanel';
 import { PHONE_PORTRAIT_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
 import { haptic } from '../utils/haptic';
 import { signalsPage } from '../components/signals/classes';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
-type Section = 'system' | 'account' | 'sessions' | 'telegram' | 'settings';
+type Section = 'system' | 'account' | 'sessions' | 'settings';
 
 const SECTIONS: { id: Section; label: string }[] = [
     { id: 'system', label: 'System' },
     { id: 'account', label: 'Account' },
     { id: 'sessions', label: 'Sessions' },
-    { id: 'telegram', label: 'Telegram' },
     { id: 'settings', label: 'Settings' },
 ];
 
@@ -53,7 +51,6 @@ export function HealthPage() {
                 <div className={signalsPage}>
                     {section === 'account' && <AccountTab />}
                     {section === 'sessions' && <SessionHealthTab />}
-                    {section === 'telegram' && <TelegramPanel />}
                     {section === 'settings' && <TradingSettingsTab />}
                 </div>
             )}

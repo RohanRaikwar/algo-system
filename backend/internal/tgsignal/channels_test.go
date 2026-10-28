@@ -131,7 +131,8 @@ func TestGoldenTCI(t *testing.T) {
 }
 
 func TestActiveReply(t *testing.T) {
-	for text, want := range map[string]bool{"Active 🔥🔥🔥": true, "ACTIVE": true, "🔥 active now": true, "not active": false, "Inactive": false, "Active": true} {
+	for text, want := range map[string]bool{"Active 🔥🔥🔥": true, "ACTIVE": true, "🔥 active now": true, "not active": false, "Inactive": false, "Active": true,
+		"Active hone ka wait karna": false, "Active hone ka wait karna or sideways market h": false, "ACTIVE ✅✅": true} {
 		if got := reActive.MatchString(text); got != want {
 			t.Errorf("%q active=%v, want %v", text, got, want)
 		}

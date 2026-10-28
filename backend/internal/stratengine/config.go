@@ -109,9 +109,10 @@ type Config struct {
 	// channel): chat id → name starting with TG_. Other chats trade as
 	// TELEGRAM_SIGNAL. STRAT_TG_CHANNELS=4340040418=TG_VIKASH,…
 	TGChannels map[int64]string
-	// TGWaitActive names the channel strategies whose caller confirms each
-	// call with an "Active" reply: they buy on that reply, not on price.
-	// STRAT_TG_WAIT_ACTIVE=TG_VIKASH
+	// TGWaitActive names the Telegram strategies that buy only when the
+	// caller confirms the call (an "Active" reply, or a price post at the
+	// entry, read by tgsignal's trade context), not on price.
+	// STRAT_TG_WAIT_ACTIVE=TELEGRAM_SIGNAL,TG_VIKASH,TG_TCI
 	TGWaitActive []string
 
 	// ── NIFTY50_SR: regime-aware support/resistance, paper only ──
