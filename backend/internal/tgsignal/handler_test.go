@@ -85,16 +85,21 @@ func TestHandlerAgreeAndDisagree(t *testing.T) {
 	r := &fakeReader{res: llmCall(22750, "PE", "191.00", "₹182")}
 	h, s, j := newTestHandler(t, r)
 	h.onMessage(context.Background(), msg(1, realCall), tNow)
-	if len(s.calls) != 1 || s.calls[0].Source != "AGREE" {
-		t.Fatalf("agree: %+v", s.calls)
+	if len(s.calls) != 1 || s.calls[0].Source != "REGEX_FIRST" || len(s.follows) != 0 {
+		t.Fatalf("agree: %+v %+v", s.calls, s.follows)
+	}
+	if v, _ := verdictOf(t, j, 1); v != VerdictSent {
+		t.Fatalf("agree verdict %s", v)
 	}
 
-	r.res = llmCall(22750, "PE", "191", "172") // LLM reads a different stop
+	// The regex call arms at once; the LLM reads a different stop, so the
+	// call is cancelled before any confirmation could buy it.
+	r.res = llmCall(22750, "PE", "191", "172")
 	h.onMessage(context.Background(), msg(2, realCall), tNow)
-	if len(s.calls) != 1 {
-		t.Fatal("traded on disagreement")
+	if len(s.calls) != 2 || len(s.follows) != 1 || s.follows[0].Action != model.TGCancel || s.follows[0].CallKey() != "42:2" {
+		t.Fatalf("disagree: calls %d follows %+v", len(s.calls), s.follows)
 	}
-	if v, reason := verdictOf(t, j, 2); v != VerdictDisagree || !strings.Contains(reason, "sl") {
+	if v, reason := verdictOf(t, j, 2); v != VerdictDisagree || !strings.Contains(reason, "sl") || !strings.Contains(reason, "cancelled") {
 		t.Fatalf("verdict %s %s", v, reason)
 	}
 }
@@ -116,7 +121,8 @@ func TestHandlerLLMOnly(t *testing.T) {
 	}
 }
 
-func TestHandlerFollowUpGetsReplyText(t *testing.T) {
+// A reply to a published call is read with the call's trade context.
+func TestHandlerFollowUpGetsTradeContext(t *testing.T) {
 	r := &fakeReader{res: llmCall(22750, "PE", "191", "182")}
 	h, s, _ := newTestHandler(t, r)
 	h.onMessage(context.Background(), msg(10, realCall), tNow)
@@ -125,8 +131,8 @@ func TestHandlerFollowUpGetsReplyText(t *testing.T) {
 	reply := msg(11, "Sl ctc kar lena")
 	reply.ReplyTo = 10
 	h.onMessage(context.Background(), reply, tNow)
-	if r.reply != realCall {
-		t.Fatalf("LLM got reply text %q", r.reply)
+	if !strings.HasPrefix(r.reply, ctxHeader) || !strings.Contains(r.reply, "BUY NIFTY 22750 PE above 191.00 SL 182.00") {
+		t.Fatalf("LLM got context %q", r.reply)
 	}
 	if len(s.follows) != 1 || s.follows[0].CallKey() != "42:10" || s.follows[0].Action != model.TGMoveSL || s.follows[0].NewSLPaise != 19100 {
 		t.Fatalf("follow-ups %+v", s.follows)
@@ -143,10 +149,14 @@ func TestHandlerSkipsTicksAndLLMDown(t *testing.T) {
 	if v, _ := verdictOf(t, j, 1); v != VerdictSkipped {
 		t.Fatalf("tick verdict %s", v)
 	}
-	// LLM down: the regex still trades a call it reads.
+	// LLM down: the regex call arms, then is cancelled — a call buys only
+	// when both readers agree.
 	h.onMessage(context.Background(), msg(2, realCall), tNow)
-	if len(s.calls) != 1 || s.calls[0].Source != "REGEX" {
-		t.Fatalf("llm down: %+v", s.calls)
+	if len(s.calls) != 1 || s.calls[0].Source != "REGEX_FIRST" || len(s.follows) != 1 || s.follows[0].Action != model.TGCancel {
+		t.Fatalf("llm down: %+v %+v", s.calls, s.follows)
+	}
+	if v, _ := verdictOf(t, j, 2); v != VerdictError {
+		t.Fatalf("llm down verdict %s", v)
 	}
 }
 
@@ -228,7 +238,7 @@ func TestHandlerStatusAndDashboardList(t *testing.T) {
 	h.onMessage(context.Background(), msg(2, "193🔥🔥🔥"), tNow)
 
 	if len(shown) != 2 || shown[0].English != "Buy Nifty PE 22750" || shown[0].Verdict != VerdictSent ||
-		shown[0].Summary != "BUY NIFTY 22750PE above 191.00 SL 182.00 (AGREE)" || shown[1].Verdict != VerdictSkipped {
+		shown[0].Summary != "BUY NIFTY 22750PE above 191.00 SL 182.00 (REGEX_FIRST)" || shown[1].Verdict != VerdictSkipped {
 		t.Fatalf("shown %+v", shown)
 	}
 	st := h.status.snapshot(time.Now())
@@ -259,11 +269,13 @@ func TestHandlerLatencyStamps(t *testing.T) {
 	if len(s.calls) != 1 {
 		t.Fatalf("calls %+v", s.calls)
 	}
+	// The call is published on the regex read, before the 20ms LLM read;
+	// the logged read time includes the LLM check.
 	c := s.calls[0]
-	if !c.SentAt.Equal(tNow) || !c.ReceivedAt.Equal(recv) || c.ReadMS < 20 || c.PublishedAt.IsZero() {
+	if !c.SentAt.Equal(tNow) || !c.ReceivedAt.Equal(recv) || c.ReadMS >= 20 || c.PublishedAt.IsZero() {
 		t.Fatalf("stamps sent=%s recv=%s read=%d pub=%s", c.SentAt, c.ReceivedAt, c.ReadMS, c.PublishedAt)
 	}
-	if len(shown) != 1 || !shown[0].ReceivedAt.Equal(recv) || shown[0].ReadMS != c.ReadMS {
+	if len(shown) != 1 || !shown[0].ReceivedAt.Equal(recv) || shown[0].ReadMS < 20 {
 		t.Fatalf("shown %+v", shown)
 	}
 	var readMS int64
@@ -271,7 +283,7 @@ func TestHandlerLatencyStamps(t *testing.T) {
 	if err := j.db.QueryRow(`SELECT read_ms, received_at FROM messages WHERE msg_id = 1`).Scan(&readMS, &gotRecv); err != nil {
 		t.Fatal(err)
 	}
-	if readMS != c.ReadMS || !gotRecv.Equal(recv) {
+	if readMS != shown[0].ReadMS || !gotRecv.Equal(recv) {
 		t.Fatalf("journal read_ms=%d received_at=%s", readMS, gotRecv)
 	}
 }

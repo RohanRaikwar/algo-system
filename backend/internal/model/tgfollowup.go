@@ -14,14 +14,18 @@ const (
 	TGTargetHit TGFollowUpAction = "target_hit" // "all targets done"
 	TGMoveSL    TGFollowUpAction = "move_sl"    // "SL cost", "trail SL 200"
 	TGCancel    TGFollowUpAction = "cancel"     // "avoid", "cancel this call"
-	// TGActivate is the caller's "Active 🔥" reply: take the waiting call
-	// now. Only channels that wait for it (STRAT_TG_WAIT_ACTIVE) act on it.
+	// TGActivate is the caller's confirmation of a call: an "Active 🔥"
+	// reply, or a price post at the entry (tgsignal trade context). Take
+	// the waiting call now. Only strategies that wait for it
+	// (STRAT_TG_WAIT_ACTIVE) act on it.
 	TGActivate TGFollowUpAction = "activate"
 )
 
 // TGFollowUp is the caller's message about an earlier call. ReplyToMsgID
-// links it to the call; without it the follow-up acts only when exactly
-// one call is open and Strike names it.
+// links it to the call: the message replied to, or the call itself when
+// tgsignal linked the message through the call's trade context. Without
+// it the follow-up acts only when exactly one call is open and Strike
+// names it.
 type TGFollowUp struct {
 	ChatID       int64            `json:"chat_id"`
 	MsgID        int              `json:"msg_id"`

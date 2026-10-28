@@ -28,7 +28,6 @@ type Service struct {
 	journal *Journal
 	status  *statusTracker
 	h       *handler
-	runCtx  context.Context // Run's context, for message goroutines
 }
 
 // New builds the service. The session file must exist (tglogin).
@@ -64,6 +63,33 @@ func New(cfg Config) (*Service, error) {
 	svc.status = newStatusTracker(cfg)
 	svc.h = newHandler(cfg, reader, journal, svc.publishCall, svc.publishFollowUp)
 	svc.h.status, svc.h.sink = svc.status, svc.showMessage
+	svc.h.note = func(key, line string) { svc.addOutcome(context.Background(), key, line) }
+	svc.status.sched = svc.h.sched
+	if cfg.LLM {
+		for _, e := range cfg.LLMExtra {
+			e = e.withDefaults(cfg)
+			reason := ""
+			if e.Model == cfg.LLMModel {
+				reason = cfg.LLMReason // reasoning_effort only for the same model
+			}
+			r := NewOpenAIReader(e.BaseURL, e.APIKey, e.Model, reason)
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			err := r.CheckModel(ctx)
+			cancel()
+			if err != nil {
+				log.Printf("[tgsignal] ⚠️ LLM %s (%s at %s) skipped: %v", e.Env, e.Model, e.BaseURL, err)
+				continue
+			}
+			name := hostOf(e.BaseURL) + " " + e.Env
+			svc.h.sched.addProvider(name, r, llmLimits{TPM: e.TPM, RPM: e.RPM})
+			log.Printf("[tgsignal] 🧠 LLM %s: %s at %s (%d tokens/min)", e.Env, e.Model, e.BaseURL, e.TPM)
+		}
+	}
+	if n, err := svc.h.ctxs.load(journal, cfg.ChatIDs, cfg.DefaultSLPct, time.Now()); err != nil {
+		log.Printf("[tgsignal] trade contexts from the journal: %v", err)
+	} else if n > 0 {
+		log.Printf("[tgsignal] reopened %d trade context(s) from today's journal", n)
+	}
 	return svc, nil
 }
 
@@ -90,7 +116,6 @@ func (svc *Service) publishJSON(channel string, v any) error {
 func (svc *Service) Run(ctx context.Context) error {
 	defer svc.rdb.Close()
 	defer svc.journal.Close()
-	svc.runCtx = ctx
 	go svc.outcomeLoop(ctx)
 	go svc.statusLoop(ctx)
 	defer svc.publishStatus() // final "disconnected" state
@@ -148,9 +173,8 @@ func (svc *Service) onMessage(_ context.Context, m tg.MessageClass, edited bool)
 	if !ok {
 		return
 	}
-	// The LLM call can take seconds; never hold up the update loop. The
-	// update's context ends with the handler, so use Run's.
-	go svc.h.onMessage(svc.runCtx, in, time.Now())
+	// dispatch never waits for the LLM: reads run on the scheduler.
+	svc.h.r.dispatch(in, time.Now())
 }
 
 func toInMsg(msg *tg.Message, edited bool) (inMsg, bool) {
@@ -190,6 +214,7 @@ func (svc *Service) outcomeLoop(ctx context.Context) {
 			if !ok {
 				continue
 			}
+			svc.h.ctxs.outcome(o.CallKey, o.Event, time.Now())
 			line := outcomeLine(o)
 			if err := svc.journal.AddOutcome(chat, id, line); err != nil {
 				log.Printf("[tgsignal] journal outcome: %v", err)

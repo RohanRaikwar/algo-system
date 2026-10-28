@@ -32,3 +32,24 @@ func TestSeedSession(t *testing.T) {
 		t.Fatal("accepted a non-session value")
 	}
 }
+
+func TestLoadLLMExtra(t *testing.T) {
+	t.Setenv("TG_LLM_2_API_KEY", "k2")
+	t.Setenv("TG_LLM_3_API_KEY", "k3")
+	t.Setenv("TG_LLM_3_BASE_URL", "https://api.cerebras.ai/v1")
+	t.Setenv("TG_LLM_3_MODEL", "llama-4")
+	t.Setenv("TG_LLM_3_TPM", "60000")
+	t.Setenv("TG_LLM_4_MODEL", "only a model: skipped")
+	c := Config{LLMBaseURL: "https://api.groq.com/openai/v1", LLMModel: "qwen", LLMTPM: 8000, LLMRPM: 30}
+	c.LLMExtra = loadLLMExtra()
+	if len(c.LLMExtra) != 2 {
+		t.Fatalf("extra %+v", c.LLMExtra)
+	}
+	k2, k3 := c.LLMExtra[0].withDefaults(c), c.LLMExtra[1].withDefaults(c)
+	if k2.BaseURL != c.LLMBaseURL || k2.Model != "qwen" || k2.TPM != 8000 || k2.APIKey != "k2" {
+		t.Fatalf("TG_LLM_2 %+v", k2)
+	}
+	if k3.BaseURL != "https://api.cerebras.ai/v1" || k3.Model != "llama-4" || k3.TPM != 60000 || k3.RPM != 30 {
+		t.Fatalf("TG_LLM_3 %+v", k3)
+	}
+}

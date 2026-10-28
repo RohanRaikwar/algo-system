@@ -308,3 +308,25 @@ func TestTGQtyPerUnderlying(t *testing.T) {
 		t.Fatalf("exit %+v", exits)
 	}
 }
+
+// STRAT_TG_WAIT_ACTIVE can name TELEGRAM_SIGNAL too: its calls then wait
+// for the caller's confirmation, not for the price.
+func TestTGMainStrategyWaitsForConfirmation(t *testing.T) {
+	now := time.Date(2026, 10, 27, 10, 0, 0, 0, markethours.IST)
+	svc, _ := tgService(&offlineFake{known: map[int64]bool{24500: true}})
+	cfg := svc.cfg
+	cfg.Qty, cfg.TGMaxChasePct, cfg.TGWaitActive = 65, 5, []string{strategy.TelegramSignalName}
+	svc.buildTGStrategies(cfg)
+	call := tgCall(now)
+	if _, err := svc.armTGSignal(context.Background(), call, now); err != nil {
+		t.Fatal(err)
+	}
+	tg := svc.tgForChat(call.ChatID)
+	if sig := tg.OnTick(model.Tick{Exchange: "NFO", Token: "CE24500", Price: 12050, EventTS: now.Add(time.Minute)}); sig != nil {
+		t.Fatalf("bought on price: %+v", sig)
+	}
+	sig, _, err := svc.tgFollowUp(model.TGFollowUp{ChatID: call.ChatID, MsgID: call.MsgID + 1, ReplyToMsgID: call.MsgID, Action: model.TGActivate, ReceivedAt: now}, now)
+	if err != nil || sig == nil || sig.Action != strategy.ActionBuy {
+		t.Fatalf("confirmation %+v %v", sig, err)
+	}
+}

@@ -33,6 +33,15 @@ type TGLLMStatus struct {
 	ErrorsToday int       `json:"errors_today"`
 	TokensToday int       `json:"tokens_today"`
 	AvgTokens   int       `json:"avg_tokens"`
+	// Queue counts reads waiting, by priority (exit, confirm, verify,
+	// new, audit, noise); Running the reads in flight.
+	Queue   map[string]int `json:"queue,omitempty"`
+	Running int            `json:"running"`
+	// BudgetTokens is what all providers have left this minute, -1 = no
+	// budget set. Providers counts the LLM APIs/keys in use.
+	BudgetTokens  int    `json:"budget_tokens"`
+	ProviderInUse string `json:"provider_in_use,omitempty"`
+	Providers     int    `json:"providers,omitempty"`
 }
 
 // TGMessageView is one message read, as the dashboard shows it.

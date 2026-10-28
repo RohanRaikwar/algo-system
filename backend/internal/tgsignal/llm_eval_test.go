@@ -18,6 +18,15 @@ import (
 	"time"
 )
 
+// evalCtx is a trade context as tgsignal builds it for a waiting call.
+const evalCtx = ctxHeader + `
+Call 13:27 (msg 185): BUY NIFTY 24050 PE above 154.00 SL 147.00 targets 159.00,165.00
+Our state: waiting for the caller to confirm the entry
+Caller price posts: none
+Earlier messages:
+13:28 "Active hone ka wait karna or sideways market h to apne Risk pe trade karna" → none
+The new message replies to this call's thread.`
+
 func TestLLMEval(t *testing.T) {
 	r := NewOpenAIReader(os.Getenv("TG_LLM_BASE_URL"), os.Getenv("TG_LLM_API_KEY"), os.Getenv("TG_LLM_MODEL"), os.Getenv("TG_LLM_REASONING"))
 	disc := "\n\n\nWait for entry\n\nDisclaimer: Investments in securities markets are subject to market risks. All trade ideas and information shared are for educational and informational purposes only and do not constitute investment advice"
@@ -35,8 +44,13 @@ func TestLLMEval(t *testing.T) {
 		{"bahar aa jao sab", call},
 		{"Abi active nhi hua h wait karna", call},
 		{"First target done ✔️", call},
+		// With a trade context: "not active yet" is noise, "Active" activates.
+		{"Abi active nhi hua h wait karna", evalCtx},
+		{"Active hone ka wait karna", evalCtx},
+		{"Entry active ho gyi le lo", evalCtx},
+		{"Gold buy 2400 sl 2390", evalCtx},
 	} {
-		fmt.Printf("MSG: %.50q\n  => %s\n", c.text, Explain(context.Background(), r, c.text, c.reply, c.reply != ""))
+		fmt.Printf("MSG: %.50q\n  => %s\n", c.text, Explain(context.Background(), r, c.text, c.reply, c.reply != "", 10))
 		time.Sleep(3 * time.Second)
 	}
 }

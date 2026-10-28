@@ -42,10 +42,10 @@ type TelegramSignalConfig struct {
 	// the price is past the caller's last target. The ladder below it: T1
 	// moves the stop to our entry, each later target to the one before.
 	LadderTrailPct int64
-	// WaitActive: the caller confirms each call with an "Active" reply
-	// (TRADE WITH VIKASH). A call never buys on price; it buys on that
-	// reply, within MaxChasePct above the entry, and is dropped if the
-	// reply does not come within ArmFor.
+	// WaitActive: the caller confirms each call ("Active", or a price post
+	// at the entry; tgsignal sends TGActivate). A call never buys on price;
+	// it buys on that confirmation, within MaxChasePct above the entry, and
+	// is dropped if it does not come within ArmFor.
 	WaitActive bool
 }
 
