@@ -201,3 +201,28 @@ func (sp *StrikePicker) LookupNearest(now time.Time, strike int64, optionType st
 	}
 	return StrikeInfo{}, false
 }
+
+// LookupNearestMinDTE is LookupNearest that skips expiries fewer than
+// minDTE IST calendar days after now (2 = a Monday skips Tuesday's expiry).
+// minDTE < 1 counts as 1 (never same day). Offline only; unlike
+// LookupNearest it leaves CurrentExpiry alone.
+func (sp *StrikePicker) LookupNearestMinDTE(now time.Time, minDTE int, strike int64, optionType string) (StrikeInfo, bool) {
+	if strike <= 0 || sp.strikeStep <= 0 || strike%sp.strikeStep != 0 {
+		return StrikeInfo{}, false
+	}
+	if minDTE < 1 {
+		minDTE = 1
+	}
+	n := now.In(istZone)
+	earliest := time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, istZone).AddDate(0, 0, minDTE)
+	for _, expiry := range sp.candidateExpiries(now) {
+		exp, err := time.ParseInLocation("02Jan06", expiry, istZone)
+		if err != nil || exp.Before(earliest) {
+			continue
+		}
+		if info, ok := sp.LookupOn(exp, strike, optionType); ok {
+			return info, true
+		}
+	}
+	return StrikeInfo{}, false
+}

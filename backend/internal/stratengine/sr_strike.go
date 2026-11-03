@@ -1,6 +1,7 @@
 package stratengine
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -72,7 +73,7 @@ func (svc *Service) isSRSignal(sig *strategy.Signal) bool {
 func (svc *Service) pickSRStrike(sig *strategy.Signal, now time.Time) (instruments.OptionContract, error) {
 	chain, err := svc.entryChain(now)
 	if err != nil {
-		return instruments.OptionContract{}, fmt.Errorf("SR strike: no greeks (%v)", err)
+		return instruments.OptionContract{}, fmt.Errorf("SR strike: %w (%v)", errNoGreeks, err)
 	}
 	opt := optionTypeFor(sig.Side)
 	premium := svc.srPremiumOffline(now, opt)
@@ -88,6 +89,39 @@ func (svc *Service) pickSRStrike(sig *strategy.Signal, now time.Time) (instrumen
 	svc.noteEntryGreeks(sig.StrategyName, c.Delta, c.Theta)
 	sig.Strike = c.Strike
 	return c, nil
+}
+
+// errNoGreeks: the option chain is unavailable (stale, broker error). The
+// SR entry then takes the ATM strike instead of being refused.
+var errNoGreeks = errors.New("no greeks")
+
+// minDTEResolver finds a contract on the nearest expiry at least minDTE
+// days out without a broker call. Satisfied by *instruments.StrikePicker.
+type minDTEResolver interface {
+	LookupNearestMinDTE(now time.Time, minDTE int, strike int64, optionType string) (instruments.StrikeInfo, bool)
+}
+
+// resolveATMEntryContract is the no-greeks contract for an SR entry: the
+// strategy's ATM strike on the nearest expiry at least SRMinDTE days out.
+// A resolver without that lookup (test fakes) uses resolveEntryContract.
+// On a miss one background broker lookup is started and the entry refused.
+func (svc *Service) resolveATMEntryContract(now time.Time, strike int64, opt string) (instruments.StrikeInfo, error) {
+	r, ok := svc.resolverForLegs().(minDTEResolver)
+	if !ok {
+		return svc.resolveEntryContract(now, time.Time{}, strike, opt)
+	}
+	if info, ok := r.LookupNearestMinDTE(now, svc.cfg.SRMinDTE, strike, opt); ok {
+		return info, nil
+	}
+	if svc.contractWarming.CompareAndSwap(false, true) {
+		go func() {
+			defer svc.contractWarming.Store(false)
+			if _, err := svc.resolveOn(time.Now(), time.Time{}, strike, opt); err != nil {
+				log.Printf("[stratengine] background lookup %d%s: %v", strike, opt, err)
+			}
+		}()
+	}
+	return instruments.StrikeInfo{}, fmt.Errorf("%d%s not in instrument master %d+ days out (broker lookup started)", strike, opt, svc.cfg.SRMinDTE)
 }
 
 // expiryResolver resolves a contract on a given expiry (the strike picker).

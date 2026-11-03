@@ -86,3 +86,29 @@ func TestLookupOnNeverSearches(t *testing.T) {
 		t.Fatal("miss reported as found")
 	}
 }
+
+func TestLookupNearestMinDTESkipsNearExpiry(t *testing.T) {
+	sp := NewStrikePicker(nil)
+	sp.lookup = func(symbol string) (string, int64, error) {
+		switch symbol {
+		case "NIFTY03NOV2622700CE":
+			return "1", 65, nil
+		case "NIFTY10NOV2622700CE":
+			return "2", 65, nil
+		}
+		return "", 0, errors.New("not in master")
+	}
+	mon := time.Date(2026, 11, 2, 10, 0, 0, 0, istZone) // Monday; Tuesday expiry is 1 day out
+	if info, ok := sp.LookupNearestMinDTE(mon, 1, 22700, "CE"); !ok || info.Token != "1" {
+		t.Fatalf("minDTE=1: info=%+v ok=%v", info, ok)
+	}
+	if info, ok := sp.LookupNearestMinDTE(mon, 2, 22700, "CE"); !ok || info.Token != "2" {
+		t.Fatalf("minDTE=2 must skip Tuesday: info=%+v ok=%v", info, ok)
+	}
+	if !sp.CurrentExpiry().IsZero() {
+		t.Fatalf("CurrentExpiry changed to %v", sp.CurrentExpiry())
+	}
+	if _, ok := sp.LookupNearestMinDTE(mon, 2, 22750, "CE"); ok {
+		t.Fatal("unlisted strike reported as found")
+	}
+}

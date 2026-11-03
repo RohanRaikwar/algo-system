@@ -93,6 +93,8 @@ type Service struct {
 
 	// Session manager for health monitoring
 	sessionManager *smartconnect.SessionManager
+	greekSession   greekSessionState                      // greek-triggered logins (greek_session.go)
+	greekLogin     func(*smartconnect.SmartConnect) error // test hook for loginInPlace
 	// orderWS is the order-status socket state for the Health page.
 	orderWS orderWSStats
 
@@ -566,6 +568,7 @@ func (svc *Service) tickRouterLoop(ctx context.Context, tfTickCh chan<- model.Ti
 						log.Println("[stratengine] ✅ standalone SmartConnect session established for strike resolution")
 					}
 					picker := instruments.NewStrikePicker(sc)
+					svc.attachGreekRefresh(picker)
 					if !picker.ResolveATM(spotPrice) {
 						atomic.StoreInt64(&svc.strikeRetryAfterNS, time.Now().Add(60*time.Second).UnixNano())
 						log.Println("[stratengine] ⚠️  strike resolution failed (will retry in 60s)")

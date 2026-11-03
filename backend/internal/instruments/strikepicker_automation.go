@@ -3,6 +3,7 @@ package instruments
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"strconv"
@@ -218,11 +219,16 @@ func (sp *StrikePicker) LoadOptionChain(entryTime time.Time) ([]OptionContract, 
 		return nil, fmt.Errorf("option chain fetch requires SmartConnect session")
 	}
 
-	expiries := sp.automationExpiries(entryTime)
+	// Today's expiry is never bought (candidateExpiries, SRMinDTE), and on
+	// expiry day OptionGreek can reject it, so it is not loaded. One expiry
+	// failing does not drop the others: the chain is what loaded, and the
+	// first error is returned only when nothing loaded.
+	today := normalizeExpiryDay(entryTime)
 	var chain []OptionContract
+	var firstErr error
 	seen := make(map[string]struct{})
-	for _, expiry := range expiries {
-		if expiry.IsZero() {
+	for _, expiry := range sp.automationExpiries(entryTime) {
+		if expiry.IsZero() || !normalizeExpiryDay(expiry).After(today) {
 			continue
 		}
 		key := normalizeExpiryDay(expiry).Format("2006-01-02")
@@ -233,11 +239,18 @@ func (sp *StrikePicker) LoadOptionChain(entryTime time.Time) ([]OptionContract, 
 
 		contracts, err := sp.loadOptionGreekExpiry(expiry)
 		if err != nil {
-			return nil, err
+			if firstErr == nil {
+				firstErr = err
+			}
+			log.Printf("[strikepicker] %s option chain: %v (other expiries kept)", sp.prof().OptionName, err)
+			continue
 		}
 		chain = append(chain, contracts...)
 	}
 	if len(chain) == 0 {
+		if firstErr != nil {
+			return nil, firstErr
+		}
 		return nil, fmt.Errorf("no option chain data available")
 	}
 	return chain, nil
@@ -926,11 +939,24 @@ func (sp *StrikePicker) nextWeeklyExpiryDay(now time.Time) time.Time {
 }
 
 func (sp *StrikePicker) loadOptionGreekExpiry(expiry time.Time) ([]OptionContract, error) {
-	optionGreekSpacer.wait()
-	res, err := sp.sc.OptionGreek(map[string]any{
+	params := map[string]any{
 		"name":       sp.prof().OptionName,
 		"expirydate": strings.ToUpper(expiry.In(istZone).Format("02Jan2006")),
-	})
+	}
+	res, err := sp.callOptionGreek(params)
+	if isInvalidTokenReply(res, err) {
+		sp.mu.RLock()
+		refresh := sp.refreshSession
+		sp.mu.RUnlock()
+		if refresh != nil {
+			if rerr := refresh(); rerr != nil {
+				log.Printf("[strikepicker] OptionGreek token rejected; session refresh failed: %v", rerr)
+			} else {
+				log.Printf("[strikepicker] OptionGreek token rejected; session refreshed, retrying once")
+				res, err = sp.callOptionGreek(params)
+			}
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("OptionGreek(%s): %w", expiry.Format("02Jan2006"), err)
 	}
@@ -979,6 +1005,29 @@ func (sp *StrikePicker) loadOptionGreekExpiry(expiry time.Time) ([]OptionContrac
 		})
 	}
 	return contracts, nil
+}
+
+func (sp *StrikePicker) callOptionGreek(params map[string]any) (map[string]any, error) {
+	if sp.greekCall != nil {
+		return sp.greekCall(params)
+	}
+	optionGreekSpacer.wait()
+	return sp.sc.OptionGreek(params)
+}
+
+// isInvalidTokenReply reports whether OptionGreek rejected the session
+// token, either as an error or as a reply whose message says so.
+func isInvalidTokenReply(res map[string]any, err error) bool {
+	if err != nil {
+		msg := err.Error()
+		return strings.Contains(msg, "Invalid Token") || strings.Contains(msg, "AG8001") || strings.Contains(msg, "AG8002")
+	}
+	if res == nil {
+		return false
+	}
+	msg, _ := res["message"].(string)
+	code, _ := res["errorcode"].(string)
+	return strings.EqualFold(msg, "Invalid Token") || code == "AG8001" || code == "AG8002"
 }
 
 // describeGreekReply summarises an OptionGreek reply whose data is not a list,
