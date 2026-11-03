@@ -3,7 +3,6 @@ package stratengine
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -63,21 +62,23 @@ func TestEntryChainDoesNotWaitOnLoad(t *testing.T) {
 	}
 }
 
-// A cold cache refuses the entry, starts one background refresh, and the
-// next signal finds the chain.
-func TestEntryColdChainRefusesThenRefreshes(t *testing.T) {
+// A cold cache buys the strategy's ATM strike without greek checks,
+// starts one background refresh, and the next signal picks by greeks.
+func TestEntryColdChainTakesATMThenRefreshes(t *testing.T) {
 	c := srContract(24050, "CE", 0.52, 0.001, -3, 0, testExpiry)
 	g := &fakeGreeks{chain: []instruments.OptionContract{c}}
-	svc := deltaSvc(g, 2400000, "CE24050")
+	svc := deltaSvc(g, 2400000, "CE24050", "CE24000")
 	svc.cfg.SRDeltaMin, svc.cfg.SRDeltaMax, svc.cfg.SRThetaMaxGainPct = 0.45, 0.60, 25
 	svc.srStrategy = strategy.NewNifty50SR(65, strategy.DefaultNifty50SRConfig())
 	now := time.Date(2026, 9, 30, 10, 0, 0, 0, istSR)
 
 	sig := buyCall(24000)
 	sig.StrategyName = "NIFTY50_SR"
-	err := svc.resolveEntryStrike(context.Background(), &sig, now)
-	if err == nil || !strings.Contains(err.Error(), "refresh started") {
-		t.Fatalf("cold chain: err=%v, want refusal with refresh", err)
+	if err := svc.resolveEntryStrike(context.Background(), &sig, now); err != nil {
+		t.Fatalf("cold chain: err=%v, want ATM entry", err)
+	}
+	if sig.FNOToken != "CE24000" {
+		t.Fatalf("cold chain bought %s, want ATM CE24000", sig.FNOToken)
 	}
 	waitUntil(t, "background refresh", func() bool { return g.n() == 1 && !svc.chainRefreshing.Load() })
 

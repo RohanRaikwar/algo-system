@@ -206,6 +206,7 @@ func (svc *Service) extraPicker(ex *srExtra) *instruments.StrikePicker {
 	}
 	if sc != nil || ex.picker == nil {
 		ex.picker = instruments.NewStrikePickerFor(sc, ex.prof)
+		svc.attachGreekRefresh(ex.picker)
 	}
 	return ex.picker
 }

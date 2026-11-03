@@ -64,6 +64,22 @@ type StrikePicker struct {
 	listedExpiries func(from time.Time) []time.Time
 	// master is the instrument master; nil = GetInstrumentMaster(). Test hook.
 	master *InstrumentMaster
+
+	// refreshSession logs the broker session in again after OptionGreek
+	// answers "Invalid Token"; nil = no retry. See SetSessionRefresher.
+	refreshSession func() error
+	// greekCall replaces sc.OptionGreek. Test hook.
+	greekCall func(params map[string]any) (map[string]any, error)
+}
+
+// SetSessionRefresher sets the function that renews the broker session
+// when OptionGreek rejects the token. The loader retries the call once
+// after a successful refresh. The function must renew the session of the
+// picker's own client (in place) and should rate-limit itself.
+func (sp *StrikePicker) SetSessionRefresher(fn func() error) {
+	sp.mu.Lock()
+	sp.refreshSession = fn
+	sp.mu.Unlock()
 }
 
 func (sp *StrikePicker) im() *InstrumentMaster {

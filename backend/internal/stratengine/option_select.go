@@ -2,6 +2,7 @@ package stratengine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sync/atomic"
@@ -80,7 +81,8 @@ func (svc *Service) positionTokenSetterFor(name string) positionTokenSetter {
 // It refuses a contract with no premium yet (and subscribes it, so a
 // later signal can use it).
 // NIFTY50_SR entries pick their strike from the chain by greeks first
-// (see sr_strike.go).
+// (see sr_strike.go); with no chain they take the ATM strike on the
+// nearest expiry at least SRMinDTE days out.
 func (svc *Service) resolveEntryStrike(ctx context.Context, sig *strategy.Signal, now time.Time) error {
 	if ex := svc.srExtraFor(sig.StrategyName); ex != nil {
 		return svc.resolveExtraEntry(ctx, ex, sig, now)
@@ -95,14 +97,28 @@ func (svc *Service) resolveEntryStrike(ctx context.Context, sig *strategy.Signal
 	}
 	sr := svc.isSRSignal(sig)
 	var expiry time.Time // zero = nearest expiry
+	noGreeks := false
 	if sr {
 		c, err := svc.pickSRStrike(sig, now)
-		if err != nil {
+		switch {
+		case err == nil:
+			expiry = c.Expiry
+		case errors.Is(err, errNoGreeks):
+			// No chain: buy the strategy's ATM strike rather than refuse.
+			noGreeks = true
+			log.Printf("[stratengine] ⚠️  %s: %v — entry takes ATM strike %d%s, %d+ days out, without greek checks",
+				sig.StrategyName, err, sig.Strike, optionTypeFor(sig.Side), svc.cfg.SRMinDTE)
+		default:
 			return err
 		}
-		expiry = c.Expiry
 	}
-	info, err := svc.resolveEntryContract(now, expiry, sig.Strike, optionTypeFor(sig.Side))
+	var info instruments.StrikeInfo
+	var err error
+	if noGreeks {
+		info, err = svc.resolveATMEntryContract(now, sig.Strike, optionTypeFor(sig.Side))
+	} else {
+		info, err = svc.resolveEntryContract(now, expiry, sig.Strike, optionTypeFor(sig.Side))
+	}
 	if err != nil {
 		return fmt.Errorf("strike %d%s not resolvable: %w", sig.Strike, optionTypeFor(sig.Side), err)
 	}
@@ -110,7 +126,7 @@ func (svc *Service) resolveEntryStrike(ctx context.Context, sig *strategy.Signal
 		svc.subscribeTokens(ctx, info.Token)
 		return fmt.Errorf("no premium yet for %s (%s)", info.Symbol, info.Token)
 	}
-	if svc.cfg.RangeDeltaGuard {
+	if svc.cfg.RangeDeltaGuard && !noGreeks {
 		if err := svc.entryQualityCheck(sig, info, now); err != nil {
 			return err
 		}
@@ -239,6 +255,7 @@ func (svc *Service) resolverForLegs() legResolver {
 	svc.legPickerOnce.Do(func() {
 		// Offline instrument master first; SearchScrip only with a session.
 		svc.legPicker = instruments.NewStrikePicker(svc.orderExecutor.GetSmartConnect())
+		svc.attachGreekRefresh(svc.legPicker)
 	})
 	return svc.legPicker
 }
