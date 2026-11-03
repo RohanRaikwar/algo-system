@@ -307,19 +307,36 @@ func (r *OpenAIReader) Read(ctx context.Context, text, contextText string) (LLMR
 		return LLMResult{}, err
 	}
 	res, err := r.post(ctx, body)
-	if errors.Is(err, errTruncated) && req["max_tokens"] != llmMaxTokensReasoning {
+	switch {
+	case errors.Is(err, errTruncated) && req["max_tokens"] != llmMaxTokensReasoning:
 		// A reply longer than the small cap: once more with room.
 		req["max_tokens"] = llmMaxTokensReasoning
-		if body, err = json.Marshal(req); err != nil {
-			return LLMResult{}, err
-		}
-		return r.post(ctx, body)
+	case errors.Is(err, errBadGeneration):
+		// The provider rejected the reply against the schema (empty, or
+		// prose instead of JSON, often hidden reasoning eating the cap).
+		// Once more with room and a little temperature, so the same
+		// greedy output is not produced again.
+		req["max_tokens"] = llmMaxTokensReasoning
+		req["temperature"] = llmRetryTemperature
+	default:
+		return res, err
 	}
-	return res, err
+	if body, err = json.Marshal(req); err != nil {
+		return LLMResult{}, err
+	}
+	return r.post(ctx, body)
 }
+
+// llmRetryTemperature is the temperature of the retry after a rejected
+// generation.
+const llmRetryTemperature = 0.3
 
 // errTruncated is a reply cut off at max_tokens.
 var errTruncated = errors.New("reply cut off at max_tokens")
+
+// errBadGeneration is a 400 the provider sends when the model's reply
+// did not validate against the JSON schema (Groq "json_validate_failed").
+var errBadGeneration = errors.New("model reply failed the JSON schema")
 
 // post sends one request.
 func (r *OpenAIReader) post(ctx context.Context, body []byte) (LLMResult, error) {
@@ -338,6 +355,10 @@ func (r *OpenAIReader) post(ctx context.Context, body []byte) (LLMResult, error)
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
 		err := fmt.Errorf("HTTP %d: %s", resp.StatusCode, b)
+		if resp.StatusCode == http.StatusBadRequest &&
+			(bytes.Contains(b, []byte("json_validate_failed")) || bytes.Contains(b, []byte("does not match the expected schema"))) {
+			return LLMResult{}, fmt.Errorf("%w: %v", errBadGeneration, err)
+		}
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
 			return LLMResult{}, &rateError{wait: retryAfter(resp.Header.Get("Retry-After")), rate: rate, err: err}
 		}
