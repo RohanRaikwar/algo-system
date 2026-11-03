@@ -3,6 +3,7 @@ package tgsignal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -62,5 +63,51 @@ func TestReadRetriesTruncatedReply(t *testing.T) {
 	}
 	if len(caps) != 2 || caps[0] != llmMaxTokens || caps[1] != llmMaxTokensReasoning {
 		t.Fatalf("max_tokens sent %v", caps)
+	}
+}
+
+// A reply the provider rejects against the schema (Groq 400
+// json_validate_failed) is asked once more with room and some temperature.
+func TestReadRetriesRejectedGeneration(t *testing.T) {
+	type sent struct {
+		MaxTokens   int     `json:"max_tokens"`
+		Temperature float64 `json:"temperature"`
+	}
+	var reqs []sent
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req sent
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		reqs = append(reqs, req)
+		if len(reqs) == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"error":{"message":"Failed to generate JSON.","type":"invalid_request_error","code":"json_validate_failed"}}`))
+			return
+		}
+		b, _ := json.Marshal(LLMResult{Kind: "noise", Action: "none", Confidence: "high"})
+		out, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": string(b)}, "finish_reason": "stop"}}})
+		w.Write(out)
+	}))
+	defer srv.Close()
+	res, err := NewOpenAIReader(srv.URL, "k", "m", "").Read(context.Background(), "BOOK YOUR PROFIT", "")
+	if err != nil || res.Kind != "noise" {
+		t.Fatalf("read %+v %v", res, err)
+	}
+	if len(reqs) != 2 || reqs[1].MaxTokens != llmMaxTokensReasoning || reqs[1].Temperature != llmRetryTemperature {
+		t.Fatalf("requests %+v", reqs)
+	}
+}
+
+// A second rejection is returned, not retried again.
+func TestReadRejectedGenerationTwiceFails(t *testing.T) {
+	n := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n++
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":{"message":"Generated JSON does not match the expected schema.","code":"json_validate_failed"}}`))
+	}))
+	defer srv.Close()
+	_, err := NewOpenAIReader(srv.URL, "k", "m", "").Read(context.Background(), "hi", "")
+	if !errors.Is(err, errBadGeneration) || n != 2 {
+		t.Fatalf("err=%v calls=%d", err, n)
 	}
 }
