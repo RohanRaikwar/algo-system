@@ -30,8 +30,14 @@ type TelegramSignalConfig struct {
 	// The caller's targets are ignored.
 	TargetPct int64
 	// MaxChasePct refuses an entry whose premium is already more than this
-	// % above the call's trigger.
+	// % above the call's trigger. Unused when EntryCapPaise is set.
 	MaxChasePct int64
+	// EntryCapPaise, when > 0, buys with one exchange order capped at the
+	// call's trigger + this: a STOPLOSS_LIMIT BUY the exchange fires at the
+	// trigger while the premium is below it, else a LIMIT at the cap that
+	// rests until it fills, an exit cancels it or the arm window ends. The
+	// order is never chased above the cap.
+	EntryCapPaise int64
 	// MaxPriceGapPct drops a call whose first seen premium is more than
 	// this % away from its trigger: the call was misread or is for another
 	// contract. 0 = off.
@@ -85,6 +91,9 @@ type TGPosition struct {
 	Targets   []int64   `json:"targets,omitempty"` // the caller's targets (paise): the stop ladder
 	EnteredTS time.Time `json:"entered_ts"`
 	ManualSL  bool      `json:"manual_sl,omitempty"` // SL was set by hand (dashboard)
+	// Resting: bought with an exchange order (EntryCapPaise) that has not
+	// filled yet; FillEntry clears it. False for older saved trades.
+	Resting bool `json:"resting,omitempty"`
 }
 
 // Arm results.
@@ -198,6 +207,12 @@ func (s *TelegramSignal) Arm(a TGArm) (string, error) {
 	defer s.mu.Unlock()
 	if p := s.pos; p != nil {
 		if a.Call.Edited && p.Arm.Call.Key() == a.Call.Key() {
+			if d := callChange(p.Arm, a); d != "" {
+				// Contract or entry changed on a bought call: keep the
+				// position, tell the operator (an unfilled one is
+				// replaced earlier, by ReplaceResting).
+				return TGEditIgnored, fmt.Errorf("caller edited the held call (%s); position kept", d)
+			}
 			return s.raiseSL(p, a.Call.SLPaise, "edited call")
 		}
 		return "", fmt.Errorf("position open in %s", p.Arm.FNOSymbol)
@@ -210,6 +225,41 @@ func (s *TelegramSignal) Arm(a TGArm) (string, error) {
 	}
 	s.arms = append(s.arms, a)
 	return TGArmed, nil
+}
+
+// callChange names what an edit changed in the call's contract or entry,
+// "" when only the stop or targets changed.
+func callChange(old, edited TGArm) string {
+	switch {
+	case old.key() != edited.key():
+		return fmt.Sprintf("contract %s → %s", old.FNOSymbol, edited.FNOSymbol)
+	case old.Call.TriggerPaise != edited.Call.TriggerPaise:
+		return fmt.Sprintf("entry %d → %d", old.Call.TriggerPaise, edited.Call.TriggerPaise)
+	}
+	return ""
+}
+
+// ReplaceResting handles an edit of the call whose entry order is still
+// resting unfilled, when the edit changes its contract or entry: the
+// entry is exited (the executor cancels the resting order; anything that
+// filled first is sold) and the edited call waits for a new "Active". It
+// returns that exit signal, or nil when the edit is not such a change.
+func (s *TelegramSignal) ReplaceResting(a TGArm) *Signal {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.pos
+	if p == nil || !p.Resting || !a.Call.Edited || p.Arm.Call.Key() != a.Call.Key() {
+		return nil
+	}
+	d := callChange(p.Arm, a)
+	if d == "" {
+		return nil
+	}
+	reason := "TG CALL EDITED before fill: " + d
+	s.event(p.Arm.Call.Key(), TGReplaced, reason+"; entry order cancelled, waiting for a new Active")
+	sig := s.exit(reason)
+	s.arms = append(s.arms, a)
+	return sig
 }
 
 // raiseSL moves the held stop up to sl when that lowers risk: above the
@@ -313,8 +363,10 @@ func (s *TelegramSignal) FollowUp(f model.TGFollowUp) (*Signal, string, error) {
 }
 
 // activate applies the caller's "Active" reply. Only a WaitActive
-// strategy acts on it; the others already buy on price. With a premium
-// already seen it buys now, else on the next tick. The caller holds s.mu.
+// strategy acts on it; the others already buy on price. With an entry cap
+// it buys at once, in this same step, whatever our premium feed shows:
+// the caller's message is the signal. Without one it buys now with a
+// premium already seen, else on the next tick. The caller holds s.mu.
 func (s *TelegramSignal) activate(held bool, armIdx int, f model.TGFollowUp) (*Signal, string, error) {
 	switch {
 	case !s.cfg.WaitActive:
@@ -325,6 +377,13 @@ func (s *TelegramSignal) activate(held bool, armIdx int, f model.TGFollowUp) (*S
 	a := &s.arms[armIdx]
 	a.Active = true
 	s.event(a.Call.Key(), "ACTIVE", "caller "+f.Key())
+	if s.cfg.EntryCapPaise > 0 {
+		price := a.Last
+		if price <= 0 {
+			price = a.Call.TriggerPaise
+		}
+		return s.enter(*a, price, time.Now()), "ENTERED", nil
+	}
 	if a.Last <= 0 {
 		return nil, "ACTIVE", nil
 	}
@@ -352,7 +411,7 @@ func (s *TelegramSignal) tryActiveEntry(i int, price int64, now time.Time) *Sign
 		// Never above the stop yet: buy once it is, never below it.
 		s.arms[i].Seen, s.arms[i].Last = true, price
 		return nil
-	case price*100 > c.TriggerPaise*(100+s.cfg.MaxChasePct):
+	case s.cfg.EntryCapPaise == 0 && price*100 > c.TriggerPaise*(100+s.cfg.MaxChasePct):
 		drop = fmt.Sprintf("missed: premium %d more than %d%% above entry %d when Active", price, s.cfg.MaxChasePct, c.TriggerPaise)
 	}
 	if drop != "" {
@@ -420,6 +479,21 @@ func (s *TelegramSignal) Restore(p TGPosition) {
 	defer s.mu.Unlock()
 	s.pos = &p
 	s.arms = nil
+}
+
+// FillEntry sets the open trade's entry to its fill price (an exchange
+// order can fill below the cap), and the own target with it.
+func (s *TelegramSignal) FillEntry(side PositionSide, price int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pos == nil || s.pos.Arm.Call.Side() != side || price <= 0 {
+		return
+	}
+	s.pos.Resting = false
+	s.pos.Entry = price
+	if s.cfg.TargetPct > 0 {
+		s.pos.Target = price * (100 + s.cfg.TargetPct) / 100
+	}
 }
 
 // CancelEntry forgets an entry stratengine refused, so the strategy does
@@ -532,7 +606,7 @@ func (s *TelegramSignal) OnTick(tick model.Tick) *Signal {
 				a.AboveSL = true
 			}
 			return nil
-		case price*100 > c.TriggerPaise*(100+s.cfg.MaxChasePct):
+		case s.cfg.EntryCapPaise == 0 && price*100 > c.TriggerPaise*(100+s.cfg.MaxChasePct):
 			drop = fmt.Sprintf("missed: premium %d more than %d%% above entry %d", price, s.cfg.MaxChasePct, c.TriggerPaise)
 		}
 		if drop != "" {
@@ -602,15 +676,19 @@ func (s *TelegramSignal) expire(now time.Time) {
 }
 
 func (s *TelegramSignal) enter(a TGArm, price int64, now time.Time) *Signal {
-	p := &TGPosition{Arm: a, Entry: price, SL: a.Call.SLPaise, Last: price, Best: price,
-		Targets: append([]int64(nil), a.Call.Targets...), EnteredTS: now}
+	entry := price
+	if s.cfg.EntryCapPaise > 0 {
+		entry = a.Call.TriggerPaise // the exchange order's price; the fill corrects it (FillEntry)
+	}
+	p := &TGPosition{Arm: a, Entry: entry, SL: a.Call.SLPaise, Last: price, Best: price,
+		Targets: append([]int64(nil), a.Call.Targets...), EnteredTS: now, Resting: s.cfg.EntryCapPaise > 0}
 	if s.cfg.TargetPct > 0 {
-		p.Target = price * (100 + s.cfg.TargetPct) / 100
+		p.Target = entry * (100 + s.cfg.TargetPct) / 100
 	}
 	s.pos, s.arms = p, nil
 	c := a.Call
 	s.event(c.Key(), "ENTERED", fmt.Sprintf("%s premium=%d sl=%d target=%d", a.FNOSymbol, price, p.SL, p.Target))
-	return &Signal{
+	sig := &Signal{
 		StrategyName: s.Name(),
 		Action:       ActionBuy,
 		Side:         c.Side(),
@@ -625,6 +703,16 @@ func (s *TelegramSignal) enter(a TGArm, price int64, now time.Time) *Signal {
 			c.Underlying, c.Strike, c.OptionType, c.TriggerPaise, price, p.SL, p.Target, c.Key(), c.Source),
 		SignalTS: now,
 	}
+	if cap := s.cfg.EntryCapPaise; cap > 0 {
+		// On Active: a LIMIT at the cap, marketable now. On price: the
+		// trigger too, so the exchange fires it if the premium dipped back.
+		sig.EntryLimitPaise = c.TriggerPaise + cap
+		if !s.cfg.WaitActive {
+			sig.EntryTriggerPaise = c.TriggerPaise
+		}
+		sig.EntryExpiresAt = a.ArmedAt.Add(s.cfg.ArmFor)
+	}
+	return sig
 }
 
 // exit closes s.pos; the caller holds s.mu.

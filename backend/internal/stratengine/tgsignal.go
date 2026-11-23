@@ -20,6 +20,8 @@ import (
 	"trading-systemv1/internal/orderexec"
 	"trading-systemv1/internal/strategy"
 	"trading-systemv1/internal/underlying"
+
+	goredis "github.com/go-redis/redis/v8"
 )
 
 // tgSignalMaxAge drops calls that sat on the bus (stratengine down or
@@ -35,6 +37,7 @@ func (svc *Service) tgSignalLoop(ctx context.Context) {
 			return
 		}
 		now := time.Now()
+		svc.observeTGStages(call.SentAt, call.ReceivedAt, call.PublishedAt, now)
 		svc.tgRecv.put(call.Key(), call.ReceivedAt, now)
 		if !call.ReceivedAt.IsZero() {
 			log.Printf("[stratengine] ⏱ telegram call %s: sent→recv %dms, read %dms, published→here %dms",
@@ -42,6 +45,14 @@ func (svc *Service) tgSignalLoop(ctx context.Context) {
 		}
 		tg := svc.tgForChat(call.ChatID)
 		res, err := svc.armTGSignal(ctx, call, now)
+		if err != nil && res == strategy.TGEditIgnored {
+			// An edit of a call we hold: the trade goes on, so this is
+			// not a refusal (that would close the call's context).
+			log.Printf("[stratengine] ✏️ telegram call %s edit ignored: %v", call.Key(), err)
+			svc.publishTGOutcome(ctx, call.Key(), strategy.TGEditIgnored, err.Error())
+			svc.operatorAlert(fmt.Sprintf("Telegram %s: %v", call.Key(), err))
+			return
+		}
 		if err != nil {
 			log.Printf("[stratengine] 📵 telegram call %s refused: %v", call.Key(), err)
 			svc.publishTGOutcome(ctx, call.Key(), "REFUSED", err.Error())
@@ -70,7 +81,14 @@ func (svc *Service) tgFollowUpLoop(ctx context.Context) {
 			log.Printf("[stratengine] tgfollowup bad payload: %v", err)
 			return
 		}
-		sig, res, err := svc.tgFollowUp(f, time.Now())
+		now := time.Now()
+		svc.observeTGStages(f.SentAt, f.ReceivedAt, f.PublishedAt, now)
+		if !f.PublishedAt.IsZero() {
+			log.Printf("[stratengine] ⏱ telegram follow-up %s %s: sent→recv %dms (1s clock), recv→publish %.1fms, publish→here %.1fms",
+				f.Key(), f.Action, f.ReceivedAt.Sub(f.SentAt).Milliseconds(),
+				float64(f.PublishedAt.Sub(f.ReceivedAt).Microseconds())/1000, float64(now.Sub(f.PublishedAt).Microseconds())/1000)
+		}
+		sig, res, err := svc.tgFollowUp(f, now)
 		key := f.CallKey()
 		if key == "" {
 			key = f.Key()
@@ -89,6 +107,21 @@ func (svc *Service) tgFollowUpLoop(ctx context.Context) {
 	})
 }
 
+// observeTGStages records the Telegram stages of a call or follow-up:
+// Telegram send → tgsignal (1 s clock), tgsignal receive → publish, and
+// publish → stratengine. Zero stamps are skipped.
+func (svc *Service) observeTGStages(sent, recv, published, now time.Time) {
+	if !sent.IsZero() && !recv.IsZero() {
+		svc.orderExecutor.ObserveStage("tg_sent_to_recv", recv.Sub(sent))
+	}
+	if !recv.IsZero() && !published.IsZero() {
+		svc.orderExecutor.ObserveStage("tg_recv_to_publish", published.Sub(recv))
+	}
+	if !published.IsZero() {
+		svc.orderExecutor.ObserveStage("tg_publish_to_engine", now.Sub(published))
+	}
+}
+
 // tgFollowUp checks a follow-up's age and hands it to the strategy.
 func (svc *Service) tgFollowUp(f model.TGFollowUp, now time.Time) (*strategy.Signal, string, error) {
 	if !f.ReceivedAt.IsZero() && now.Sub(f.ReceivedAt) > tgSignalMaxAge {
@@ -97,6 +130,10 @@ func (svc *Service) tgFollowUp(f model.TGFollowUp, now time.Time) (*strategy.Sig
 	return svc.tgForChat(f.ChatID).FollowUp(f)
 }
 
+// tgSubBuffer is the subscription buffer for Telegram calls and
+// follow-ups.
+const tgSubBuffer = 1000
+
 // tgSubscribe runs handle for each message on channel, resubscribing if
 // the subscription drops.
 func (svc *Service) tgSubscribe(ctx context.Context, channel string, handle func(string)) {
@@ -104,7 +141,9 @@ func (svc *Service) tgSubscribe(ctx context.Context, channel string, handle func
 	backoff := time.Second
 	for ctx.Err() == nil {
 		sub := client.Subscribe(ctx, channel)
-		for msg := range sub.Channel() {
+		// A deeper buffer than go-redis's 100: a burst of calls or
+		// follow-ups must not block the reader (it drops after 1 min).
+		for msg := range sub.Channel(goredis.WithChannelSize(tgSubBuffer)) {
 			backoff = time.Second
 			handle(msg.Payload)
 		}
@@ -158,7 +197,15 @@ func (svc *Service) armTGSignal(ctx context.Context, call model.TGSignal, now ti
 		Qty:           svc.tgQtyOf(prof),
 		ArmedAt:       now,
 	}
-	res, err := svc.tgForChat(call.ChatID).Arm(arm)
+	tg := svc.tgForChat(call.ChatID)
+	if sig := tg.ReplaceResting(arm); sig != nil {
+		// The caller edited the call before our entry filled: cancel that
+		// entry (exit of a resting order) and wait for a new Active.
+		svc.tfEngine.SendSignal(*sig)
+		log.Printf("[stratengine] ✏️ telegram call %s edited before fill: entry cancelled, %s waits for Active", call.Key(), info.Symbol)
+		return strategy.TGReplaced, nil
+	}
+	res, err := tg.Arm(arm)
 	if err != nil {
 		return res, err
 	}
@@ -268,6 +315,7 @@ func (svc *Service) buildTGStrategies(cfg Config) []*strategy.TelegramSignal {
 	scfg := strategy.TelegramSignalConfig{
 		TargetPct:      cfg.TGTargetPct,
 		MaxChasePct:    cfg.TGMaxChasePct,
+		EntryCapPaise:  cfg.TGEntryCapPaise,
 		MaxPriceGapPct: cfg.TGMaxPriceGapPct,
 		LadderTrailPct: cfg.TGLadderTrailPct,
 		ArmFor:         time.Duration(cfg.TGArmMin) * time.Minute,
@@ -467,6 +515,15 @@ func (r *tgReceipts) get(key string) (time.Time, bool) {
 	return t, ok
 }
 
+// tgEntryDropped forgets a Telegram entry whose exchange order ended
+// without a fill (cancelled, expired, rejected, or a paper price above the
+// cap), so the strategy does not think it holds the trade.
+func (svc *Service) tgEntryDropped(sig model.Signal, reason string) {
+	if tg := svc.tgByName(sig.StrategyName); tg != nil {
+		tg.CancelEntry(sig.Side, reason)
+	}
+}
+
 // tgFilled reports a Telegram strategy's entry fill to the review log,
 // the last step of the call's latency timeline.
 func (svc *Service) tgFilled(f orderexec.FillReport) {
@@ -474,6 +531,7 @@ func (svc *Service) tgFilled(f orderexec.FillReport) {
 	if tg == nil || f.Direction != "BUY" {
 		return
 	}
+	tg.FillEntry(f.Signal.Side, f.FillPricePaise)
 	p := tg.Position()
 	if p == nil {
 		return

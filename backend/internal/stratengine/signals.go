@@ -75,7 +75,7 @@ type signalOutcome struct {
 // none of it can delay an exit.
 func (svc *Service) handleSignal(ctx context.Context, book *signalBook, sig strategy.Signal, now time.Time) {
 	if strategy.IsTelegramStrategy(sig.StrategyName) {
-		defer svc.saveTGPosition(ctx, sig.StrategyName)
+		defer svc.report(ctx, func() { svc.saveTGPosition(ctx, sig.StrategyName) })
 	}
 	if !svc.admitSignal(ctx, &sig, now) {
 		return
@@ -138,7 +138,42 @@ func (svc *Service) handleSignal(ctx context.Context, book *signalBook, sig stra
 		svc.dispatchOrder(ctx, sig)
 	}
 
-	svc.reportSignal(ctx, sig, out, now)
+	svc.report(ctx, func() { svc.reportSignal(ctx, sig, out, now) })
+}
+
+// reportQueueDepth bounds the reporter's backlog of journal/publish work.
+const reportQueueDepth = 1024
+
+// report runs fn (journal, dashboard publishes) on the reporter goroutine,
+// in order, so signalLoop never waits on Redis or SQLite after dispatching
+// an order. The work is not dropped: a full queue logs and then waits.
+// Without a reporter (tests) fn runs inline.
+func (svc *Service) report(ctx context.Context, fn func()) {
+	if svc.reportCh == nil {
+		fn()
+		return
+	}
+	select {
+	case svc.reportCh <- fn:
+	default:
+		log.Printf("[stratengine] ⚠️ report queue full (%d) — signal loop waits for the reporter", reportQueueDepth)
+		select {
+		case svc.reportCh <- fn:
+		case <-ctx.Done():
+		}
+	}
+}
+
+// reportLoop runs queued report work in order.
+func (svc *Service) reportLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case fn := <-svc.reportCh:
+			fn()
+		}
+	}
 }
 
 // admitSignal applies the entry gates and selects an entry's contract. It

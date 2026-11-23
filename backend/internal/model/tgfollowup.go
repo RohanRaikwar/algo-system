@@ -36,6 +36,10 @@ type TGFollowUp struct {
 	OptionType   string           `json:"option_type,omitempty"`
 	Text         string           `json:"text,omitempty"`
 	ReceivedAt   time.Time        `json:"received_at"`
+	// SentAt is Telegram's send time (1 s resolution); PublishedAt is when
+	// tgsignal published this follow-up. Latency stamps only.
+	SentAt      time.Time `json:"sent_at,omitzero"`
+	PublishedAt time.Time `json:"published_at,omitzero"`
 }
 
 // CallKey is the TGSignal.Key of the call replied to, "" without a reply.

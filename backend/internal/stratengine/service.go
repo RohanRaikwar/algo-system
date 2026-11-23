@@ -116,6 +116,13 @@ type Service struct {
 	// snapshotMu serialises saveSnapshot (periodic loop + after each order)
 	// so an older snapshot can never overwrite a newer one in Redis.
 	snapshotMu sync.Mutex
+	// snapReq asks snapshotLoop for a full snapshot soon (coalesced);
+	// executorMu serialises the small executor-only intent write.
+	snapReq    chan struct{}
+	executorMu sync.Mutex
+	// reportCh carries signalLoop's journal and dashboard work to
+	// reportLoop (see report).
+	reportCh chan func()
 
 	// Per-strategy FIFO order workers; see dispatchOrder.
 	orderQueuesMu sync.Mutex
@@ -145,6 +152,8 @@ func New(cfg Config) (*Service, error) {
 		cfg:            cfg,
 		tfCandleCh:     make(chan model.TFCandle, 5000),
 		tickCh:         make(chan model.Tick, 10000),
+		snapReq:        make(chan struct{}, 1),
+		reportCh:       make(chan func(), reportQueueDepth),
 		liveOrdersView: liveOrdersView{liveOrders: make(map[string]*liveOrderRuntime)},
 	}
 
@@ -317,6 +326,7 @@ func (svc *Service) buildExecution(cfg Config) {
 		MaxDayLossTotalPaise: cfg.LiveMaxDayLossTotalPaise,
 		RequireJournal:       cfg.LiveOrders,
 		ProtectionMode:       cfg.ProtectionMode,
+		ExitModifiesStop:     cfg.ExitModifiesStop,
 		ExecMode:             cfg.ExecMode,
 		ChaseTicks:           cfg.ChaseTicks,
 		ChaseReprices:        cfg.ChaseReprices,
@@ -359,6 +369,7 @@ func (svc *Service) Run(ctx context.Context) error {
 	go svc.configUpdateLoop(ctx)
 	go svc.positionReconcileLoop(ctx)
 	svc.startOrderStream(ctx)
+	svc.startKeepWarm(ctx)
 
 	// ── Re-subscribe the picker universe + strike ladder on market open
 	// (mdengine (re)connect), not only at midnight ──
@@ -413,6 +424,7 @@ func (svc *Service) Run(ctx context.Context) error {
 
 	// ── Start signal processor (signals → journal + notify + orders) ──
 	go svc.signalLoop(ctx)
+	go svc.reportLoop(ctx)
 
 	// ── Global option picker: chain refresh + streamed universe ──
 	go svc.runPicker(ctx)

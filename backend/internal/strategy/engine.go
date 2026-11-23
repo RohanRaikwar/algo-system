@@ -128,6 +128,9 @@ type TFEngine struct {
 	// OnExitDropped is called (optional) when an exit could not be
 	// delivered within exitSendTimeout — a position may be left open.
 	OnExitDropped func(Signal)
+	// OnEntryDropped is called (optional) when an entry is dropped because
+	// the signal channel is full: a missed trade an operator should see.
+	OnEntryDropped func(Signal)
 }
 
 // exitSendTimeout bounds how long an exit waits for room in a full signal
@@ -139,6 +142,9 @@ var exitSendTimeout = 5 * time.Second
 // a missed entry is a missed trade. Exits wait up to exitSendTimeout — a
 // missed exit leaves a position open.
 func (e *TFEngine) emit(sig Signal) {
+	if sig.EmittedAt.IsZero() {
+		sig.EmittedAt = time.Now()
+	}
 	select {
 	case e.signalCh <- sig:
 		return
@@ -147,6 +153,9 @@ func (e *TFEngine) emit(sig Signal) {
 	if sig.Action == ActionBuy || sig.Action == ActionWatchBuy {
 		e.dropped.Add(1)
 		log.Printf("[tfengine] ⚠️ signal channel full — dropped entry %s %s %s", sig.StrategyName, sig.Action, sig.Side)
+		if e.OnEntryDropped != nil && sig.Action == ActionBuy {
+			e.OnEntryDropped(sig)
+		}
 		return
 	}
 	timer := time.NewTimer(exitSendTimeout)

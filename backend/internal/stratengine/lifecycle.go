@@ -16,28 +16,86 @@ import (
 	"trading-systemv1/internal/strategy"
 )
 
-// snapshotLoop periodically persists strategy state to Redis.
+// snapshotDebounce coalesces snapshot requests (after each order, each
+// settled fill): at most one full snapshot per window. The executor's own
+// state is written at once to its intent key (persistExecutor), so a
+// crash inside the window loses nothing the executor needs.
+const snapshotDebounce = 250 * time.Millisecond
+
+// snapshotLoop persists strategy state to Redis periodically and, coalesced,
+// on request (requestSnapshot).
 func (svc *Service) snapshotLoop(ctx context.Context) {
 	interval := time.Duration(svc.cfg.SnapshotIntervalS) * time.Second
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	var due <-chan time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			svc.saveSnapshot(ctx)
+		case <-svc.snapReq:
+			if due == nil {
+				due = time.After(snapshotDebounce)
+			}
+		case <-due:
+			due = nil
+			svc.saveSnapshot(ctx)
 		}
 	}
 }
 
-// executeAndPersist runs a signal through the order executor and then saves
-// a snapshot at once, so a crash right after an order cannot lose the
-// executor's record of it to the periodic snapshot interval.
+// requestSnapshot asks for a full snapshot within snapshotDebounce. Without
+// the loop's channel (tests) it saves at once.
+func (svc *Service) requestSnapshot(ctx context.Context) {
+	if svc.snapReq == nil {
+		svc.saveSnapshot(ctx)
+		return
+	}
+	select {
+	case svc.snapReq <- struct{}{}:
+	default: // one already pending
+	}
+}
+
+// executeAndPersist runs a signal through the order executor and asks for a
+// snapshot. The executor persisted its own state (intent key) before any
+// real order and on every settled change, so the full snapshot can wait.
 func (svc *Service) executeAndPersist(ctx context.Context, sig strategy.Signal) {
 	svc.orderExecutor.ExecuteSignal(sig)
-	svc.saveSnapshot(ctx)
+	svc.requestSnapshot(ctx)
+}
+
+// executorSnapshotKey is the Redis key of the executor-only snapshot.
+func (svc *Service) executorSnapshotKey() string { return svc.cfg.SnapshotKey + ":executor" }
+
+// persistExecutor writes only the order executor's state (a few KB) to its
+// own key, stamped so restore can tell it from the full snapshot's copy.
+// The executor calls it synchronously before every real order: it skips
+// the strategy, P&L and portfolio marshal and the full snapshot's lock.
+func (svc *Service) persistExecutor(ctx context.Context) error {
+	svc.executorMu.Lock()
+	defer svc.executorMu.Unlock()
+	ts := time.Now().UnixNano()
+	execSnap, err := svc.orderExecutor.Snapshot()
+	if err != nil {
+		return fmt.Errorf("order executor snapshot error: %w", err)
+	}
+	data, err := json.Marshal(map[string]json.RawMessage{
+		"ts":             json.RawMessage(strconv.FormatInt(ts, 10)),
+		"order_executor": execSnap,
+	})
+	if err != nil {
+		return err
+	}
+	cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if err := svc.redisWriter.Client().Set(cctx, svc.executorSnapshotKey(), data, 0).Err(); err != nil {
+		return fmt.Errorf("executor snapshot write error: %w", err)
+	}
+	return nil
 }
 
 // saveSnapshot persists all strategy states to Redis.
@@ -78,7 +136,10 @@ func (svc *Service) persistSnapshot(ctx context.Context) error {
 		snapshots["pnl_tracker"] = pnlSnap
 	}
 
-	// Snapshot order executor position state (open side, entry contract, GTT IDs)
+	// Snapshot order executor position state (open side, entry contract,
+	// GTT IDs). ts is taken before it, so restore can compare it with the
+	// executor-only key written by persistExecutor.
+	snapshots["ts"] = json.RawMessage(strconv.FormatInt(time.Now().UnixNano(), 10))
 	execSnap, err := svc.orderExecutor.Snapshot()
 	if err != nil {
 		log.Printf("[stratengine] order executor snapshot error: %v", err)
@@ -123,12 +184,18 @@ func (svc *Service) persistSnapshot(ctx context.Context) error {
 //     snapshot (P&L not yet loaded) over the real one.
 func (svc *Service) restoreAndWire(ctx context.Context) {
 	svc.orderExecutor.SetFillListener(svc.onFill)
+	svc.orderExecutor.SetEntryDropListener(svc.tgEntryDropped)
 	svc.wireAlerts()
 	svc.restoreState(ctx)
 	svc.wireSweepJournal()
 	svc.subscribeHeldContracts(ctx)
-	svc.orderExecutor.SetStateListener(func() { svc.saveSnapshot(ctx) })
-	svc.orderExecutor.SetIntentPersister(func() error { return svc.persistSnapshot(ctx) })
+	svc.orderExecutor.SetStateListener(func() {
+		if err := svc.persistExecutor(ctx); err != nil {
+			log.Printf("[stratengine] %v", err)
+		}
+		svc.requestSnapshot(ctx)
+	})
+	svc.orderExecutor.SetIntentPersister(func() error { return svc.persistExecutor(ctx) })
 }
 
 // restoreState loads all strategy snapshots from Redis.
@@ -174,6 +241,10 @@ func (svc *Service) restoreState(ctx context.Context) {
 		}
 	}
 
+	// The executor-only key wins when it is newer: it is written before
+	// every real order and on every settled change.
+	svc.preferNewerExecutorSnapshot(cctx, snapshots)
+
 	// Restore order executor state before any exit can fire, so exits target
 	// the contract that was actually bought.
 	if execData, ok := snapshots["order_executor"]; ok {
@@ -195,6 +266,35 @@ func (svc *Service) restoreState(ctx context.Context) {
 	}
 
 	svc.seedLiveOrdersFromStrategies()
+}
+
+// preferNewerExecutorSnapshot replaces the full snapshot's executor state
+// with the executor-only key's when that one is newer. A full snapshot
+// from before the stamp existed counts as oldest.
+func (svc *Service) preferNewerExecutorSnapshot(ctx context.Context, snapshots map[string]json.RawMessage) {
+	data, err := svc.redisWriter.Client().Get(ctx, svc.executorSnapshotKey()).Bytes()
+	if err != nil {
+		return
+	}
+	if d, ok := useExecutorKey(snapshots, data); ok {
+		log.Printf("[stratengine] order executor state from the newer executor key (%s newer)", d)
+	}
+}
+
+// useExecutorKey puts the executor-only snapshot data into snapshots when
+// it is newer than the full snapshot's ts, and reports by how much.
+func useExecutorKey(snapshots map[string]json.RawMessage, data []byte) (time.Duration, bool) {
+	var ex map[string]json.RawMessage
+	if json.Unmarshal(data, &ex) != nil || ex["order_executor"] == nil {
+		return 0, false
+	}
+	exTS, _ := strconv.ParseInt(string(ex["ts"]), 10, 64)
+	fullTS, _ := strconv.ParseInt(string(snapshots["ts"]), 10, 64)
+	if exTS <= fullTS {
+		return 0, false
+	}
+	snapshots["order_executor"] = ex["order_executor"]
+	return time.Duration(exTS - fullTS), true
 }
 
 // publishPnLSummary publishes the current P&L summary to Redis for the
