@@ -295,3 +295,46 @@ func startOfTodayIST() time.Time {
 	now := time.Now().In(istZone)
 	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, istZone)
 }
+
+// exitByStopModify exits a held position by modifying its resting stop
+// into a marketable LIMIT (bid − ChaseTicks, MARKET with no price): one
+// broker call, and the stop and the exit are the same order, so nothing
+// can sell twice. The order is then chased like any exit. It reports
+// false, having changed nothing, when there is no stop to modify or the
+// broker refuses the modify; the caller then cancels, confirms and sells.
+// Caller holds the position lock.
+func (oe *OrderExecutor) exitByStopModify(sig model.Signal, posKey, token, symbol string, ltp int64, key string) bool {
+	rec, ok := oe.entry(posKey)
+	if !ok || rec.SLOrderID == "" || rec.Quantity <= 0 {
+		return false
+	}
+	if oe.brokerAPI() == nil {
+		return false
+	}
+	id, qty := rec.SLOrderID, rec.Quantity
+	price := oe.marketablePrice("SELL", token, ltp)
+	orderType := "LIMIT"
+	if price <= 0 {
+		orderType = "MARKET"
+	}
+	start := time.Now()
+	if err := oe.modifyOrder(id, stopVariety, symbol, token, orderType, qty, price); err != nil {
+		log.Printf("%s 🛡️  stop %s for %s not modified into the exit (%v) — cancel, confirm, then sell", oe.logPrefix(), id, posKey, err)
+		return false
+	}
+	oe.ObserveStage("exit_modify_ack", time.Since(start))
+	log.Printf("%s ⚡ EXIT %s: stop %s modified to %s %d qty=%d in %dms (one order, no cancel)",
+		oe.logPrefix(), posKey, id, orderType, price, qty, time.Since(start).Milliseconds())
+	oe.updateEntry(posKey, func(r *OrderRecord) { r.SLOrderID, r.ExitOrderID = "", id })
+	oe.journalExitIntent(sig, posKey, token, symbol, qty, key)
+	oe.journalPlacement(key, id, nil, false)
+	if err := oe.persistIntentNow(); err != nil {
+		log.Printf("%s ⚠️  exit state for %s not persisted (%v) — exit already at the broker", oe.logPrefix(), posKey, err)
+	}
+	fill, ferr := oe.awaitFill(id, stopVariety, "SELL", symbol, token, qty, price)
+	if ferr == nil {
+		oe.journalFill(key, id, fill, "fill-confirm")
+	}
+	oe.settleExit(sig, posKey, symbol, id, ltp, qty, fill, ferr)
+	return true
+}

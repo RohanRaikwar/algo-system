@@ -47,6 +47,25 @@ func (oe *OrderExecutor) journalEntryIntent(sig model.Signal, posKey, token, sym
 		}
 		return true
 	}
+	ev := oms.Event{
+		ClientOrderID: key, Strategy: sig.StrategyName, PositionKey: posKey, Side: "BUY",
+		Symbol: symbol, Token: token, Qty: qty, Source: "executor",
+	}
+	if cs, ok := l.(interface {
+		ClaimAndSubmit(oms.Event) (bool, error)
+	}); ok {
+		// One durable write instead of two before the order goes out.
+		claimed, err := cs.ClaimAndSubmit(ev)
+		switch {
+		case err != nil:
+			oe.alertf("BUY %s %s NOT sent: order could not be journaled (%v)", sig.StrategyName, symbol, err)
+			return false
+		case !claimed:
+			oe.alertf("BUY %s %s NOT sent: intent %s already used — replayed signal", sig.StrategyName, symbol, key)
+			return false
+		}
+		return true
+	}
 	claimed, err := l.ClaimIntent(key)
 	switch {
 	case err != nil:
@@ -56,10 +75,7 @@ func (oe *OrderExecutor) journalEntryIntent(sig model.Signal, posKey, token, sym
 		oe.alertf("BUY %s %s NOT sent: intent %s already used — replayed signal", sig.StrategyName, symbol, key)
 		return false
 	}
-	if err := l.Submit(oms.Event{
-		ClientOrderID: key, Strategy: sig.StrategyName, PositionKey: posKey, Side: "BUY",
-		Symbol: symbol, Token: token, Qty: qty, Source: "executor",
-	}); err != nil {
+	if err := l.Submit(ev); err != nil {
 		oe.alertf("BUY %s %s NOT sent: order could not be journaled (%v)", sig.StrategyName, symbol, err)
 		return false
 	}

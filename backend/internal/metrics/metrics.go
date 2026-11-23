@@ -85,6 +85,11 @@ type Metrics struct {
 	OrderCBFailures prometheus.Gauge // consecutive failure count
 	OrderRLCount    prometheus.Gauge // orders placed in current window
 	OrderRLMax      prometheus.Gauge // configured max orders per window
+	// OrderStageMs times each stage of the signal → broker order path
+	// (labels: stage = tg_sent_to_recv, tg_recv_to_publish,
+	// tg_publish_to_engine, signal_to_executor, journal, persist,
+	// place_ack).
+	OrderStageMs *prometheus.HistogramVec
 }
 
 // NewMetrics registers and returns all Prometheus metrics.
@@ -323,6 +328,7 @@ func NewMetrics() *Metrics {
 		m.OrderCBFailures,
 		m.OrderRLCount,
 		m.OrderRLMax,
+		m.OrderStageMs,
 	)
 
 	return m
@@ -347,6 +353,11 @@ func (m *Metrics) initOrderMetrics() {
 		Name: "orderexec_rate_limiter_max",
 		Help: "Configured max orders per rate-limiter window",
 	})
+	m.OrderStageMs = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "orderpath_stage_ms",
+		Help:    "Milliseconds spent in each stage of the signal to broker order path",
+		Buckets: []float64{0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000},
+	}, []string{"stage"})
 }
 
 // NewOrderMetrics returns Metrics with only the orderexec_* gauges set
@@ -365,6 +376,7 @@ func NewOrderMetrics() (*Metrics, *prometheus.Registry) {
 		m.OrderCBFailures,
 		m.OrderRLCount,
 		m.OrderRLMax,
+		m.OrderStageMs,
 	)
 	return m, reg
 }

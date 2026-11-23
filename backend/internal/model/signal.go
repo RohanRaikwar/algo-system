@@ -51,6 +51,20 @@ type Signal struct {
 	// a replayed signal is recognised instead of sent twice. Zero when
 	// unknown (injected signals).
 	SignalTS time.Time `json:"signal_ts,omitempty"`
+
+	// ── Exchange-side entry (real BUY only; 0 = the executor prices it) ──
+	// EntryLimitPaise is the highest price the entry may fill at: the
+	// order rests at the exchange at this LIMIT and is never chased above
+	// it. EntryTriggerPaise, when above the LTP at send time, makes it a
+	// STOPLOSS_LIMIT BUY that the exchange fires at the trigger. A resting
+	// entry still unfilled at EntryExpiresAt is cancelled.
+	EntryTriggerPaise int64     `json:"entry_trigger_paise,omitempty"`
+	EntryLimitPaise   int64     `json:"entry_limit_paise,omitempty"`
+	EntryExpiresAt    time.Time `json:"entry_expires_at,omitempty"`
+
+	// EmittedAt is the local time the engine emitted the signal (wall
+	// clock), for the signal → order latency (orderpath_stage_ms).
+	EmittedAt time.Time `json:"emitted_at,omitempty"`
 }
 
 // LegSpec is one option leg of a basket signal.

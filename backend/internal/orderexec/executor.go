@@ -85,6 +85,11 @@ type Config struct {
 	// exchange: ProtectionStop ("sl", one resting stop order) or
 	// ProtectionGTT ("gtt"). Empty means "gtt".
 	ProtectionMode string
+	// ExitModifiesStop: a real exit in stop mode first modifies the
+	// resting stop into a marketable LIMIT (one call, the same order, so
+	// nothing can sell twice); a refused modify falls back to cancel,
+	// confirm, then sell.
+	ExitModifiesStop bool
 
 	// ExecMode picks how real orders are priced: ExecChase ("chase") or
 	// ExecMarket ("market", FNOOrderType as is). Empty means "market".
@@ -165,6 +170,8 @@ type OrderExecutor struct {
 
 	// Optional fill listener; set via SetFillListener.
 	onFill func(FillReport)
+	// onEntryDrop hears a resting entry that ended unfilled.
+	onEntryDrop func(sig model.Signal, reason string)
 
 	// Optional quote source for paper fills; set via SetQuoteSource.
 	quotes QuoteSource
@@ -244,8 +251,14 @@ type OrderRecord struct {
 	Pending       bool      // real BUY whose outcome is not yet known; being settled in background
 	ExitOrderID   string    // real SELL sent but not yet confirmed filled
 	ExitRequested bool      // exit asked for while the BUY was Pending; sent once it settles
-	Leg           string    `json:",omitempty"` // multi-leg id (paper legs only); "" for single-leg positions
-	Short         bool      `json:",omitempty"` // leg was sold to open
+	// Resting: a Pending BUY resting at the exchange at a capped LIMIT (or
+	// STOPLOSS_LIMIT, Variety STOPLOSS) until it fills, an exit cancels it
+	// or RestUntil passes.
+	Resting   bool      `json:",omitempty"`
+	Variety   string    `json:",omitempty"`
+	RestUntil time.Time `json:",omitempty"`
+	Leg       string    `json:",omitempty"` // multi-leg id (paper legs only); "" for single-leg positions
+	Short     bool      `json:",omitempty"` // leg was sold to open
 }
 
 // NewOrderExecutor creates a new order executor.
@@ -687,8 +700,13 @@ func (oe *OrderExecutor) ExecuteSignal(sig model.Signal) {
 			return
 		case realEntry && entry.Pending:
 			// The BUY's fill is not known yet. Remember the exit; it is sent
-			// the moment the BUY settles as filled (see onBuySettled).
+			// the moment the BUY settles as filled (see onBuySettled). A
+			// resting entry is cancelled: what filled before that is sold.
 			oe.updateEntry(posKey, func(r *OrderRecord) { r.ExitRequested = true })
+			if entry.Resting {
+				oe.cancelResting(posKey, "exit: "+sig.Reason)
+				return
+			}
 			log.Printf("%s ⏳ EXIT for %s deferred — BUY still settling; will be sent once it fills", prefix, posKey)
 			return
 		case realEntry && !live:
@@ -800,6 +818,16 @@ func (oe *OrderExecutor) executePaper(sig model.Signal, posKey, direction, fnoTo
 	}
 	qty := oe.paperQtyFor(fnoSymbol)
 	fill := oe.paperFill(direction, fnoToken, ltp)
+	if direction == "BUY" && restingEntry(sig) {
+		f, ok := oe.paperRestingFill(sig, fnoToken, ltp)
+		if !ok {
+			why := fmt.Sprintf("paper resting BUY %s not filled: price %d above limit %d", fnoSymbol, f, sig.EntryLimitPaise)
+			log.Printf("%s 📋 %s", prefix, why)
+			oe.notifyEntryDropped(sig, why)
+			return
+		}
+		fill = f
+	}
 	log.Printf("%s 📋 %s: would %s %d lots of %s (%s) at LTP=%d (paper fill %d)",
 		prefix, paperReason, direction, qty, fnoSymbol, fnoToken, ltp, fill)
 	ltp = fill
@@ -914,6 +942,11 @@ func (oe *OrderExecutor) executeReal(sig model.Signal, posKey, direction, fnoTok
 	// Cancel the resting stop and confirm it before selling, so the stop
 	// and this SELL can never both fill. A stop that already filled closed
 	// the position: nothing to sell.
+	if isExit && oe.stopMode() && oe.cfg.ExitModifiesStop {
+		if oe.exitByStopModify(sig, posKey, fnoToken, fnoSymbol, ltp, key) {
+			return
+		}
+	}
 	if isExit && oe.stopMode() {
 		switch oe.cancelStopForExit(sig, posKey) {
 		case stopFilled:
@@ -930,6 +963,11 @@ func (oe *OrderExecutor) executeReal(sig model.Signal, posKey, direction, fnoTok
 	// ── Price ── (0 = MARKET). A chased BUY needs a price to start from;
 	// an exit without one goes out as MARKET.
 	limitPrice := oe.orderPrice(direction, fnoToken, ltp)
+	var trigger int64 // > 0: a resting STOPLOSS_LIMIT BUY
+	resting := !isExit && restingEntry(sig)
+	if resting {
+		limitPrice, trigger = oe.restingOrderSpec(sig, ltp)
+	}
 	if limitPrice <= 0 && !isExit && oe.chaseMode() {
 		oe.alertf("real BUY %s %s refused: no price (LTP/quote) to build a LIMIT from", sig.StrategyName, fnoSymbol)
 		return
@@ -946,6 +984,11 @@ func (oe *OrderExecutor) executeReal(sig model.Signal, posKey, direction, fnoTok
 		}
 	}
 
+	var st stageTimes
+	if !sig.EmittedAt.IsZero() {
+		st.toExecutor = time.Since(sig.EmittedAt)
+	}
+
 	// ── Intent ──
 	// Record what is about to be sent, and persist it, before the broker
 	// sees the order. A crash anywhere after placeOrder then restarts with
@@ -960,9 +1003,11 @@ func (oe *OrderExecutor) executeReal(sig model.Signal, posKey, direction, fnoTok
 			log.Printf("%s ⚠️  exit intent for %s not persisted (%v) — sending anyway", prefix, posKey, err)
 		}
 	} else {
+		t0 := time.Now()
 		if !oe.journalEntryIntent(sig, posKey, fnoToken, fnoSymbol, qty, key) {
 			return
 		}
+		st.journal = time.Since(t0)
 		oe.storeEntry(sig, OrderRecord{
 			ClientOrderID: key,
 			Symbol:        fnoSymbol,
@@ -975,8 +1020,14 @@ func (oe *OrderExecutor) executeReal(sig model.Signal, posKey, direction, fnoTok
 			Timestamp:     time.Now(),
 			StrategyName:  sig.StrategyName,
 			PositionSide:  string(sig.Side),
+			Resting:       resting,
+			Variety:       entryVariety(trigger),
+			RestUntil:     sig.EntryExpiresAt,
 		})
-		if err := oe.persistIntentNow(); err != nil {
+		t0 = time.Now()
+		err := oe.persistIntentNow()
+		st.persist = time.Since(t0)
+		if err != nil {
 			oe.dropEntry(sig)
 			oe.ledgerApply(oms.Event{ClientOrderID: key, State: oms.StateAbsent, Reason: "not sent: snapshot persist failed"})
 			oe.alertf("BUY %s %s NOT sent: order intent could not be persisted (%v)", sig.StrategyName, fnoSymbol, err)
@@ -994,11 +1045,12 @@ func (oe *OrderExecutor) executeReal(sig model.Signal, posKey, direction, fnoTok
 	if isExit {
 		runCB = oe.cb.ExecuteAlways
 	}
+	sendStart := time.Now()
 	cbErr := runCB(func() error {
 		attempt := orderAttempt{
 			tag: key,
 			place: func(tag string) (string, error) {
-				return oe.placeOrder(fnoSymbol, fnoToken, direction, limitPrice, qty, tag)
+				return oe.placeOrder(fnoSymbol, fnoToken, direction, limitPrice, trigger, qty, tag)
 			},
 			orderBook:    oe.readOrderBook,
 			refresh:      oe.RefreshSession,
@@ -1027,7 +1079,9 @@ func (oe *OrderExecutor) executeReal(sig model.Signal, posKey, direction, fnoTok
 	if cbErr == nil && rejectErr != nil {
 		cbErr = rejectErr
 	}
+	st.placeAck = time.Since(sendStart)
 	oe.journalPlacement(key, orderID, cbErr, sellPositionFlat)
+	oe.logStages(direction, sig.StrategyName, fnoSymbol, st)
 
 	if cbErr != nil {
 		switch {
@@ -1080,66 +1134,96 @@ func (oe *OrderExecutor) executeReal(sig model.Signal, posKey, direction, fnoTok
 		return
 	}
 
+	if resting {
+		// The order rests at the exchange: the worker does not wait for it.
+		kind := "LIMIT"
+		if trigger > 0 {
+			kind = fmt.Sprintf("STOPLOSS_LIMIT trigger %d", trigger)
+		}
+		log.Printf("%s 🎯 resting BUY %s %s orderID=%s: %s limit %d qty=%d (ltp %d) — exchange fills it, settled by push/poll",
+			prefix, sig.StrategyName, fnoSymbol, orderID, kind, limitPrice, qty, ltp)
+		rec, _ := oe.entry(posKey)
+		rec.OrderID, rec.Price = orderID, limitPrice
+		oe.followResting(sig, posKey, rec)
+		return
+	}
+
 	// ── Fill confirmation ──
 	// An accepted order is not a filled one: the broker can still reject it
 	// (e.g. margin). Use the real average price, not the signal-time LTP.
-	fill, ferr := oe.awaitFill(orderID, direction, fnoSymbol, fnoToken, qty, limitPrice)
+	fill, ferr := oe.awaitFill(orderID, "NORMAL", direction, fnoSymbol, fnoToken, qty, limitPrice)
 	if ferr == nil {
 		oe.journalFill(key, orderID, fill, "fill-confirm")
 	}
-	if ferr == nil && fill.Rejected() && !isExit {
+	if isExit {
+		oe.settleExit(sig, posKey, fnoSymbol, orderID, ltp, qty, fill, ferr)
+		return
+	}
+	if ferr == nil && fill.Rejected() {
 		log.Printf("%s ❌ BUY %s AFTER ACCEPT: %s orderID=%s — %s",
 			prefix, strings.ToUpper(fill.Status), fnoSymbol, orderID, fill.Text)
 		oe.dropEntry(sig)
 		return
 	}
-	if ferr == nil && isExit && fill.terminal() && fill.Status != "complete" {
-		oe.applyExitResult(sig, orderID, fill)
+	filled, fillPrice := oe.fillOutcome(direction, fnoSymbol, orderID, ltp, fill, ferr)
+
+	rec := OrderRecord{
+		OrderID:       orderID,
+		ClientOrderID: key,
+		Symbol:        fnoSymbol,
+		Token:         fnoToken,
+		Side:          direction,
+		Quantity:      qty,
+		Price:         fillPrice,
+		Real:          true,
+		Timestamp:     time.Now(),
+		StrategyName:  sig.StrategyName,
+		PositionSide:  string(sig.Side),
+	}
+	if filled {
+		rec, _ = oe.filledEntry(rec, fill)
+		oe.commitEntry(sig, rec)
+		log.Printf("%s 📝 Entry tracked: %s → orderID=%s price=%d qty=%d", prefix, posKey, orderID, rec.Price, rec.Quantity)
+		oe.reportFill(sig, direction, rec.Price, rec.Quantity, true)
 		return
 	}
+	// Accepted but not confirmed filled: track it as Pending (blocks a
+	// second BUY, defers exits, no GTTs on an unfilled order) and settle
+	// it from the book in the background.
+	rec.Pending = true
+	oe.storeEntry(sig, rec)
+	log.Printf("%s ⚠️  BUY %s not confirmed filled yet (status=%q, err=%v) — pending, following in background", prefix, orderID, fill.Status, ferr)
+	oe.pollOrderAsync(posKey, "BUY "+orderID, orderID, matchByID(orderID), func(oid string, f fillResult) {
+		oe.onBuySettled(sig, oid, f)
+	}, nil)
+}
+
+// fillOutcome reports whether an order filled (fully or partly) and the
+// price to book: the broker's average, else ltp.
+func (oe *OrderExecutor) fillOutcome(direction, symbol, orderID string, ltp int64, fill fillResult, ferr error) (bool, int64) {
+	prefix := oe.logPrefix()
 	filled := ferr == nil && (fill.Status == "complete" || fill.Partial())
 	if filled && fill.AvgPricePaise <= 0 {
-		log.Printf("%s ⚠️  FILLED but average price unreadable: %s orderID=%s — using ltp", prefix, fnoSymbol, orderID)
+		log.Printf("%s ⚠️  FILLED but average price unreadable: %s orderID=%s — using ltp", prefix, symbol, orderID)
 	}
 	fillPrice := ltp
 	if filled && fill.AvgPricePaise > 0 {
 		fillPrice = fill.AvgPricePaise
-		log.Printf("%s ✅ FILLED: %s %s orderID=%s avg=%d paise (ltp was %d)", prefix, direction, fnoSymbol, orderID, fillPrice, ltp)
+		log.Printf("%s ✅ FILLED: %s %s orderID=%s avg=%d paise (ltp was %d)", prefix, direction, symbol, orderID, fillPrice, ltp)
 	}
+	return filled, fillPrice
+}
 
-	if !isExit {
-		rec := OrderRecord{
-			OrderID:       orderID,
-			ClientOrderID: key,
-			Symbol:        fnoSymbol,
-			Token:         fnoToken,
-			Side:          direction,
-			Quantity:      qty,
-			Price:         fillPrice,
-			Real:          true,
-			Timestamp:     time.Now(),
-			StrategyName:  sig.StrategyName,
-			PositionSide:  string(sig.Side),
-		}
-		if filled {
-			rec, _ = oe.filledEntry(rec, fill)
-			oe.commitEntry(sig, rec)
-			log.Printf("%s 📝 Entry tracked: %s → orderID=%s price=%d qty=%d", prefix, posKey, orderID, rec.Price, rec.Quantity)
-			oe.reportFill(sig, direction, rec.Price, rec.Quantity, true)
-			return
-		}
-		// Accepted but not confirmed filled: track it as Pending (blocks a
-		// second BUY, defers exits, no GTTs on an unfilled order) and settle
-		// it from the book in the background.
-		rec.Pending = true
-		oe.storeEntry(sig, rec)
-		log.Printf("%s ⚠️  BUY %s not confirmed filled yet (status=%q, err=%v) — pending, following in background", prefix, orderID, fill.Status, ferr)
-		oe.pollOrderAsync(posKey, "BUY "+orderID, orderID, matchByID(orderID), func(oid string, f fillResult) {
-			oe.onBuySettled(sig, oid, f)
-		}, nil)
+// settleExit applies the inline fill result of a real exit order: closed,
+// ended without a fill (re-armed by applyExitResult), or still working
+// (followed in the background). Caller holds the position lock.
+func (oe *OrderExecutor) settleExit(sig model.Signal, posKey, fnoSymbol, orderID string, ltp, qty int64, fill fillResult, ferr error) {
+	prefix := oe.logPrefix()
+	if ferr == nil && fill.terminal() && fill.Status != "complete" {
+		oe.applyExitResult(sig, orderID, fill)
 		return
 	}
-
+	filled, fillPrice := oe.fillOutcome("SELL", fnoSymbol, orderID, ltp, fill, ferr)
 	if filled && fill.Status == "complete" {
 		entryOrder, _ := oe.entry(posKey)
 		log.Printf("%s 🔗 SELL %s closes BUY %s | Entry: ₹%.2f → Exit: ₹%.2f | P&L: ₹%.2f",
@@ -1147,7 +1231,7 @@ func (oe *OrderExecutor) executeReal(sig model.Signal, posKey, direction, fnoTok
 			float64(entryOrder.Price)/100, float64(fillPrice)/100,
 			float64(fillPrice-entryOrder.Price)/100*float64(oe.cfg.Qty))
 		oe.finalizeExit(sig)
-		oe.reportFill(sig, direction, fillPrice, qty, true)
+		oe.reportFill(sig, "SELL", fillPrice, qty, true)
 		return
 	}
 
@@ -1211,8 +1295,8 @@ func (oe *OrderExecutor) settleUnknown(sig model.Signal, posKey, direction, fnoT
 
 // placeOrder builds and sends the order request. price > 0 sends a LIMIT
 // at that price; 0 sends MARKET.
-func (oe *OrderExecutor) placeOrder(fnoSymbol, fnoToken, direction string, price, qty int64, tag string) (string, error) {
-	params := oe.buildOrderParams(fnoSymbol, fnoToken, direction, price, qty, tag)
+func (oe *OrderExecutor) placeOrder(fnoSymbol, fnoToken, direction string, price, trigger, qty int64, tag string) (string, error) {
+	params := oe.buildOrderParams(fnoSymbol, fnoToken, direction, price, trigger, qty, tag)
 
 	api := oe.brokerAPI()
 	if api == nil {
@@ -1222,15 +1306,21 @@ func (oe *OrderExecutor) placeOrder(fnoSymbol, fnoToken, direction string, price
 }
 
 // buildOrderParams builds the Angel One placeOrder payload: a LIMIT at
-// price when price > 0, else MARKET. tag is sent as ordertag so the order
-// can be found in the order book if the placement response is lost.
-func (oe *OrderExecutor) buildOrderParams(fnoSymbol, fnoToken, direction string, price, qty int64, tag string) map[string]any {
+// price when price > 0, else MARKET; with trigger > 0 a STOPLOSS_LIMIT
+// (variety STOPLOSS) that the exchange fires at trigger and fills at most
+// at price. tag is sent as ordertag so the order can be found in the order
+// book if the placement response is lost.
+func (oe *OrderExecutor) buildOrderParams(fnoSymbol, fnoToken, direction string, price, trigger, qty int64, tag string) map[string]any {
 	orderType := "MARKET"
 	if price > 0 {
 		orderType = "LIMIT"
 	}
+	variety := "NORMAL"
+	if trigger > 0 && price > 0 {
+		orderType, variety = "STOPLOSS_LIMIT", stopVariety
+	}
 	params := map[string]any{
-		"variety":         "NORMAL",
+		"variety":         variety,
 		"tradingsymbol":   fnoSymbol,
 		"symboltoken":     fnoToken,
 		"transactiontype": direction,
@@ -1244,6 +1334,9 @@ func (oe *OrderExecutor) buildOrderParams(fnoSymbol, fnoToken, direction string,
 
 	if price > 0 {
 		params["price"] = paiseToRupees(price) // rupees string, tick-aligned, no float
+	}
+	if variety == stopVariety {
+		params["triggerprice"] = paiseToRupees(trigger)
 	}
 	return params
 }

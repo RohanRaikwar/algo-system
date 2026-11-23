@@ -74,7 +74,9 @@ func (oe *OrderExecutor) orderPrice(direction, token string, ltp int64) int64 {
 // a resting LIMIT, then cancels a BUY or turns a SELL into MARKET; else it
 // polls the book. A non-terminal result means it is still working (the
 // caller follows it in the background).
-func (oe *OrderExecutor) awaitFill(orderID, direction, symbol, token string, qty, price int64) (fillResult, error) {
+// variety is the order's Angel variety (NORMAL, or STOPLOSS for a stop
+// turned into the exit).
+func (oe *OrderExecutor) awaitFill(orderID, variety, direction, symbol, token string, qty, price int64) (fillResult, error) {
 	if !oe.chaseMode() || price <= 0 {
 		return confirmFill(oe.readOrderBook, &oe.pushes, orderID, defaultFillPollDelays)
 	}
@@ -95,7 +97,7 @@ func (oe *OrderExecutor) awaitFill(orderID, direction, symbol, token string, qty
 			log.Printf("%s 🏃 chase BUY %s: %d is over %d bps above first price %d — giving up", oe.logPrefix(), orderID, next, oe.cfg.ChaseMaxBps, first)
 			break
 		}
-		if err := oe.modifyOrder(orderID, symbol, token, "LIMIT", qty, next); err != nil {
+		if err := oe.modifyOrder(orderID, variety, symbol, token, "LIMIT", qty, next); err != nil {
 			log.Printf("%s 🏃 chase %s %s: re-price to %d refused: %v", oe.logPrefix(), direction, orderID, next, err)
 			continue
 		}
@@ -108,14 +110,14 @@ func (oe *OrderExecutor) awaitFill(orderID, direction, symbol, token string, qty
 		if api == nil {
 			return fillResult{}, errNoSession
 		}
-		if res, err := api.CancelOrder(orderID, "NORMAL"); err != nil || !statusOK(res) {
+		if res, err := api.CancelOrder(orderID, variety); err != nil || !statusOK(res) {
 			log.Printf("%s 🏃 chase BUY %s: cancel refused (%v %v) — reading book", oe.logPrefix(), orderID, err, res)
 		} else {
 			log.Printf("%s 🏃 chase BUY %s: not filled after %d re-prices — cancelled", oe.logPrefix(), orderID, oe.cfg.ChaseReprices)
 		}
 		return confirmFill(oe.readOrderBook, &oe.pushes, orderID, defaultFillPollDelays)
 	}
-	if err := oe.modifyOrder(orderID, symbol, token, "MARKET", qty, 0); err != nil {
+	if err := oe.modifyOrder(orderID, variety, symbol, token, "MARKET", qty, 0); err != nil {
 		log.Printf("%s 🏃 chase SELL %s: switch to MARKET refused: %v", oe.logPrefix(), orderID, err)
 	} else {
 		log.Printf("%s 🏃 chase SELL %s: still open — switched to MARKET", oe.logPrefix(), orderID)
@@ -123,14 +125,15 @@ func (oe *OrderExecutor) awaitFill(orderID, direction, symbol, token string, qty
 	return confirmFill(oe.readOrderBook, &oe.pushes, orderID, defaultFillPollDelays)
 }
 
-// modifyOrder changes a resting NORMAL order's type and price.
-func (oe *OrderExecutor) modifyOrder(orderID, symbol, token, orderType string, qty, price int64) error {
+// modifyOrder changes a resting order's type and price. A STOPLOSS-variety
+// order changed to LIMIT or MARKET loses its trigger.
+func (oe *OrderExecutor) modifyOrder(orderID, variety, symbol, token, orderType string, qty, price int64) error {
 	api := oe.brokerAPI()
 	if api == nil {
 		return errNoSession
 	}
 	params := map[string]any{
-		"variety":       "NORMAL",
+		"variety":       variety,
 		"orderid":       orderID,
 		"ordertype":     orderType,
 		"producttype":   oe.cfg.FNOProductType,
@@ -143,6 +146,9 @@ func (oe *OrderExecutor) modifyOrder(orderID, symbol, token, orderType string, q
 	}
 	if price > 0 {
 		params["price"] = paiseToRupees(price)
+	}
+	if variety == stopVariety {
+		params["triggerprice"] = "0"
 	}
 	res, err := api.ModifyOrder(params)
 	if err != nil {
