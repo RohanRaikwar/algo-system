@@ -1,6 +1,7 @@
 package tgsignal
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"regexp"
@@ -31,6 +32,9 @@ type item struct {
 	rx    model.TGSignal
 	rxErr error
 	call  bool // the regex reads a call
+	// prevRead: for an edit of a message in a call's context, how the
+	// original was read ("" if new).
+	prevRead string
 }
 
 // chat-path routes, decided when the message arrives.
@@ -92,25 +96,107 @@ func (r *router) dispatch(m inMsg, now time.Time) {
 	entry := Entry{ChatID: m.ChatID, MsgID: m.MsgID, ReplyTo: m.ReplyTo, Edited: m.Edited, SentAt: m.Sent, Text: m.Text, ReceivedAt: now}
 	if age := now.Sub(m.Sent); age > h.maxAge {
 		entry.Verdict, entry.Reason = VerdictOld, fmt.Sprintf("%s old", age.Round(time.Second))
-		h.record(entry)
-		h.show(entry, "", decision{})
+		r.offUpdate(func() { h.record(entry); h.show(entry, "", decision{}) })
 		return
 	}
 	if m.Edited && !m.Posted.IsZero() && now.Sub(m.Posted) > maxEditAge {
 		entry.Verdict, entry.Reason = VerdictOld, fmt.Sprintf("edit of a message posted %s ago", now.Sub(m.Posted).Round(time.Minute))
-		h.record(entry)
+		r.offUpdate(func() { h.record(entry) })
 		return
 	}
 	if !h.firstSeen(seenKey(m), now) {
 		return
 	}
 	it := &item{m: m, now: now, start: time.Now(), entry: entry}
-	it.rx, it.rxErr = Parse(m.Text)
-	it.rx, it.rxErr = withDefaultSL(it.rx, it.rxErr, h.slPct)
+	raw, rawErr := Parse(m.Text) // once: isCall would parse again
+	it.call = rawErr == nil || errors.Is(rawErr, ErrNoSL)
+	it.rx, it.rxErr = withDefaultSL(raw, rawErr, h.slPct)
 	it.entry.Regex = regexView(it.rx, it.rxErr)
-	it.call = isCall(m.Text)
 	r.add(1)
 	r.route(it)
+}
+
+// callGone handles a call the caller withdrew (its message edited into a
+// non-call, or deleted). Not yet bought: the call is cancelled (a resting
+// entry order is cancelled by stratengine). Bought: the position is kept
+// and only reported; exits come from the caller's follow-ups as usual.
+func (r *router) callGone(tc *tradeCtx, it *item, how string) {
+	h := r.h
+	callID := tc.call.MsgID
+	switch {
+	case h.ctxs.isClosed(tc):
+		r.finish(it, decision{verdict: VerdictContext, reason: fmt.Sprintf("call %d %s (already closed)", callID, how)}, "")
+	case h.ctxs.isFilled(tc):
+		line := fmt.Sprintf("CALL_WITHDRAWN: call %s by the caller after our entry filled; position kept", how)
+		log.Printf("[tgsignal] ⚠️ %d:%d %s", tc.call.ChatID, callID, line)
+		h.noteOutcome(tc.call.ChatID, callID, line)
+		if h.status != nil {
+			h.status.verdict(VerdictContext, time.Now())
+		}
+		r.finish(it, decision{verdict: VerdictContext, reason: line, callMsgID: callID}, "")
+	default:
+		h.ctxs.add(tc, it.m, "cancel (call "+how+")")
+		d := decision{verdict: VerdictFollowUp, reason: "call " + how + " by the caller", callMsgID: callID,
+			followUp: &model.TGFollowUp{Action: model.TGCancel}}
+		r.finish(it, r.publish(it, d), "")
+	}
+}
+
+// deleted handles messages the caller deleted in chat: a deleted call is
+// withdrawn (callGone); a deleted message in a call's thread is noted.
+func (r *router) deleted(chat int64, ids []int, now time.Time) {
+	h := r.h
+	if !h.chats[chat] {
+		return
+	}
+	for _, id := range ids {
+		if tc := h.ctxs.byCall(chat, id); tc != nil {
+			m := inMsg{ChatID: chat, MsgID: id, Sent: now, Text: "(deleted)"}
+			it := &item{m: m, now: now, start: time.Now(),
+				entry: Entry{ChatID: chat, MsgID: id, SentAt: now, Text: m.Text, ReceivedAt: now}}
+			r.add(1)
+			tc.w.box.push(func() { r.callGone(tc, it, "deleted") })
+			continue
+		}
+		id := id
+		r.offUpdate(func() { h.noteOutcome(chat, id, "DELETED by the caller") })
+	}
+}
+
+// checkEditedFollowUp reports an edit of a follow-up that already acted
+// when the edit reads differently ("Active" → "not active yet"). Nothing
+// is undone: the order may already be at the broker.
+func (r *router) checkEditedFollowUp(it *item, d decision) {
+	was := readAction(it.prevRead)
+	if !it.m.Edited || was == "" {
+		return
+	}
+	now := ""
+	if d.followUp != nil {
+		now = string(d.followUp.Action)
+	}
+	if now == was {
+		return
+	}
+	if now == "" {
+		now = "no action"
+	}
+	line := fmt.Sprintf("FOLLOW_UP_EDITED: was %s, edit reads %s — earlier action NOT undone, check the trade", was, now)
+	log.Printf("[tgsignal] ⚠️ %d:%d %s", it.m.ChatID, it.m.MsgID, line)
+	r.h.noteOutcome(it.m.ChatID, it.m.MsgID, line)
+	if r.h.status != nil {
+		r.h.status.verdict(VerdictContext, time.Now())
+	}
+}
+
+// offUpdate runs log-only work (journal, dashboard) off the Telegram
+// update goroutine, so a slow disk never delays the next update.
+func (r *router) offUpdate(fn func()) {
+	r.add(1)
+	go func() {
+		defer r.add(-1)
+		fn()
+	}()
 }
 
 func msgKey(chat int64, id int) string { return model.TGMsgKey(chat, id) }
@@ -118,19 +204,37 @@ func msgKey(chat int64, id int) string { return model.TGMsgKey(chat, id) }
 // route sends it to its worker, or holds it behind a pending read.
 func (r *router) route(it *item) {
 	m := it.m
-	replyCall := false
-	if m.ReplyTo != 0 {
-		replyCall = r.h.replyToCall(m)
-	}
 	r.mu.Lock()
 	if held, ok := r.heldBy(m); ok {
 		r.pending[held] = append(r.pending[held], it)
 		r.mu.Unlock()
 		return
 	}
+	// The call message itself edited into something that is no longer a
+	// call: the caller withdrew it.
+	if m.Edited && !it.call {
+		if tc := r.h.ctxs.byCall(m.ChatID, m.MsgID); tc != nil {
+			r.mu.Unlock()
+			tc.w.box.push(func() { r.callGone(tc, it, "edited away") })
+			return
+		}
+	}
+	// A message in a call's trade context needs nothing else: check it
+	// before the journal read below.
 	if tc, link := r.h.ctxs.link(m, it.now); tc != nil && !it.call {
 		r.mu.Unlock()
+		if m.Edited {
+			it.prevRead = r.h.ctxs.lastReadOf(tc, m.MsgID)
+		}
 		tc.w.box.push(func() { r.inContext(tc, link, it) })
+		return
+	}
+	r.mu.Unlock()
+	replyCall := m.ReplyTo != 0 && r.h.replyToCall(m) // journal read, outside the lock
+	r.mu.Lock()
+	if held, ok := r.heldBy(m); ok { // a read may have started meanwhile
+		r.pending[held] = append(r.pending[held], it)
+		r.mu.Unlock()
 		return
 	}
 	path := r.chatPath(it, replyCall)
@@ -239,8 +343,11 @@ func (r *router) chatBox(chat int64) *mailbox {
 }
 
 // armFirst publishes a regex call at once and sends it to the LLM to
-// check. The call buys only after the check agrees: confirmations are
-// held until then. A disagreement or an LLM failure cancels the call.
+// check. The call buys only after the check agrees: a confirmation (read
+// by code or by the LLM) that comes first is held until then. A
+// disagreement or an LLM failure cancels the call. The LLM usually has
+// seconds to minutes before the caller confirms, so the hold rarely
+// delays an order.
 func (r *router) armFirst(it *item) {
 	h := r.h
 	c := it.rx
@@ -288,6 +395,13 @@ func (r *router) verified(tc *tradeCtx, ver int, it *item, res LLMResult, err er
 		}
 		d.reason = "armed on regex, cancelled: " + why
 		log.Printf("[tgsignal] ✋ call %d:%d cancelled: %s", it.m.ChatID, it.m.MsgID, why)
+	case h.ctxs.isConfirmed(tc):
+		d.reason = "armed on regex, confirmed before the LLM check, position kept: " + why
+		log.Printf("[tgsignal] ⚠️ call %d:%d: LLM check disagrees after the confirmation, position kept: %s", it.m.ChatID, it.m.MsgID, why)
+		h.noteOutcome(it.m.ChatID, it.m.MsgID, "LLM_DISAGREE: confirmed before the LLM check, position kept: "+why)
+		if h.status != nil {
+			h.status.verdict(VerdictDisagree, time.Now())
+		}
 	default:
 		d.reason = "armed on regex, not cancelled (held, closed or edited since): " + why
 	}
@@ -311,6 +425,34 @@ func fastExitAction(text string) model.TGFollowUpAction {
 		return model.TGTargetHit
 	}
 	return model.TGExit
+}
+
+// auditAgrees reports whether the LLM's action matches a local one. The
+// three exit actions all close the position, so they agree.
+func auditAgrees(local, llm string) bool {
+	exits := map[string]bool{"exit": true, "sl_hit": true, "target_hit": true}
+	return local == llm || (exits[local] && exits[llm])
+}
+
+// Local formats of a reply in a call's thread: whole short messages only,
+// so any extra words go to the LLM.
+var (
+	// reLocalCTC moves the stop to the entry: "Sl ctc kar lena", "SL cost".
+	reLocalCTC = regexp.MustCompile(`(?i)^[^\pL\d]*(sl|stop ?loss) (ctc|cost|cost (pe|par)|at cost)( (kar|kr) (lena|lo|do|dena)| le aao| kar lijiye)?[^\pL\d]*$|^[^\pL\d]*ctc sl[^\pL\d]*$`)
+	// reLocalSLAt moves the stop to a price: "sl 112 par le aao".
+	reLocalSLAt = regexp.MustCompile(`(?i)^[^\pL\d]*(?:sl|stop ?loss) ?(?:₹|rs\.? ?)?(\d+(?:\.\d+)?) (?:pe|par|pr)( (?:kar|kr) (?:lena|lo|do|dena)| le aao| shift (?:kar|kr) (?:lena|lo|do))?[^\pL\d]*$`)
+	// reLocalCancel drops a call not yet bought: "Avoid", "cancel".
+	reLocalCancel = regexp.MustCompile(`(?i)^[^\pL\d]*(avoid|cancel|skip|call cancel|avoid (it|this|karo|kare|kijiye)|skip (it|this|karo|kare))[^\pL\d]*$`)
+)
+
+// localSLAt is the stop price of a reLocalSLAt message in paise, 0 if
+// none.
+func localSLAt(text string) int64 {
+	sm := reLocalSLAt.FindStringSubmatch(text)
+	if sm == nil {
+		return 0
+	}
+	return toPaise(sm[1])
 }
 
 // inContext handles a message linked to tc. It runs on tc's mailbox.
@@ -343,13 +485,24 @@ func (r *router) inContext(tc *tradeCtx, link ctxLink, it *item) {
 	case link == linkReply && reFastExit.MatchString(m.Text) && h.ctxs.isHeld(tc):
 		r.fastExit(tc, it)
 		return
+	case link == linkReply && h.ctxs.isConfirmed(tc) && reLocalCTC.MatchString(m.Text):
+		r.localAct(tc, it, model.TGFollowUp{Action: model.TGMoveSL, NewSLPaise: tc.call.TriggerPaise}, "stop to cost")
+		return
+	case link == linkReply && h.ctxs.isConfirmed(tc) && localSLAt(m.Text) > 0:
+		p := localSLAt(m.Text)
+		r.localAct(tc, it, model.TGFollowUp{Action: model.TGMoveSL, NewSLPaise: p}, "stop to "+rupees(p))
+		return
+	case link == linkReply && !h.ctxs.isHeld(tc) && reLocalCancel.MatchString(m.Text):
+		r.localAct(tc, it, model.TGFollowUp{Action: model.TGCancel}, "cancel")
+		return
 	case h.sched == nil:
 		r.finish(it, r.publish(it, decideRegex(it.rx, it.rxErr)), "")
 		return
 	case link == linkOnly && !needsLLM(m.Text, false) && !reCtxWords.MatchString(m.Text):
 		r.finish(it, decision{verdict: VerdictSkipped, reason: "no trade words"}, "")
 		return
-	case !needsLLM(m.Text, true):
+	case !needsLLM(m.Text, true) && !(link == linkReply && hasActionEmoji(m.Text)):
+		// An emoji-only reply ("✅", "❌") is read with the context below.
 		h.ctxs.add(tc, m, "none")
 		r.finish(it, decision{verdict: VerdictContext, reason: "no words", callMsgID: callID}, "")
 		return
@@ -361,11 +514,45 @@ func (r *router) inContext(tc *tradeCtx, link ctxLink, it *item) {
 	}
 	seq := tc.w.nextSeq
 	tc.w.nextSeq++
-	r.read(prio, it, h.ctxs.prompt(tc, link), func(res LLMResult, err error) {
+	ctxText := h.ctxs.prompt(tc, link)
+	apply := func(res LLMResult, err error) {
 		tc.w.box.push(func() {
 			tc.w.apply(seq, func() { r.contextRead(tc, link, it, res, err) })
 		})
+	}
+	if h.ctxSched == nil {
+		r.read(prio, it, ctxText, apply)
+		return
+	}
+	r.readOn(h.ctxSched, prio, it, ctxText, func(res LLMResult, err error) {
+		why := escalate(res, err)
+		if why == "" {
+			apply(res, err)
+			return
+		}
+		if h.status != nil && err == nil {
+			h.status.llmRead(res.Usage.Total, nil, time.Now())
+		}
+		log.Printf("[tgsignal] ⤴️ %d:%d fast read %s: main model reads it", it.m.ChatID, it.m.MsgID, why)
+		r.read(prio, it, ctxText, apply)
 	})
+}
+
+// escalate says why the fast model's reading of a context message goes
+// to the main model, "" to use it: an error (not a stale queue), low
+// confidence, or a new call (the fast schema has no call fields).
+func escalate(res LLMResult, err error) string {
+	switch {
+	case err == ErrLLMStale:
+		return ""
+	case err != nil:
+		return "failed (" + err.Error() + ")"
+	case res.Kind == "new_call":
+		return "says new call"
+	case res.Confidence == "low":
+		return "low confidence"
+	}
+	return ""
 }
 
 // contextRead applies the LLM's reading of a context message, in message
@@ -404,15 +591,17 @@ func (r *router) contextRead(tc *tradeCtx, link ctxLink, it *item, res LLMResult
 	r.finish(it, r.publish(it, d), english)
 }
 
-// activate sends the call's confirmation, or holds it until the LLM has
-// verified the call.
+// activate sends the call's confirmation at once, or holds it until the
+// LLM has verified the call.
 func (r *router) activate(tc *tradeCtx, it *item, why string) {
 	r.activateAs(tc, it, confirmed(tc.call.MsgID, why), "")
 }
 
 func (r *router) activateAs(tc *tradeCtx, it *item, d decision, english string) {
 	if !r.h.ctxs.isVerified(tc) {
-		r.h.ctxs.hold(tc, it.m)
+		held := it.m
+		held.Received = it.now
+		r.h.ctxs.hold(tc, held)
 		r.finish(it, decision{verdict: VerdictContext, reason: d.reason + "; held until the LLM checks the call", callMsgID: tc.call.MsgID}, english)
 		return
 	}
@@ -422,7 +611,12 @@ func (r *router) activateAs(tc *tradeCtx, it *item, d decision, english string) 
 // sendActivate sends a held confirmation once the call is verified.
 func (r *router) sendActivate(tc *tradeCtx, m inMsg, why string) {
 	h := r.h
-	f := model.TGFollowUp{ChatID: m.ChatID, MsgID: m.MsgID, ReplyToMsgID: tc.call.MsgID, Action: model.TGActivate, ReceivedAt: time.Now(), Text: m.Text}
+	recv := m.Received
+	if recv.IsZero() {
+		recv = time.Now()
+	}
+	f := model.TGFollowUp{ChatID: m.ChatID, MsgID: m.MsgID, ReplyToMsgID: tc.call.MsgID, Action: model.TGActivate,
+		ReceivedAt: recv, SentAt: m.Sent, Text: m.Text}
 	if err := h.publishFollowUp(f); err != nil {
 		log.Printf("[tgsignal] 🚨 publish follow-up %s: %v", f.Key(), err)
 		return
@@ -434,15 +628,22 @@ func (r *router) sendActivate(tc *tradeCtx, m inMsg, why string) {
 // fastExit sends the exit of a held call at once; the LLM reads the
 // message after, for the log only.
 func (r *router) fastExit(tc *tradeCtx, it *item) {
+	r.localAct(tc, it, model.TGFollowUp{Action: fastExitAction(it.m.Text)}, "fast exit")
+}
+
+// localAct sends a follow-up the code read in a local format at once; the
+// LLM reads the message after, for the log only, and a different reading
+// is reported as AUDIT_DISAGREE.
+func (r *router) localAct(tc *tradeCtx, it *item, f model.TGFollowUp, what string) {
 	h := r.h
-	d := decision{verdict: VerdictFollowUp, reason: "fast exit (LLM audits)", callMsgID: tc.call.MsgID,
-		followUp: &model.TGFollowUp{Action: fastExitAction(it.m.Text)}}
-	h.ctxs.add(tc, it.m, string(d.followUp.Action)+" (fast)")
+	d := decision{verdict: VerdictFollowUp, reason: what + " (local, LLM audits)", callMsgID: tc.call.MsgID, followUp: &f}
+	h.ctxs.add(tc, it.m, string(f.Action)+" (local)")
 	d = r.publish(it, d)
 	r.finish(it, d, "")
 	if h.sched == nil {
 		return
 	}
+	want := string(f.Action)
 	m := it.m
 	r.add(1)
 	h.sched.submit(&llmJob{prio: prioAudit, text: m.Text, ctxText: h.ctxs.prompt(tc, linkReply), deadline: time.Now().Add(5 * time.Minute),
@@ -455,11 +656,11 @@ func (r *router) fastExit(tc *tradeCtx, it *item) {
 				return
 			}
 			switch {
-			case res.Kind == "follow_up" && (res.Action == "exit" || res.Action == "sl_hit" || res.Action == "target_hit"):
+			case res.Kind == "follow_up" && auditAgrees(want, res.Action):
 				h.noteOutcome(m.ChatID, m.MsgID, "AUDIT_OK: LLM reads "+res.Action)
 			default:
 				line := fmt.Sprintf("%s: LLM reads %s/%s: %s", VerdictAuditDisagree, res.Kind, res.Action, res.Reason)
-				log.Printf("[tgsignal] ⚠️ fast exit %d:%d %s", m.ChatID, m.MsgID, line)
+				log.Printf("[tgsignal] ⚠️ local %s %d:%d %s", want, m.ChatID, m.MsgID, line)
 				h.noteOutcome(m.ChatID, m.MsgID, line)
 				if h.status != nil {
 					h.status.verdict(VerdictAuditDisagree, time.Now())
@@ -471,11 +672,16 @@ func (r *router) fastExit(tc *tradeCtx, it *item) {
 // read sends one LLM read to the scheduler. The item stays busy until
 // done runs.
 func (r *router) read(prio llmPrio, it *item, ctxText string, done func(LLMResult, error)) {
+	r.readOn(r.h.sched, prio, it, ctxText, done)
+}
+
+// readOn queues a read on scheduler s.
+func (r *router) readOn(s *llmScheduler, prio llmPrio, it *item, ctxText string, done func(LLMResult, error)) {
 	ttl := r.h.maxAge
 	if prio >= prioAudit {
 		ttl = 5 * time.Minute
 	}
-	r.h.sched.submit(&llmJob{prio: prio, text: it.m.Text, ctxText: ctxText, deadline: time.Now().Add(ttl), done: done})
+	s.submit(&llmJob{prio: prio, text: it.m.Text, ctxText: ctxText, deadline: time.Now().Add(ttl), done: done})
 }
 
 // readDone records the LLM reading on the entry and status.
@@ -493,7 +699,11 @@ func (r *router) readDone(it *item, res LLMResult, err error) string {
 		return ""
 	}
 	it.entry.LLM = res
-	log.Printf("[tgsignal] 🗣 %d:%d in English: %q → %s %s", it.m.ChatID, it.m.MsgID, res.English, res.Kind, res.Action)
+	if res.Fast {
+		log.Printf("[tgsignal] ⚡ %d:%d fast read → %s %s (%s; queue %dms, API %dms, %s)", it.m.ChatID, it.m.MsgID, res.Kind, res.Action, res.Reason, res.QueueMS, res.APIMS, res.Provider)
+		return res.Reason
+	}
+	log.Printf("[tgsignal] 🗣 %d:%d in English: %q → %s %s (queue %dms, API %dms, %s)", it.m.ChatID, it.m.MsgID, res.English, res.Kind, res.Action, res.QueueMS, res.APIMS, res.Provider)
 	return res.English
 }
 
@@ -510,6 +720,7 @@ func (r *router) publish(it *item, d decision) decision {
 	case d.followUp != nil:
 		f := *d.followUp
 		f.ChatID, f.MsgID, f.ReplyToMsgID, f.ReceivedAt, f.Text = m.ChatID, m.MsgID, m.ReplyTo, it.now, m.Text
+		f.SentAt = m.Sent
 		if d.callMsgID != 0 {
 			f.ReplyToMsgID = d.callMsgID // linked through the call's context
 		}
@@ -544,6 +755,7 @@ func (r *router) publishCall(it *item, c model.TGSignal, verified bool) (*tradeC
 
 // finish logs the message's verdict and ends its work.
 func (r *router) finish(it *item, d decision, english string) {
+	r.checkEditedFollowUp(it, d)
 	it.entry.Verdict, it.entry.Reason = d.verdict, d.reason
 	it.entry.ReadMS = time.Since(it.start).Milliseconds()
 	r.h.record(it.entry)

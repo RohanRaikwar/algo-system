@@ -3,6 +3,7 @@ package tgsignal
 import (
 	"database/sql"
 	"encoding/json"
+	"sync/atomic"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -11,7 +12,8 @@ import (
 // Journal is the review log: every message read, how it was read, the
 // verdict, and what stratengine did with it.
 type Journal struct {
-	db *sql.DB
+	db        *sql.DB
+	textReads atomic.Int64 // TextOf calls (tests: hot-path reads)
 }
 
 // Verdicts recorded per message.
@@ -130,6 +132,7 @@ func (j *Journal) Record(e Entry) error {
 // TextOf returns the latest logged text of a message, "" if unknown. Used
 // to give the LLM the call a follow-up replies to.
 func (j *Journal) TextOf(chatID int64, msgID int) string {
+	j.textReads.Add(1)
 	var text string
 	_ = j.db.QueryRow(`SELECT text FROM messages WHERE chat_id = ? AND msg_id = ? ORDER BY id DESC LIMIT 1`, chatID, msgID).Scan(&text)
 	return text

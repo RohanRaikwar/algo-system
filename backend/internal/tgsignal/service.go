@@ -85,6 +85,19 @@ func New(cfg Config) (*Service, error) {
 			log.Printf("[tgsignal] 🧠 LLM %s: %s at %s (%d tokens/min)", e.Env, e.Model, e.BaseURL, e.TPM)
 		}
 	}
+	if cfg.ctxOn() {
+		e := cfg.ctxEndpoint()
+		r := NewFastContextReader(e.BaseURL, e.APIKey, e.Model, cfg.LLMCtxReason)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		err := r.CheckModel(ctx)
+		cancel()
+		if err != nil {
+			log.Printf("[tgsignal] ⚠️ fast context LLM %s at %s skipped (main model reads context): %v", e.Model, e.BaseURL, err)
+		} else {
+			svc.h.setContextReader(hostOf(e.BaseURL)+" ctx", r, llmLimits{TPM: e.TPM, RPM: e.RPM, Workers: cfg.LLMWorkers})
+			log.Printf("[tgsignal] ⚡ fast context LLM: %s at %s (%d tokens/min)", e.Model, e.BaseURL, e.TPM)
+		}
+	}
 	if n, err := svc.h.ctxs.load(journal, cfg.ChatIDs, cfg.DefaultSLPct, time.Now()); err != nil {
 		log.Printf("[tgsignal] trade contexts from the journal: %v", err)
 	} else if n > 0 {
@@ -98,6 +111,7 @@ func (svc *Service) publishCall(sig model.TGSignal) error {
 }
 
 func (svc *Service) publishFollowUp(f model.TGFollowUp) error {
+	f.PublishedAt = time.Now()
 	return svc.publishJSON(model.TGFollowUpChannel, f)
 }
 
@@ -138,6 +152,13 @@ func (svc *Service) Run(ctx context.Context) error {
 		svc.onMessage(ctx, u.Message, true)
 		return nil
 	})
+	// Deletes in channels and supergroups (calls groups are these): a
+	// deleted call is withdrawn. Basic-group deletes carry no chat id and
+	// are not followed.
+	d.OnDeleteChannelMessages(func(ctx context.Context, _ tg.Entities, u *tg.UpdateDeleteChannelMessages) error {
+		svc.h.r.deleted(u.ChannelID, u.Messages, time.Now())
+		return nil
+	})
 
 	client := telegram.NewClient(svc.cfg.APIID, svc.cfg.APIHash, telegram.Options{
 		SessionStorage: &session.FileStorage{Path: svc.cfg.SessionPath},
@@ -151,7 +172,7 @@ func (svc *Service) Run(ctx context.Context) error {
 		if !status.Authorized {
 			return fmt.Errorf("session %s not logged in — run: go run ./cmd/tools/tglogin", svc.cfg.SessionPath)
 		}
-		log.Printf("[tgsignal] 🟢 logged in as %s, following chats %v", status.User.Username, svc.cfg.ChatIDs)
+		log.Printf("[tgsignal] 🟢 logged in as %s, following chats %v (Telegram DC %d)", status.User.Username, svc.cfg.ChatIDs, client.Config().ThisDC)
 		name := status.User.Username
 		if name == "" {
 			name = strings.TrimSpace(status.User.FirstName + " " + status.User.LastName)

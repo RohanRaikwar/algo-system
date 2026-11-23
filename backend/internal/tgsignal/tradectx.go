@@ -21,9 +21,10 @@ import (
 
 // ctxMsg is one message in a context and what was made of it.
 type ctxMsg struct {
-	At   time.Time
-	Text string
-	Read string // "price 280", "activate", "none", ...
+	MsgID int
+	At    time.Time
+	Text  string
+	Read  string // "price 280", "activate", "none", ...
 }
 
 // tradeCtx is one call's context.
@@ -34,6 +35,7 @@ type tradeCtx struct {
 	msgIDs  map[int]bool // the call and every message linked to it
 	active  bool         // stratengine reported ACTIVE
 	held    bool         // stratengine reported ENTERED
+	filled  bool         // stratengine reported FILLED: we own the position
 	closed  bool         // EXIT, DROPPED, REFUSED or ENTRY_REFUSED
 	closeAt time.Time
 	// confirmSent: an activate was published and not refused; later price
@@ -163,6 +165,14 @@ func (cs *contexts) cancel(tc *tradeCtx, ver int, now time.Time) bool {
 	return true
 }
 
+// isConfirmed reports whether tc's call was confirmed and the confirmation
+// sent (not held for the LLM check), or bought.
+func (cs *contexts) isConfirmed(tc *tradeCtx) bool {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return (tc.confirmSent && len(tc.queued) == 0) || tc.active || tc.held
+}
+
 // prune forgets contexts closed more than closedCtxKept ago. The caller
 // holds cs.mu.
 func (cs *contexts) prune(chat int64, now time.Time) {
@@ -222,7 +232,52 @@ func (cs *contexts) add(tc *tradeCtx, m inMsg, read string) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	tc.msgIDs[m.MsgID] = true
-	tc.msgs = append(tc.msgs, ctxMsg{At: m.Sent, Text: m.Text, Read: read})
+	tc.msgs = append(tc.msgs, ctxMsg{MsgID: m.MsgID, At: m.Sent, Text: m.Text, Read: read})
+}
+
+// lastReadOf is how message id was last read in tc ("" if never).
+func (cs *contexts) lastReadOf(tc *tradeCtx, id int) string {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	for i := len(tc.msgs) - 1; i >= 0; i-- {
+		if tc.msgs[i].MsgID == id {
+			return tc.msgs[i].Read
+		}
+	}
+	return ""
+}
+
+// byCall is the context of the call posted as message id in chat.
+func (cs *contexts) byCall(chat int64, id int) *tradeCtx {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	for _, tc := range cs.byChat[chat] {
+		if tc.call.MsgID == id {
+			return tc
+		}
+	}
+	return nil
+}
+
+// isFilled reports whether stratengine reported tc's entry filled.
+func (cs *contexts) isFilled(tc *tradeCtx) bool {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return tc.filled
+}
+
+// readAction is the follow-up action a context read names, "" for none
+// ("activate (local)" → activate, "price 280 → activate" → activate).
+func readAction(read string) string {
+	for _, a := range []string{"activate", "exit", "sl_hit", "target_hit", "move", "cancel"} {
+		if strings.Contains(read, a) {
+			if a == "move" {
+				return string(model.TGMoveSL)
+			}
+			return a
+		}
+	}
+	return ""
 }
 
 // addPrice records a caller's price post. It reports whether it confirms
@@ -239,7 +294,7 @@ func (cs *contexts) addPrice(tc *tradeCtx, m inMsg, price int64) bool {
 		tc.confirmSent = true
 		read += " → activate"
 	}
-	tc.msgs = append(tc.msgs, ctxMsg{At: m.Sent, Text: m.Text, Read: read})
+	tc.msgs = append(tc.msgs, ctxMsg{MsgID: m.MsgID, At: m.Sent, Text: m.Text, Read: read})
 	return confirm
 }
 
@@ -288,8 +343,14 @@ func (tc *tradeCtx) apply(event string, now time.Time) {
 	switch event {
 	case TGEventActive:
 		tc.active = true
-	case TGEventEntered, TGEventFilled:
+	case TGEventEntered:
 		tc.held = true
+	case TGEventFilled:
+		tc.held, tc.filled = true, true
+	case TGEventReplaced:
+		// stratengine replaced the call (an edit): it waits for a new
+		// confirmation, whatever was confirmed before.
+		tc.active, tc.held, tc.filled, tc.confirmSent = false, false, false, false
 	case TGEventExit, TGEventDropped, TGEventRefused, TGEventEntryRefused:
 		if !tc.closed {
 			tc.closed, tc.closeAt = true, now
@@ -307,6 +368,7 @@ func (tc *tradeCtx) apply(event string, now time.Time) {
 // stratengine's outcome events the context follows (TGOutcome.Event).
 const (
 	TGEventArmed           = "ARMED"
+	TGEventReplaced        = "REPLACED"
 	TGEventActive          = "ACTIVE"
 	TGEventEntered         = "ENTERED"
 	TGEventFilled          = "FILLED"

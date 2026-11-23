@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -52,5 +53,45 @@ func TestLLMEval(t *testing.T) {
 	} {
 		fmt.Printf("MSG: %.50q\n  => %s\n", c.text, Explain(context.Background(), r, c.text, c.reply, c.reply != "", 10))
 		time.Sleep(3 * time.Second)
+	}
+}
+
+// TestLLMEvalFastContext reads trade-context messages with the fast model
+// (TG_LLM_CTX_MODEL, key and URL default to the primary's) and prints
+// each reading with its API time. Want: activate for "Entry active ho gyi
+// le lo"/"Active", exit for the niklo/bahar lines, move_sl for "Sl ctc",
+// noise (or about_call false) for the rest.
+//
+//	go test -tags llmeval ./internal/tgsignal/ -run TestLLMEvalFastContext -v
+func TestLLMEvalFastContext(t *testing.T) {
+	c := LoadConfig()
+	if c.LLMCtx.Model == "" {
+		t.Skip("TG_LLM_CTX_MODEL not set")
+	}
+	e := c.ctxEndpoint()
+	r := NewFastContextReader(e.BaseURL, e.APIKey, e.Model, c.LLMCtxReason)
+	held := strings.Replace(evalCtx, "waiting for the caller to confirm the entry", "bought, position open", 1)
+	for _, m := range []struct{ text, ctx string }{
+		{"Abi active nhi hua h wait karna", evalCtx},
+		{"Active hone ka wait karna", evalCtx},
+		{"Entry active ho gyi le lo", evalCtx},
+		{"Active 🔥🔥", evalCtx},
+		{"Gold buy 2400 sl 2390", evalCtx},
+		{"Sl ctc kar lena", held},
+		{"Kuchh profit book kar lena", held},
+		{"jaldi niklo bhai", held},
+		{"bahar aa jao sab", held},
+		{"First target done ✔️", held},
+		{"Safe trader exit kar sakte h", held},
+		// Emoji-only replies: want target_hit, sl_hit, cancel, noise.
+		{"✅✅", held},
+		{"😵", held},
+		{"❌", evalCtx},
+		{"🔥🔥🔥", held},
+	} {
+		start := time.Now()
+		res, err := r.Read(context.Background(), m.text, m.ctx)
+		fmt.Printf("%-40.40q %5dms  %s %s about=%v conf=%s err=%v (%s)\n", m.text, time.Since(start).Milliseconds(), res.Kind, res.Action, res.AboutCall, res.Confidence, err, res.Reason)
+		time.Sleep(2 * time.Second)
 	}
 }
