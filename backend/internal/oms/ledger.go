@@ -101,6 +101,43 @@ func (l *Ledger) ClaimIntent(intentID string) (bool, error) {
 	return l.store.ClaimIntent(intentID, l.now())
 }
 
+// intentAppender is a Store that claims an intent and appends its first
+// event in one write (Journal).
+type intentAppender interface {
+	ClaimAndAppend(intentID string, at time.Time, ev Event) (bool, error)
+}
+
+// ClaimAndSubmit is ClaimIntent(ev.ClientOrderID) then Submit(ev), in one
+// durable write when the store supports it. claimed false: a replayed
+// intent, nothing recorded.
+func (l *Ledger) ClaimAndSubmit(ev Event) (claimed bool, err error) {
+	ia, ok := l.store.(intentAppender)
+	if !ok {
+		if claimed, err = l.ClaimIntent(ev.ClientOrderID); err != nil || !claimed {
+			return claimed, err
+		}
+		return true, l.Submit(ev)
+	}
+	if ev.ClientOrderID == "" {
+		return false, errors.New("oms: submit without client order id")
+	}
+	ev.State = StateSubmitting
+	l.stamp(&ev)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if _, ok := l.orders[ev.ClientOrderID]; ok {
+		return false, nil // already sent once: a replayed intent
+	}
+	claimed, err = ia.ClaimAndAppend(ev.ClientOrderID, ev.TS, ev)
+	if err != nil {
+		return false, fmt.Errorf("oms: journal submit %s: %w", ev.ClientOrderID, err)
+	}
+	if claimed {
+		l.fold(ev)
+	}
+	return claimed, nil
+}
+
 // Submit journals a new order in SUBMITTING before it is sent. An error
 // means nothing was recorded and the order must not be sent if it can be
 // skipped (an entry).
