@@ -22,6 +22,15 @@ describe('SR views per underlying', () => {
         expect(s.extra['BSE:99919000'].strategy).toBe('SENSEX_SR');
     });
 
+    it('keeps BANKNIFTY apart from NIFTY though both are NSE', () => {
+        const bnf = { ...sensex, strategy: 'BANKNIFTY_SR', key: 'NSE:99926009' };
+        useSRStore.getState().setExtra(parseSRXViews({ 'BSE:99919000': sensex, 'NSE:99926009': bnf }) ?? {});
+        const s = useSRStore.getState();
+        expect(s.extra['NSE:99926009'].strategy).toBe('BANKNIFTY_SR');
+        expect(s.extra['BSE:99919000'].strategy).toBe('SENSEX_SR');
+        expect(s.view?.key).toBe('NSE:99926000');
+    });
+
     it('treats pub:srx as full state carried by SNAPSHOT', () => {
         expect(channelKind('pub:srx')).toBe('full_state');
         const srx = { 'BSE:99919000': sensex };

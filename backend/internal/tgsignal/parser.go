@@ -24,6 +24,8 @@ var ErrNoSL = errors.New("no stop loss")
 var (
 	reBuy        = regexp.MustCompile(`\bBUY\b`)
 	reUnderlying = regexp.MustCompile(`\b(BANKNIFTY|FINNIFTY|MIDCPNIFTY|NIFTY|SENSEX|BANKEX)\b`)
+	// "BANK NIFTY" / "NIFTY BANK" are BANKNIFTY, not NIFTY.
+	reBankNifty = regexp.MustCompile(`\bBANK\s*NIFTY\b|\bNIFTY\s*BANK\b`)
 	// "24500 CE" or "PE 22750".
 	reContract = regexp.MustCompile(`\b(\d{4,6})\s*(CE|PE|CALL|PUT)\b|\b(CE|PE|CALL|PUT)\s*(\d{4,6})\b`)
 	reTrigger  = regexp.MustCompile(`\b(?:ENTRY|ABOVE|NEAR|AROUND|BUY\s+AT)\b|@`)
@@ -40,13 +42,19 @@ var (
 )
 
 // supported are the underlyings stratengine can trade.
-var supported = map[string]bool{"NIFTY": true, "SENSEX": true}
+var supported = map[string]bool{"NIFTY": true, "SENSEX": true, "BANKNIFTY": true}
+
+// normalizeUnderlying spells an index name the way the parser and
+// stratengine key it: "Bank Nifty" → "BANKNIFTY".
+func normalizeUnderlying(s string) string {
+	return reBankNifty.ReplaceAllString(strings.ToUpper(strings.TrimSpace(s)), "BANKNIFTY")
+}
 
 // Parse reads one message. It returns ErrNotACall for text that is not a
 // buy call, and another error for a call that cannot be traded (missing
 // stop, unsupported index).
 func Parse(text string) (model.TGSignal, error) {
-	up := strings.ToUpper(text)
+	up := normalizeUnderlying(text)
 	var sig model.TGSignal
 	if !reBuy.MatchString(up) && !(reEntry.MatchString(up) && reTarget.MatchString(up)) {
 		return sig, ErrNotACall

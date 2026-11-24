@@ -21,7 +21,7 @@ export function hitLine(y: number, stopY: number | null, targetY: number | null,
 
 /**
  * Lets the SR stop and target lines be dragged on the chart for an open
- * paper position (NIFTY or SENSEX, whichever index is shown). On release
+ * paper position (NIFTY, SENSEX or BANKNIFTY, whichever index is shown). On release
  * the level is sent to stratengine; until the strategy's view reports it
  * the line is held where it was dropped. Real-order positions are not
  * draggable. Returns the held levels for useSRLines, a short note, and

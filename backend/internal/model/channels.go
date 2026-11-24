@@ -53,6 +53,17 @@ const (
 	// Extra underlyings' strike selection views, one map by index key.
 	StrikeSelXChannel = "pub:strikeselx"
 	StrikeSelXKey     = "strikeselx:state"
+
+	// OptChainContractsKey lists each index's option chain contracts
+	// (nearest expiry, ATM ± N strikes) by index key, written by stratengine
+	// with no subscription. Key only; the gateway adds prices on request.
+	OptChainContractsKey = "optchain:contracts"
+	// OptChainQuoteKeyPrefix + index key caches the gateway's priced chain
+	// for a few seconds, so many viewers cost one broker quote call.
+	OptChainQuoteKeyPrefix = "optchain:quote:"
+	// OptionCandlesKeyPrefix + "<EXCH>:<token>" holds one clicked option's
+	// 1m history (JSON), fetched on demand and kept OPTION_HISTORY_TTL (1 day).
+	OptionCandlesKeyPrefix = "optcandles:"
 )
 
 // stratengine → exitwatch, internal only.
@@ -123,6 +134,12 @@ const (
 	// SubscribeTokenChannel asks mdengine to subscribe extra tokens
 	// (stratengine → mdengine).
 	SubscribeTokenChannel = "cmd:subscribe_token"
+
+	// OptionLeaseChannel keeps one option contract streaming while a
+	// dashboard chart shows it (gateway → mdengine). Each message renews a
+	// lease; mdengine unsubscribes OPTION_LIVE_LINGER after the last one,
+	// never a token stratengine subscribed.
+	OptionLeaseChannel = "cmd:option_lease"
 
 	// IndicatorConfigChannel pushes indicator config (gateway → indengine).
 	IndicatorConfigChannel = "config:indicators"

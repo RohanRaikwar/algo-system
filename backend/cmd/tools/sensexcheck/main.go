@@ -9,6 +9,7 @@
 // shares the account.
 //
 //	go run ./cmd/tools/sensexcheck            # SENSEX
+//	go run ./cmd/tools/sensexcheck -key BANKNIFTY
 //	go run ./cmd/tools/sensexcheck -key NIFTY
 package main
 
@@ -74,6 +75,9 @@ func main() {
 			continue
 		}
 		fmt.Printf("✅ %d%s → %s token=%s lot=%d\n", atm, opt, info.Symbol, info.Token, info.LotSize)
+		if info.LotSize > 0 && info.LotSize != int64(p.LotFallback) {
+			fmt.Printf("⚠️  master lot %d ≠ profile fallback %d (set %s_LOT_SIZE or update the profile)\n", info.LotSize, p.LotFallback, p.Key)
+		}
 	}
 
 	sc := login()

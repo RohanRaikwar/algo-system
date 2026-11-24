@@ -477,8 +477,8 @@ func (svc *Service) restoreTGPositionOf(ctx context.Context, tg *strategy.Telegr
 
 // tgExchType is the Angel WS exchange type of an option segment.
 func tgExchType(fnoExchange string) int {
-	if p, ok := underlying.ByFNOExchange(fnoExchange); ok {
-		return p.FNOExchType
+	if t, ok := underlying.FNOExchTypeOf(fnoExchange); ok {
+		return t
 	}
 	return underlying.Primary().FNOExchType
 }

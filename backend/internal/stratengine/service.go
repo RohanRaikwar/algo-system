@@ -462,6 +462,9 @@ func (svc *Service) Run(ctx context.Context) error {
 		go svc.strikeSelLoop(ctx)
 	}
 
+	// ── Dashboard option chain contract list (no subscription) ──
+	go svc.optChainLoop(ctx)
+
 	// ── Option chain warm-up: entries read the cached chain only ──
 	if svc.needsEntryChain() {
 		go svc.chainWarmLoop(ctx)

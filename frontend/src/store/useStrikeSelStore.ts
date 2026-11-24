@@ -5,7 +5,7 @@ import { useAppStore } from './useAppStore';
 interface StrikeSelState {
     /** NIFTY50_SR (pub:strikesel). */
     view: StrikeSelView | null;
-    /** Other underlyings (SENSEX_SR, …) by index key (pub:strikeselx). */
+    /** Other underlyings (SENSEX_SR, BANKNIFTY_SR, …) by index key (pub:strikeselx). */
     extra: Record<string, StrikeSelView>;
     setView: (v: StrikeSelView) => void;
     setExtra: (views: Record<string, StrikeSelView>) => void;

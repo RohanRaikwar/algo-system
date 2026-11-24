@@ -304,6 +304,25 @@ func (sp *StrikePicker) candidateExpiries(now time.Time) []string {
 		}
 	}
 
+	// Monthly-only underlyings (BANKNIFTY): the month's last expiry
+	// weekday, never today, then next month's; same holiday offsets.
+	if p := sp.prof(); p.MonthlyExpiry {
+		exp := lastWeekdayOfMonth(today.Year(), today.Month(), p.ExpiryWeekday)
+		if !exp.After(today) {
+			exp = lastWeekdayOfMonth(today.Year(), today.Month()+1, p.ExpiryWeekday)
+		}
+		following := lastWeekdayOfMonth(exp.Year(), exp.Month()+1, p.ExpiryWeekday)
+		var out []string
+		for _, base := range []time.Time{exp, following} {
+			for _, off := range []int{0, -1, 1, 2} {
+				if dt := base.AddDate(0, 0, off); dt.After(today) {
+					out = append(out, strings.ToUpper(dt.Format("02Jan06")))
+				}
+			}
+		}
+		return out
+	}
+
 	// Normal expiry weekday: Tuesday for NIFTY.
 	daysUntilTues := (int(sp.prof().ExpiryWeekday) - int(today.Weekday()) + 7) % 7
 	if daysUntilTues == 0 {

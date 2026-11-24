@@ -1,4 +1,4 @@
-import { LayoutDashboard, BarChart3, Activity, Send } from 'lucide-react';
+import { LayoutDashboard, BarChart3, Activity, Layers, Send } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { SignalBadge } from '../signals/SignalBadge';
 import { haptic } from '../../utils/haptic';
@@ -35,6 +35,12 @@ export function MobileNav() {
                     <Send size={20} />
                 </span>
                 <span>Telegram</span>
+            </NavLink>
+            <NavLink to="/options" className={linkClass}>
+                <span className={iconWrap}>
+                    <Layers size={20} />
+                </span>
+                <span>Options</span>
             </NavLink>
             <NavLink to="/health" className={linkClass}>
                 <span className={iconWrap}>

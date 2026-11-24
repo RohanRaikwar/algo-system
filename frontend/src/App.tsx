@@ -22,6 +22,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { SignalsPage } from './pages/SignalsPage';
 import { HealthPage } from './pages/HealthPage';
 import { TelegramPage } from './pages/TelegramPage';
+import { OptionChainPage } from './pages/OptionChainPage';
 import { cn } from '@/lib/utils';
 
 const queryClient = new QueryClient({
@@ -122,6 +123,7 @@ function AppShell() {
                     <Route path="/" element={<DashboardPage onOpenIndicators={() => setSettingsOpen(true)} />} />
                     <Route path="/signals" element={<SignalsPage />} />
                     <Route path="/telegram" element={<TelegramPage />} />
+                    <Route path="/options" element={<OptionChainPage />} />
                     <Route path="/health" element={<HealthPage />} />
                     <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>

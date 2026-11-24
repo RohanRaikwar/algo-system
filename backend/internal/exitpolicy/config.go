@@ -43,12 +43,13 @@ func DefaultThetaConfig() ThetaConfig {
 	return ThetaConfig{MaxFlatMin: 75, DecayPctOfGain: 25, FlatProgressPct: 30, FallbackFlatPremPct: 10, ConfirmMin: 2}
 }
 
-// DefaultConfig: SR acts (paper only), on NIFTY and on SENSEX (the theta
+// DefaultConfig: SR acts (paper only), on NIFTY, SENSEX and BANKNIFTY (the theta
 // rules are percentages and minutes, so they need no rescaling).
 func DefaultConfig() Config {
 	return Config{Strategies: map[string]StrategyConfig{
-		"NIFTY50_SR": {Mode: ModeAct, Theta: DefaultThetaConfig()},
-		"SENSEX_SR":  {Mode: ModeAct, Theta: DefaultThetaConfig()},
+		"NIFTY50_SR":   {Mode: ModeAct, Theta: DefaultThetaConfig()},
+		"SENSEX_SR":    {Mode: ModeAct, Theta: DefaultThetaConfig()},
+		"BANKNIFTY_SR": {Mode: ModeAct, Theta: DefaultThetaConfig()},
 	}}
 }
 

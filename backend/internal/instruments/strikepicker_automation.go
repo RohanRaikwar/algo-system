@@ -896,6 +896,9 @@ func (sp *StrikePicker) automationExpiries(entryTime time.Time) []time.Time {
 	}
 	current := sp.nextWeeklyExpiryDay(entryTime)
 	next := current.AddDate(0, 0, 7)
+	if sp.prof().MonthlyExpiry {
+		next = lastWeekdayOfMonth(current.Year(), current.Month()+1, sp.prof().ExpiryWeekday)
+	}
 	if sameExpiryDay(current, next) {
 		return []time.Time{current}
 	}
@@ -929,6 +932,9 @@ func (sp *StrikePicker) upcomingListedExpiries(now time.Time) []time.Time {
 func (sp *StrikePicker) nextWeeklyExpiryDay(now time.Time) time.Time {
 	now = now.In(istZone)
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, istZone)
+	if p := sp.prof(); p.MonthlyExpiry {
+		return nextMonthlyExpiryDay(now, p.ExpiryWeekday)
+	}
 	daysUntilTues := (int(sp.prof().ExpiryWeekday) - int(today.Weekday()) + 7) % 7
 	if daysUntilTues == 0 {
 		if now.Hour() > 15 || (now.Hour() == 15 && now.Minute() >= 30) {
@@ -1080,4 +1086,26 @@ func readFloat(row map[string]interface{}, keys ...string) float64 {
 		}
 	}
 	return 0
+}
+
+// lastWeekdayOfMonth is the last wd of year/month in IST (month may be 13,
+// which time.Date normalizes to January of the next year).
+func lastWeekdayOfMonth(year int, month time.Month, wd time.Weekday) time.Time {
+	last := time.Date(year, month+1, 0, 0, 0, 0, 0, istZone) // day 0 = last day of month
+	back := (int(last.Weekday()) - int(wd) + 7) % 7
+	return last.AddDate(0, 0, -back)
+}
+
+// nextMonthlyExpiryDay is the expiry guess for a monthly-only underlying
+// (BANKNIFTY): the month's last wd, or next month's once that has passed.
+// Today's expiry counts until 15:30, as in nextWeeklyExpiryDay.
+func nextMonthlyExpiryDay(now time.Time, wd time.Weekday) time.Time {
+	now = now.In(istZone)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, istZone)
+	closed := now.Hour() > 15 || (now.Hour() == 15 && now.Minute() >= 30)
+	exp := lastWeekdayOfMonth(now.Year(), now.Month(), wd)
+	if exp.Before(today) || (exp.Equal(today) && closed) {
+		exp = lastWeekdayOfMonth(now.Year(), now.Month()+1, wd)
+	}
+	return exp
 }

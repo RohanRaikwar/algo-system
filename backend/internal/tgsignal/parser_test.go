@@ -56,7 +56,7 @@ func TestParseRejects(t *testing.T) {
 	bad := []string{
 		"BUY NIFTY 24500 CE ABOVE 120 TARGET 140", // no SL
 		"BUY NIFTY 24500 CE ABOVE 120 SL 130",     // SL above entry
-		"BUY BANKNIFTY 52000 CE ABOVE 300 SL 250", // unsupported
+		"BUY FINNIFTY 26000 CE ABOVE 300 SL 250",  // unsupported
 		"BUY NIFTY 24500 CE SL 100",               // no entry
 	}
 	for _, text := range bad {
@@ -71,5 +71,28 @@ func TestToPaise(t *testing.T) {
 		if got := toPaise(in); got != want {
 			t.Errorf("toPaise(%q) = %d, want %d", in, got, want)
 		}
+	}
+}
+
+// BANKNIFTY in either spelling is BANKNIFTY, never NIFTY.
+func TestParse_BankNifty(t *testing.T) {
+	for _, text := range []string{
+		"BUY BANKNIFTY 57000 CE ABOVE 420 SL 380 TARGET 460/500",
+		"buy bank nifty 57000 ce above 420 sl 380 target 460/500",
+		"BUY NIFTY BANK 57000 CE ABOVE 420 SL 380 TARGET 460/500",
+	} {
+		s, err := Parse(text)
+		if err != nil {
+			t.Fatalf("%q: %v", text, err)
+		}
+		if s.Underlying != "BANKNIFTY" || s.Strike != 57000 || s.OptionType != "CE" || s.TriggerPaise != 42000 || s.SLPaise != 38000 {
+			t.Fatalf("%q: %+v", text, s)
+		}
+	}
+	if s, err := Parse("BUY NIFTY 26000 CE ABOVE 120 SL 100 TARGET 140"); err != nil || s.Underlying != "NIFTY" {
+		t.Fatalf("NIFTY call: %+v %v", s, err)
+	}
+	if got := (LLMResult{Underlying: "Bank Nifty"}).Call().Underlying; got != "BANKNIFTY" {
+		t.Fatalf("LLM underlying = %q", got)
 	}
 }

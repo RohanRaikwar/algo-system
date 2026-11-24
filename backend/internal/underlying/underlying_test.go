@@ -63,8 +63,8 @@ func TestSENSEXProfileAndOverrides(t *testing.T) {
 	if p, ok := ByIndexKey("bse:99919000"); !ok || p.Key != "SENSEX" {
 		t.Fatalf("ByIndexKey failed")
 	}
-	if p, ok := ByFNOExchange("BFO"); !ok || p.Key != "SENSEX" {
-		t.Fatalf("ByFNOExchange failed")
+	if typ, ok := FNOExchTypeOf("BFO"); !ok || typ != 4 {
+		t.Fatalf("FNOExchTypeOf failed")
 	}
 	if p, ok := ByIndexToken("99926000"); !ok || p.Key != "NIFTY" {
 		t.Fatalf("ByIndexToken failed")
@@ -93,5 +93,55 @@ func TestAll_FromIndexTokenList(t *testing.T) {
 	}
 	if _, ok := ByStrategy("SENSEX_SR"); !ok {
 		t.Fatal("SENSEX_SR not found")
+	}
+}
+
+func TestBANKNIFTYProfile(t *testing.T) {
+	t.Setenv("UNDERLYINGS", "")
+	t.Setenv("INDEX_TOKEN", "NSE:99926000,BSE:99919000,NSE:99926009")
+	all := All()
+	if len(all) != 3 || all[0].Key != "NIFTY" || all[1].Key != "SENSEX" || all[2].Key != "BANKNIFTY" {
+		t.Fatalf("All() = %v, want NIFTY, SENSEX, BANKNIFTY", all)
+	}
+	b := all[2]
+	if b.IndexKey() != "NSE:99926009" || b.IndexSubscribeToken() != "1:99926009" ||
+		b.OptionName != "BANKNIFTY" || b.FNOExchange != "NFO" || b.FNOExchType != 2 ||
+		b.StrikeStep != 100 || b.LotFallback != 30 || b.FreezeQty != 600 ||
+		b.ExpiryWeekday != time.Tuesday || !b.MonthlyExpiry || b.StrategyName != "BANKNIFTY_SR" ||
+		!b.BrokerGreeks || b.Scale(1000) != 2200 {
+		t.Fatalf("BANKNIFTY profile: %v", b)
+	}
+	if p, ok := ByStrategy("BANKNIFTY_SR"); !ok || p.Key != "BANKNIFTY" {
+		t.Fatal("ByStrategy(BANKNIFTY_SR) failed")
+	}
+	if p, ok := ByIndexKey("nse:99926009"); !ok || p.Key != "BANKNIFTY" {
+		t.Fatal("ByIndexKey failed")
+	}
+	if p, ok := ByIndexToken("99926009"); !ok || p.Key != "BANKNIFTY" {
+		t.Fatal("ByIndexToken failed")
+	}
+	if typ, ok := FNOExchTypeOf("NFO"); !ok || typ != 2 {
+		t.Fatal("FNOExchTypeOf(NFO) failed")
+	}
+	if Primary().MonthlyExpiry || Get("SENSEX").MonthlyExpiry {
+		t.Fatal("NIFTY/SENSEX must stay weekly")
+	}
+}
+
+func TestBANKNIFTYOverridesAndUnderlyingsForm(t *testing.T) {
+	t.Setenv("INDEX_TOKEN", "")
+	t.Setenv("UNDERLYINGS", "NIFTY,banknifty")
+	t.Setenv("BANKNIFTY_LOT_SIZE", "35")
+	t.Setenv("BANKNIFTY_FREEZE_QTY", "900")
+	t.Setenv("BANKNIFTY_SCALE", "23/10")
+	all := All()
+	if len(all) != 2 || all[1].Key != "BANKNIFTY" {
+		t.Fatalf("All() = %v", all)
+	}
+	if b := all[1]; b.LotFallback != 35 || b.FreezeQty != 900 || b.Scale(1000) != 2300 {
+		t.Fatalf("overrides not applied: %v", b)
+	}
+	if p := Primary(); p.LotFallback == 35 || p.FreezeQty == 900 {
+		t.Fatalf("BANKNIFTY env leaked into NIFTY: %v", p)
 	}
 }

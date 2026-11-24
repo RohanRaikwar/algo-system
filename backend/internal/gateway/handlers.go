@@ -564,6 +564,9 @@ func RegisterRoutes(mux *http.ServeMux, hub *Hub, rdb *goredis.Client, ctx conte
 		log.Println("✅ Account routes registered")
 	}
 
+	// REST: option chain + on-click option charts (1-day Redis cache, live lease)
+	registerOptionRoutes(mux, rdb, accountSvc)
+
 	// REST: comprehensive session health (all services)
 	mux.HandleFunc("/api/sessions/health", makeAllSessionsHealthHandler(rdb, ctx, accountSvc))
 

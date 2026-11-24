@@ -56,6 +56,9 @@ type Service struct {
 	dynMu     sync.Mutex
 	dynTokens map[int][]smartconnect.TokenListEntry
 
+	// Option chart leases (option_lease.go).
+	leases *optionLeases
+
 	// Pipeline components
 	fanout     *bus.FanOut
 	tfBuilder  *tfbuilder.Builder
@@ -93,6 +96,7 @@ func New(cfg Config) (*Service, error) {
 		redisTFCandleCh:  make(chan model.TFCandle, tfSinkQueueLen),
 		sqliteTFCandleCh: make(chan model.TFCandle, tfSinkQueueLen),
 		dynamicSubCh:     make(chan dynSub, 10),
+		leases:           newOptionLeases(optionLiveLinger()),
 		tfFlushReq:       make(chan chan struct{}),
 	}
 
@@ -196,6 +200,7 @@ func (s *Service) Run(ctx context.Context) error {
 
 	// Start dynamic FNO token subscription listener
 	go s.listenForDynamicSubscriptions(ctx)
+	go s.runOptionLeases(ctx)
 
 	// Start WS lifecycle
 	if s.cfg.StagingMode {
@@ -282,6 +287,7 @@ func (s *Service) listenForDynamicSubscriptions(ctx context.Context) {
 				continue
 			}
 			log.Printf("[mdengine] 📡 received dynamic subscribe command: mode=%d tokens=%v", sub.Mode, sub.Tokens)
+			s.leases.pin(sub)
 			select {
 			case s.dynamicSubCh <- sub:
 			default:

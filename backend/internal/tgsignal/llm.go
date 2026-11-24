@@ -84,7 +84,7 @@ func readRate(h http.Header) rateInfo {
 // Call converts a new_call reading into a TGSignal (without message ids).
 func (r LLMResult) Call() model.TGSignal {
 	s := model.TGSignal{
-		Underlying:   strings.ToUpper(strings.TrimSpace(r.Underlying)),
+		Underlying:   normalizeUnderlying(r.Underlying),
 		Strike:       r.Strike,
 		OptionType:   strings.ToUpper(r.OptionType),
 		TriggerPaise: toPaise(cleanPrice(r.Trigger)),
@@ -488,7 +488,7 @@ func retryAfter(v string) time.Duration {
 
 // llmKeywords mark a message worth an LLM call.
 // Bare "pe"/"ce" are left out: "pe" is Hindi for "on" ("youtube pe").
-var llmKeywords = regexp.MustCompile(`(?i)\b(buy|sell|nifty|sensex|target|tgt|sl|stop|stoploss|exit|book|cost|ctc|trail|trailing|cancel|avoid|hit|done|close|square)\b|\b\d{4,6}\s*(ce|pe)\b|\b(ce|pe)\s*\d{4,6}\b`)
+var llmKeywords = regexp.MustCompile(`(?i)\b(buy|sell|nifty|banknifty|sensex|target|tgt|sl|stop|stoploss|exit|book|cost|ctc|trail|trailing|cancel|avoid|hit|done|close|square)\b|\b\d{4,6}\s*(ce|pe)\b|\b(ce|pe)\s*\d{4,6}\b`)
 
 // needsLLM skips messages that cannot be an instruction: price ticks like
 // "193🔥🔥" and chat with no trade words ("Ajao bhai log"). A reply to a

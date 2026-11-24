@@ -66,3 +66,17 @@ func TestLoadConfig_CandleTokensAreTheIndexes(t *testing.T) {
 		t.Fatalf("CANDLE_TOKENS override = %v, want SENSEX added", got)
 	}
 }
+
+// A third index (BANKNIFTY) builds and persists candles like the others.
+func TestLoadConfig_CandleTokensWithBankNifty(t *testing.T) {
+	t.Setenv("STAGING_MODE", "true")
+	t.Setenv("UNDERLYINGS", "")
+	t.Setenv("INDEX_TOKEN", "NSE:99926000,BSE:99919000,NSE:99926009")
+	t.Setenv("CANDLE_TOKENS", "")
+	cfg := LoadConfig()
+	for _, got := range []map[string]bool{cfg.CandleTokens, cfg.Persist1sTokens} {
+		if len(got) != 3 || !got["99926000"] || !got["99919000"] || !got["99926009"] {
+			t.Fatalf("tokens = %v, want NIFTY, SENSEX, BANKNIFTY", got)
+		}
+	}
+}
