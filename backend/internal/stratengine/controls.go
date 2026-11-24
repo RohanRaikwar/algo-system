@@ -234,6 +234,34 @@ func (svc *Service) notifyAsync(alert notification.Alert) {
 // before the operator is told. Fills still arrive by REST meanwhile.
 const orderStreamAlertAfter = 2 * time.Minute
 
+// keepWarmEvery keeps the Angel HTTPS connection open between orders: the
+// pool drops a connection idle for 90s, and a cold one adds a TCP+TLS
+// handshake to the next order.
+const keepWarmEvery = 30 * time.Second
+
+// startKeepWarm pings the broker API host every keepWarmEvery while live
+// orders are on.
+func (svc *Service) startKeepWarm(ctx context.Context) {
+	if !svc.cfg.LiveOrders || svc.sessionManager == nil {
+		return
+	}
+	sm := svc.sessionManager
+	go func() {
+		t := time.NewTicker(keepWarmEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if c := sm.GetClient(); c != nil {
+					c.WarmOnce()
+				}
+			}
+		}
+	}()
+}
+
 // startOrderStream follows Angel's order-status socket (STRAT_ORDER_WS) and
 // feeds its pushes to the executor, so fills and stop hits are seen at once
 // instead of at the next order-book poll. REST polling stays as the
@@ -293,6 +321,9 @@ func (svc *Service) wireAlerts() {
 	svc.orderExecutor.SetAlerter(svc.operatorAlert)
 	svc.tfEngine.OnExitDropped = func(sig strategy.Signal) {
 		svc.operatorAlert("DROPPED EXIT " + sig.StrategyName + " " + string(sig.Side) + " — signal channel full; position may still be open")
+	}
+	svc.tfEngine.OnEntryDropped = func(sig strategy.Signal) {
+		svc.operatorAlert("DROPPED ENTRY " + sig.StrategyName + " " + string(sig.Side) + " — signal channel full; trade missed")
 	}
 }
 

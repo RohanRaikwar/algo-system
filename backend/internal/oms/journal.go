@@ -67,6 +67,42 @@ func (j *Journal) ClaimIntent(intentID string, at time.Time) (bool, error) {
 	return n == 1, err
 }
 
+// ClaimAndAppend claims intentID and writes ev in one transaction (one
+// fsync). claimed false means the intent was already claimed; nothing is
+// written then.
+func (j *Journal) ClaimAndAppend(intentID string, at time.Time, ev Event) (claimed bool, err error) {
+	tx, err := j.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		if err != nil || !claimed {
+			_ = tx.Rollback()
+		}
+	}()
+	res, err := tx.Exec(`INSERT OR IGNORE INTO intents(intent_id, claimed_ts) VALUES(?, ?)`, intentID, at.UnixNano())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil || n != 1 {
+		return false, err
+	}
+	claimed = true
+	if _, err = tx.Exec(`INSERT INTO order_events
+		(ts, client_order_id, broker_order_id, strategy, position_key, side, symbol, token,
+		 state, qty, filled_qty, avg_price_paise, reason, source)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		ev.TS.UnixNano(), ev.ClientOrderID, ev.BrokerOrderID, ev.Strategy, ev.PositionKey, ev.Side,
+		ev.Symbol, ev.Token, string(ev.State), ev.Qty, ev.FilledQty, ev.AvgPricePaise, ev.Reason, ev.Source); err != nil {
+		return false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // Append writes one event.
 func (j *Journal) Append(ev Event) error {
 	_, err := j.db.Exec(`INSERT INTO order_events

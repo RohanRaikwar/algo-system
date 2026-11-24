@@ -1,8 +1,8 @@
 // Package underlying describes each index the system trades options on:
 // its index token, its option contracts' exchange and naming, and the
 // fallbacks used when the instrument master cannot answer. NIFTY is the
-// primary underlying; others are added with UNDERLYINGS (e.g.
-// "NIFTY,SENSEX").
+// primary underlying; others are added with INDEX_TOKEN or UNDERLYINGS
+// (e.g. "NIFTY,SENSEX,BANKNIFTY").
 //
 // Contract facts (lot size, strike step, expiry weekday) change over time
 // and are read from the instrument master where possible. The values here
@@ -37,6 +37,11 @@ type Profile struct {
 	LotFallback   int          // lot size when the master has no entry
 	FreezeQty     int          // max qty per order
 	ExpiryWeekday time.Weekday // weekly expiry guess when the master has none
+
+	// MonthlyExpiry: the options list only monthly contracts, expiring on
+	// the last ExpiryWeekday of the month (BANKNIFTY). Expiry guesses then
+	// use that day instead of every week's.
+	MonthlyExpiry bool
 
 	StrategyName string // SR strategy name for this underlying
 
@@ -80,6 +85,15 @@ var builtin = map[string]Profile{
 		OptionName: "SENSEX", FNOExchange: "BFO", FNOExchType: 4,
 		StrikeStep: 100, LotFallback: 20, FreezeQty: 1000, ExpiryWeekday: time.Thursday,
 		StrategyName: "SENSEX_SR", ScaleNum: 33, ScaleDen: 10,
+	},
+	// BANKNIFTY options are on NFO like NIFTY's, so the segment never
+	// identifies the underlying; the symbol prefix or strategy does.
+	"BANKNIFTY": {
+		Key: "BANKNIFTY", IndexExchange: "NSE", IndexToken: "99926009", IndexExchType: 1,
+		OptionName: "BANKNIFTY", FNOExchange: "NFO", FNOExchType: 2,
+		StrikeStep: 100, LotFallback: 30, FreezeQty: 600, ExpiryWeekday: time.Tuesday,
+		MonthlyExpiry: true,
+		StrategyName:  "BANKNIFTY_SR", ScaleNum: 22, ScaleDen: 10, BrokerGreeks: true,
 	},
 }
 
@@ -196,14 +210,17 @@ func ByIndexToken(token string) (Profile, bool) {
 	return Profile{}, false
 }
 
-// ByFNOExchange finds the configured profile trading options on ex.
-func ByFNOExchange(ex string) (Profile, bool) {
+// FNOExchTypeOf is the Angel WS exchange_type of options segment ex (2
+// NFO, 4 BFO), or ok=false when no configured underlying trades there.
+// A segment does not identify an underlying (NIFTY and BANKNIFTY share
+// NFO), so there is deliberately no profile lookup by segment.
+func FNOExchTypeOf(ex string) (int, bool) {
 	for _, p := range All() {
 		if strings.EqualFold(p.FNOExchange, ex) {
-			return p, true
+			return p.FNOExchType, true
 		}
 	}
-	return Profile{}, false
+	return 0, false
 }
 
 func envInt(key string, fallback int) int {
@@ -240,7 +257,11 @@ func parseScale(s string) (num, den int64, ok bool) {
 
 // String is for logs.
 func (p Profile) String() string {
+	exp := p.ExpiryWeekday.String()
+	if p.MonthlyExpiry {
+		exp = "last " + exp + " monthly"
+	}
 	return fmt.Sprintf("%s(index %s, options %s on %s, step %d, lot %d, freeze %d, expiry %s, scale %d/%d)",
 		p.Key, p.IndexKey(), p.OptionName, p.FNOExchange, p.StrikeStep, p.LotFallback, p.FreezeQty,
-		p.ExpiryWeekday, p.ScaleNum, p.ScaleDen)
+		exp, p.ScaleNum, p.ScaleDen)
 }

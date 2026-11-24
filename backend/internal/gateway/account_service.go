@@ -65,6 +65,19 @@ func NewAccountServiceWithSessionManager(db *sql.DB, sessionManager *smartconnec
 	}
 }
 
+// optionBroker is the Angel client for option quotes and history: the
+// session manager when there is one (it refreshes an expired session),
+// else the plain client, else nil.
+func (s *AccountService) optionBroker() optionBroker {
+	if s.sessionManager != nil {
+		return s.sessionManager
+	}
+	if s.client != nil {
+		return s.client
+	}
+	return nil
+}
+
 // GetAccountBalance fetches current account balance and margin from Angel One
 func (s *AccountService) GetAccountBalance(ctx context.Context) (AccountBalance, error) {
 	if s.client == nil {

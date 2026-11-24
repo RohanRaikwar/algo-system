@@ -5,7 +5,7 @@ import { useAppStore } from './useAppStore';
 interface SRState {
     /** NIFTY50_SR (pub:sr). */
     view: SRView | null;
-    /** SR on other underlyings (SENSEX_SR, …) by index key (pub:srx). */
+    /** SR on other underlyings (SENSEX_SR, BANKNIFTY_SR, …) by index key (pub:srx). */
     extra: Record<string, SRView>;
     setView: (v: SRView) => void;
     setExtra: (views: Record<string, SRView>) => void;

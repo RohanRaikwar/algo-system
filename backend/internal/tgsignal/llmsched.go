@@ -45,6 +45,7 @@ type llmJob struct {
 	ctxText  string
 	deadline time.Time
 	done     func(LLMResult, error)
+	queuedAt time.Time
 
 	key     uint64
 	cost    int
@@ -122,6 +123,8 @@ type llmScheduler struct {
 	lastUsed  string
 	cacheTTL  time.Duration // 0 = no cache
 	now       func() time.Time
+	// cost estimates a request before it is sent (estimate by default).
+	cost func(text, ctxText string) int
 }
 
 type cacheEntry struct {
@@ -144,7 +147,7 @@ func newLLMScheduler(lim llmLimits) *llmScheduler {
 	}
 	return &llmScheduler{
 		queued: make(map[uint64]*llmJob), cache: make(map[uint64]*list.Element), lru: list.New(),
-		workers: lim.Workers, cacheTTL: lim.CacheTTL, wake: make(chan struct{}, 1), now: time.Now,
+		workers: lim.Workers, cacheTTL: lim.CacheTTL, wake: make(chan struct{}, 1), now: time.Now, cost: estimate,
 	}
 }
 
@@ -175,15 +178,16 @@ func promptKey(text, ctxText string) uint64 {
 // submit queues j. An identical prompt already queued or running takes j
 // as a waiter; a fresh cached reading answers at once.
 func (s *llmScheduler) submit(j *llmJob) {
-	j.key, j.cost = promptKey(j.text, j.ctxText), estimate(j.text, j.ctxText)
+	j.key, j.cost = promptKey(j.text, j.ctxText), s.cost(j.text, j.ctxText)
 	now := s.now()
+	j.queuedAt = now
 	s.mu.Lock()
 	if e, ok := s.cache[j.key]; ok {
 		ce := e.Value.(*cacheEntry)
 		if now.Sub(ce.at) < s.cacheTTL {
 			s.lru.MoveToFront(e)
 			res := ce.res
-			res.Usage = Usage{}
+			res.Usage, res.QueueMS, res.APIMS, res.Provider = Usage{}, 0, 0, "cache"
 			s.mu.Unlock()
 			j.done(res, nil)
 			return
@@ -316,6 +320,7 @@ func (s *llmScheduler) next(now time.Time) (*llmJob, *llmProvider, time.Duration
 func (s *llmScheduler) run(j *llmJob, p *llmProvider) {
 	var res LLMResult
 	var err error
+	start := s.now()
 	ctx, cancel := context.WithTimeout(context.Background(), llmRequestTimeout)
 	_ = p.cb.Execute(func() error {
 		res, err = p.reader.Read(ctx, j.text, j.ctxText)
@@ -327,6 +332,7 @@ func (s *llmScheduler) run(j *llmJob, p *llmProvider) {
 	})
 	cancel()
 	now := s.now()
+	res.QueueMS, res.APIMS, res.Provider = start.Sub(j.queuedAt).Milliseconds(), now.Sub(start).Milliseconds(), p.name
 
 	s.mu.Lock()
 	s.lastUsed = p.name

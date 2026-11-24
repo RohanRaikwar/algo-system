@@ -21,6 +21,9 @@ type inMsg struct {
 	Sent    time.Time // send time, or edit time for an edit
 	Posted  time.Time // original send time (edits only)
 	Edited  bool
+	// Received is when tgsignal got the message; set on a confirmation
+	// held for the LLM check, so its follow-up keeps the arrival time.
+	Received time.Time
 }
 
 // maxEditAge is how old a message may be for its edit to count: an edit
@@ -46,12 +49,16 @@ type handler struct {
 
 	ctxs  *contexts     // each published call's trade context
 	sched *llmScheduler // nil = no LLM (regex only)
-	r     *router
+	// ctxSched reads trade-context messages with the fast model; nil =
+	// sched reads them.
+	ctxSched *llmScheduler
+	r        *router
 	// note adds an outcome line to a message on the dashboard; nil = none.
 	note func(msgKey, line string)
 
-	mu   sync.Mutex
-	seen map[string]time.Time
+	mu         sync.Mutex
+	seen       map[string]time.Time
+	seenPruned time.Time // last prune of seen
 }
 
 func newHandler(cfg Config, reader CallReader, journal *Journal, publishCall func(model.TGSignal) error, publishFollowUp func(model.TGFollowUp) error) *handler {
@@ -69,6 +76,18 @@ func newHandler(cfg Config, reader CallReader, journal *Journal, publishCall fun
 	}
 	h.r = newRouter(h)
 	return h
+}
+
+// setContextReader gives trade-context messages their own queue and
+// fast reader. Needs the main LLM (sched), which takes the reads the fast
+// model is unsure of.
+func (h *handler) setContextReader(name string, r CallReader, lim llmLimits) {
+	if h.sched == nil {
+		return
+	}
+	h.ctxSched = newLLMScheduler(lim)
+	h.ctxSched.cost = estimateFastCtx
+	h.ctxSched.addProvider(name, r, lim)
 }
 
 // onMessage handles one message and waits until it and everything it
@@ -189,9 +208,12 @@ func (h *handler) firstSeen(key string, now time.Time) bool {
 	if _, dup := h.seen[key]; dup {
 		return false
 	}
-	for k, t := range h.seen {
-		if now.Sub(t) > 24*time.Hour {
-			delete(h.seen, k)
+	if now.Sub(h.seenPruned) > time.Minute { // not a full scan per message
+		h.seenPruned = now
+		for k, t := range h.seen {
+			if now.Sub(t) > 24*time.Hour {
+				delete(h.seen, k)
+			}
 		}
 	}
 	h.seen[key] = now

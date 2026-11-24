@@ -147,8 +147,12 @@ var routes = map[string]string{
 	"api.bseIntraday":              "/rest/secure/angelbroking/marketData/v1/bseIntraday",
 }
 
+// publicIPClient bounds the public-IP lookup: it runs when a client is
+// built (login, session refresh), so it must never hang.
+var publicIPClient = &http.Client{Timeout: 3 * time.Second}
+
 func GetPublicIP() (string, error) {
-	resp, err := http.Get("https://api.ipify.org?format=text")
+	resp, err := publicIPClient.Get("https://api.ipify.org?format=text")
 	if err != nil {
 		return "", err
 	}
@@ -199,19 +203,24 @@ func NewSmartConnect(cfg Config) *SmartConnect {
 	if cfg.SourceID == "" {
 		cfg.SourceID = "WEB"
 	}
-	localIP, err := GetLocalIP()
-	if err != nil {
-		log.Printf("Error getting local IP: %v", err)
+	// X-ClientPublicIP: the server's static IP registered with Angel One
+	// (ANGEL_CLIENT_PUBLIC_IP), else looked up, else a fallback. Each IP
+	// is resolved on its own, so a configured one is never overwritten.
+	if cfg.ClientPublicIP == "" {
+		cfg.ClientPublicIP = strings.TrimSpace(os.Getenv("ANGEL_CLIENT_PUBLIC_IP"))
 	}
-	publicIP, err := GetPublicIP()
-	if err != nil {
-		log.Printf("Error getting public IP: %v", err)
+	if cfg.ClientPublicIP == "" {
+		publicIP, err := GetPublicIP()
+		if err != nil {
+			log.Printf("Error getting public IP: %v", err)
+		}
+		cfg.ClientPublicIP = firstNonEmpty(strings.TrimSpace(publicIP), "106.193.147.98")
 	}
-
-	// Resolve defaults similar to Python finally block
-	if cfg.ClientPublicIP == "" || cfg.ClientLocalIP == "" {
-		// Try resolve; if fail, use hard-coded fallbacks
-		cfg.ClientPublicIP = firstNonEmpty(publicIP, "106.193.147.98")
+	if cfg.ClientLocalIP == "" {
+		localIP, err := GetLocalIP()
+		if err != nil {
+			log.Printf("Error getting local IP: %v", err)
+		}
 		cfg.ClientLocalIP = firstNonEmpty(localIP, "127.0.0.1")
 	}
 	if cfg.ClientMAC == "" {
@@ -236,8 +245,8 @@ func NewSmartConnect(cfg Config) *SmartConnect {
 			tr.Proxy = http.ProxyURL(purl)
 		}
 	}
-	fmt.Println("Local IP:", localIP)
-	fmt.Println("Public IP:", publicIP)
+	fmt.Println("Local IP:", cfg.ClientLocalIP)
+	fmt.Println("Public IP:", cfg.ClientPublicIP)
 	client := &http.Client{Transport: tr, Timeout: cfg.Timeout}
 
 	// Set up date-based log file logs/YYYY-MM-DD/app.log
@@ -274,20 +283,28 @@ func NewSmartConnect(cfg Config) *SmartConnect {
 // PreWarmConnections asynchronously establishes TCP/TLS connections to the API endpoints
 // to dramatically reduce latency for the first order placement (shaves off ~40-60ms handshake).
 func (sc *SmartConnect) PreWarmConnections() {
-	go func() {
-		// Ping the base API endpoint 
-		req, err := http.NewRequest(http.MethodHead, sc.rootURL, nil)
-		if err == nil {
-			resp, doErr := sc.httpClient.Do(req)
-			if doErr == nil {
-				io.Copy(io.Discard, resp.Body)
-				resp.Body.Close()
-				if sc.debug {
-					log.Printf("[smartconnect] Pre-warmed connection to %s successfully", sc.rootURL)
-				}
-			}
-		}
-	}()
+	go sc.WarmOnce()
+}
+
+// WarmOnce sends one HEAD to the API host so the pooled TCP/TLS connection
+// stays open (the transport drops idle connections after 90s); the next
+// order then skips the handshake. It reports whether the request went
+// through.
+func (sc *SmartConnect) WarmOnce() bool {
+	req, err := http.NewRequest(http.MethodHead, sc.rootURL, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := sc.httpClient.Do(req)
+	if err != nil {
+		return false
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if sc.debug {
+		log.Printf("[smartconnect] warmed connection to %s", sc.rootURL)
+	}
+	return true
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -408,12 +425,12 @@ func (sc *SmartConnect) doRequest(method, route string, params map[string]any) (
 				preview = preview[:300] + "..."
 			}
 			log.Printf("[smartconnect] ⚠️ non-JSON response (status=%d, len=%d): %s", resp.StatusCode, len(raw), preview)
-			
+
 			// Check for rate limiting in raw response
 			if resp.StatusCode == http.StatusForbidden && strings.Contains(string(raw), "exceeding access rate") {
 				return nil, raw, resp.StatusCode, fmt.Errorf("Angel One API rate limit: %s", string(raw))
 			}
-			
+
 			// A 5xx HTML/empty body comes from a proxy or gateway, not the
 			// broker's order engine, so the request may still have landed.
 			if resp.StatusCode >= http.StatusInternalServerError {
@@ -495,6 +512,7 @@ func (sc *SmartConnect) SetAccessToken(t string) {
 	sc.accessToken = t
 	sc.tokMu.Unlock()
 }
+
 // GetAccessToken returns the current session JWT (without the "Bearer "
 // prefix). SessionManager refreshes it in place, so long-lived sockets re-read it on
 // every dial.

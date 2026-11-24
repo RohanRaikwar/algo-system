@@ -55,13 +55,21 @@ if [ -n "${TG_API_ID:-}" ]; then
   echo "[entrypoint] starting tgsignal (retry loop)"
   (
     trap 'kill -TERM "$child" 2>/dev/null; wait "$child"; exit 0' TERM INT
+    # Restart fast (2s), doubling to 60s while it keeps failing, so one
+    # crash costs seconds of signals, not a minute; a run of 5+ minutes
+    # resets the delay.
+    delay=2
     while true; do
+      started=$(date +%s)
       /app/bin/tgsignal &
       child=$!
       wait "$child"
-      echo "[entrypoint] tgsignal exited with code $?; retrying in 60s"
-      sleep 60 &
+      code=$?
+      if [ $(( $(date +%s) - started )) -ge 300 ]; then delay=2; fi
+      echo "[entrypoint] tgsignal exited with code ${code}; retrying in ${delay}s"
+      sleep "$delay" &
       wait $!
+      delay=$(( delay * 2 )); if [ "$delay" -gt 60 ]; then delay=60; fi
     done
   ) &
   pids+=("$!")

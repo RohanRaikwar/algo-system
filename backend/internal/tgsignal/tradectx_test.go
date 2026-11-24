@@ -98,7 +98,7 @@ func TestContextLLMGetsCallAndHistory(t *testing.T) {
 		t.Fatalf("follow-ups %+v", s.follows)
 	}
 	r.res = LLMResult{Kind: "follow_up", Action: "activate", Confidence: "high", AboutCall: true, Reason: "live"}
-	h.onMessage(context.Background(), reply(4, 1, "Entry le lo abhi"), tNow)
+	h.onMessage(context.Background(), reply(4, 1, "Entry le lo abhi, market strong hai"), tNow)
 	if !strings.Contains(r.reply, `"Abi active nhi hua h wait karna" → none`) {
 		t.Fatalf("earlier message missing:\n%s", r.reply)
 	}

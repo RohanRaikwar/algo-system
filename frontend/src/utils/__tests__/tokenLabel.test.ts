@@ -4,6 +4,8 @@ import { tokenCaption, tokenLabel } from '../helpers';
 describe('instrument labels', () => {
     it('maps known keys to friendly names', () => {
         expect(tokenLabel('NSE:99926000')).toBe('NIFTY 50');
+        expect(tokenLabel('BSE:99919000')).toBe('SENSEX');
+        expect(tokenLabel('NSE:99926009')).toBe('BANK NIFTY');
     });
 
     it('falls back to the raw key', () => {

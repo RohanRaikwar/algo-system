@@ -32,8 +32,12 @@ type DailyStats struct {
 
 // PnLTracker tracks realized and unrealized P&L.
 type PnLTracker struct {
-	mu     sync.RWMutex
-	trades []Trade
+	mu sync.RWMutex
+	// trades keeps the most recent trades only (tradesKept): it is
+	// serialized into the snapshot persisted before every real order, so
+	// it must not grow without bound. totalTrades counts every trade.
+	trades      []Trade
+	totalTrades int
 
 	// Realized P&L from closed positions (in paise)
 	realizedPnL int64
@@ -60,6 +64,7 @@ type costEntry struct {
 // pnlSnapshot is the JSON-serializable shape for Snapshot/Restore.
 type pnlSnapshot struct {
 	Trades           []Trade              `json:"trades"`
+	TotalTrades      int                  `json:"total_trades,omitempty"`
 	RealizedPnL      int64                `json:"realized_pnl"`
 	CostBasis        map[string]costEntry `json:"cost_basis"`
 	DailyTradeCount  int                  `json:"daily_trade_count"`
@@ -68,6 +73,20 @@ type pnlSnapshot struct {
 	DailyLargestWin  int64                `json:"daily_largest_win"`
 	DailyLargestLoss int64                `json:"daily_largest_loss"`
 	StrategyDailyPnL map[string]int64     `json:"strategy_daily_pnl,omitempty"`
+}
+
+// tradesKept is how many recent trades the tracker keeps. Fill
+// corrections (CorrectLastFill) only look back to the same contract's
+// last trade, which is always recent.
+const tradesKept = 200
+
+// trimTrades drops the oldest trades once there are twice tradesKept, so
+// trimming copies rarely.
+func trimTrades(t []Trade) []Trade {
+	if len(t) <= 2*tradesKept {
+		return t
+	}
+	return append(make([]Trade, 0, 2*tradesKept), t[len(t)-tradesKept:]...)
 }
 
 // NewPnLTracker creates a new P&L tracker.
@@ -84,7 +103,8 @@ func (p *PnLTracker) RecordTrade(trade Trade) int64 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	p.trades = append(p.trades, trade)
+	p.trades = trimTrades(append(p.trades, trade))
+	p.totalTrades++
 	p.dailyTradeCount++
 	key := trade.Exchange + ":" + trade.Token
 	entry := p.costBasis[key]
@@ -336,7 +356,7 @@ func (p *PnLTracker) GetSummary(currentPrices map[string]int64) PnLSummary {
 		RealizedPnL:   p.realizedPnL,
 		UnrealizedPnL: unrealized,
 		TotalPnL:      p.realizedPnL + unrealized,
-		TotalTrades:   len(p.trades),
+		TotalTrades:   p.totalTrades,
 		OpenPositions: openPositions,
 	}
 }
@@ -347,6 +367,7 @@ func (p *PnLTracker) Snapshot() ([]byte, error) {
 	defer p.mu.RUnlock()
 	snap := pnlSnapshot{
 		Trades:           p.trades,
+		TotalTrades:      p.totalTrades,
 		RealizedPnL:      p.realizedPnL,
 		CostBasis:        p.costBasis,
 		DailyTradeCount:  p.dailyTradeCount,
@@ -367,7 +388,8 @@ func (p *PnLTracker) RestorePnL(data []byte) error {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.trades = snap.Trades
+	p.trades = trimTrades(snap.Trades)
+	p.totalTrades = max(snap.TotalTrades, len(snap.Trades))
 	p.realizedPnL = snap.RealizedPnL
 	p.costBasis = snap.CostBasis
 	p.dailyTradeCount = snap.DailyTradeCount

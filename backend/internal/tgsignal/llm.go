@@ -41,6 +41,13 @@ type LLMResult struct {
 	rate rateInfo
 	// slDefault: SL was missing and set by llmWithDefaultSL.
 	slDefault bool
+	// Fast: read by the fast trade-context model (small schema).
+	Fast bool `json:"fast,omitempty"`
+	// Timing, set by the scheduler: wait in the queue, time at the API,
+	// and the provider that answered.
+	QueueMS  int64  `json:"queue_ms,omitempty"`
+	APIMS    int64  `json:"api_ms,omitempty"`
+	Provider string `json:"provider,omitempty"`
 }
 
 // rateInfo is a provider's token budget as its response headers state it.
@@ -77,7 +84,7 @@ func readRate(h http.Header) rateInfo {
 // Call converts a new_call reading into a TGSignal (without message ids).
 func (r LLMResult) Call() model.TGSignal {
 	s := model.TGSignal{
-		Underlying:   strings.ToUpper(strings.TrimSpace(r.Underlying)),
+		Underlying:   normalizeUnderlying(r.Underlying),
 		Strike:       r.Strike,
 		OptionType:   strings.ToUpper(r.OptionType),
 		TriggerPaise: toPaise(cleanPrice(r.Trigger)),
@@ -132,7 +139,8 @@ First write "english": the message in plain English, at most 15 words. Then deci
 - sl_hit: "Sl hit", "Trailing sl hit"
 - target_hit: "All target done"
 - move_sl: "Sl ctc kar lena"/"SL cost" -> new_sl = the call's entry; "sl 112 par le aao" -> new_sl "112"; no price -> new_sl ""
-- cancel: "avoid", "cancel", "skip"`
+- cancel: "avoid", "cancel", "skip"
+Emojis are hints, not orders; a hint line explains them. Read them with the call's state: "✅" or "🎯" alone on a bought call after a target price = target_hit; "😵"/"☠" alone on a bought call = sl_hit; "❌"/"🛑" alone on a waiting call = cancel; "🔥"/"🚀" = price running (noise). When unsure, noise.`
 
 	// promptFollowUpShort stands in for promptFollowUp when the message
 	// is itself a call.
@@ -155,6 +163,42 @@ var (
 	llmCallPrompt    = joinPrompt(promptHead, promptNewCall, promptFollowUpShort, promptNoise, promptTail)
 	llmContextPrompt = joinPrompt(promptHead, promptNewCallShort, promptFollowUp, promptNoise, promptContext, promptTail)
 )
+
+// llmFastCtxPrompt is the fast model's prompt: a message in a trade
+// context only, no "english" field, a small schema (llmCtxSchema).
+var llmFastCtxPrompt = joinPrompt(
+	`Read one new message from an Indian options Telegram group (Hinglish) about an open option call, and answer as JSON.`,
+	promptFollowUp,
+	promptContext,
+	`kind: follow_up with its action when the message tells traders to act on the call; new_call when it posts a different contract with its own entry (fill nothing else); noise for anything else (price ticks, "wait for entry", "not active yet", recaps, partial booking, promotions), action "none".
+new_sl: the new stop for move_sl, else "". confidence "high" only if the meaning is clear; "low" when unsure. reason: few words.`)
+
+// llmCtxSchema is the fast model's reply: a subset of LLMResult.
+var llmCtxSchema = map[string]any{
+	"type":                 "object",
+	"additionalProperties": false,
+	"required":             []string{"kind", "action", "new_sl", "about_call", "confidence", "reason"},
+	"properties": map[string]any{
+		"kind":       map[string]any{"type": "string", "enum": []string{"new_call", "follow_up", "noise"}},
+		"action":     map[string]any{"type": "string", "enum": []string{"activate", "exit", "sl_hit", "target_hit", "move_sl", "cancel", "none"}},
+		"new_sl":     map[string]any{"type": "string"},
+		"about_call": map[string]any{"type": "boolean"},
+		"confidence": map[string]any{"type": "string", "enum": []string{"high", "medium", "low"}},
+		"reason":     map[string]any{"type": "string"},
+	},
+}
+
+// fastCtx reports whether r reads this request with the small context
+// prompt.
+func (r *OpenAIReader) fastCtx(contextText string) bool {
+	return r.ctxOnly && strings.HasPrefix(contextText, ctxHeader)
+}
+
+// estimateFastCtx is a fast-context request's token cost before it is
+// sent (see estimate).
+func estimateFastCtx(text, ctxText string) int {
+	return (len(llmFastCtxPrompt)+len(text)+len(ctxText))/4 + llmMaxTokensCtx
+}
 
 func joinPrompt(parts ...string) string { return strings.Join(parts, "\n\n") }
 
@@ -200,12 +244,16 @@ var llmSchema = map[string]any{
 const (
 	llmMaxTokens          = 200
 	llmMaxTokensReasoning = 400
+	llmMaxTokensCtx       = 100 // the fast context reply: ~40 tokens
 )
 
 // maxTokens is r's reply cap.
-func (r *OpenAIReader) maxTokens() int {
-	if r.reasoning != "" {
+func (r *OpenAIReader) maxTokens(fast bool) int {
+	switch {
+	case r.reasoning != "":
 		return llmMaxTokensReasoning
+	case fast:
+		return llmMaxTokensCtx
 	}
 	return llmMaxTokens
 }
@@ -218,7 +266,10 @@ type OpenAIReader struct {
 	// low|medium|high); "" sends none. Low keeps hidden reasoning tokens,
 	// and so rate-limit use, small.
 	reasoning string
-	client    *http.Client
+	// ctxOnly: a reader of trade-context messages only, with the small
+	// prompt and schema (the fast model). Other messages get the full one.
+	ctxOnly bool
+	client  *http.Client
 }
 
 // Usage is one request's token count.
@@ -238,6 +289,13 @@ func NewOpenAIReader(baseURL, apiKey, model, reasoning string) *OpenAIReader {
 		reasoning: reasoning,
 		client:    &http.Client{Timeout: 15 * time.Second},
 	}
+}
+
+// NewFastContextReader builds the fast trade-context reader.
+func NewFastContextReader(baseURL, apiKey, model, reasoning string) *OpenAIReader {
+	r := NewOpenAIReader(baseURL, apiKey, model, reasoning)
+	r.ctxOnly = true
+	return r
 }
 
 // CheckModel confirms the configured model is served by the API.
@@ -284,19 +342,27 @@ func (r *OpenAIReader) Read(ctx context.Context, text, contextText string) (LLMR
 	case contextText != "":
 		user = "This message is a reply to:\n" + contextText + "\n\n" + user
 	}
+	if hint := emojiHint(text); hint != "" {
+		user += "\n" + hint
+	}
+	fast := r.fastCtx(contextText)
+	system, schema, name := systemPromptFor(text, contextText), llmSchema, "telegram_call"
+	if fast {
+		system, schema, name = llmFastCtxPrompt, llmCtxSchema, "telegram_context"
+	}
 	req := map[string]any{
 		"model":       r.model,
 		"temperature": 0,
 		// The JSON reply is ~60 tokens. A cap keeps the request inside
 		// per-minute output-token limits, which count max_tokens up front.
-		"max_tokens": r.maxTokens(),
+		"max_tokens": r.maxTokens(fast),
 		"messages": []map[string]string{
-			{"role": "system", "content": systemPromptFor(text, contextText)},
+			{"role": "system", "content": system},
 			{"role": "user", "content": user},
 		},
 		"response_format": map[string]any{
 			"type":        "json_schema",
-			"json_schema": map[string]any{"name": "telegram_call", "strict": true, "schema": llmSchema},
+			"json_schema": map[string]any{"name": name, "strict": true, "schema": schema},
 		},
 	}
 	if r.reasoning != "" {
@@ -319,12 +385,32 @@ func (r *OpenAIReader) Read(ctx context.Context, text, contextText string) (LLMR
 		req["max_tokens"] = llmMaxTokensReasoning
 		req["temperature"] = llmRetryTemperature
 	default:
+		if fast && err == nil {
+			res = normalizeFast(res)
+		}
 		return res, err
 	}
 	if body, err = json.Marshal(req); err != nil {
 		return LLMResult{}, err
 	}
-	return r.post(ctx, body)
+	res, err = r.post(ctx, body)
+	if fast && err == nil {
+		res = normalizeFast(res)
+	}
+	return res, err
+}
+
+// normalizeFast completes a fast context reply as a full LLMResult: a
+// follow-up with no action is noise; Fast marks it for escalation checks.
+func normalizeFast(res LLMResult) LLMResult {
+	if res.Kind == "follow_up" && (res.Action == "" || res.Action == "none") {
+		res.Kind = "noise"
+	}
+	if res.Action == "" {
+		res.Action = "none"
+	}
+	res.Fast = true
+	return res
 }
 
 // llmRetryTemperature is the temperature of the retry after a rejected
@@ -402,7 +488,7 @@ func retryAfter(v string) time.Duration {
 
 // llmKeywords mark a message worth an LLM call.
 // Bare "pe"/"ce" are left out: "pe" is Hindi for "on" ("youtube pe").
-var llmKeywords = regexp.MustCompile(`(?i)\b(buy|sell|nifty|sensex|target|tgt|sl|stop|stoploss|exit|book|cost|ctc|trail|trailing|cancel|avoid|hit|done|close|square)\b|\b\d{4,6}\s*(ce|pe)\b|\b(ce|pe)\s*\d{4,6}\b`)
+var llmKeywords = regexp.MustCompile(`(?i)\b(buy|sell|nifty|banknifty|sensex|target|tgt|sl|stop|stoploss|exit|book|cost|ctc|trail|trailing|cancel|avoid|hit|done|close|square)\b|\b\d{4,6}\s*(ce|pe)\b|\b(ce|pe)\s*\d{4,6}\b`)
 
 // needsLLM skips messages that cannot be an instruction: price ticks like
 // "193🔥🔥" and chat with no trade words ("Ajao bhai log"). A reply to a

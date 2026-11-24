@@ -67,6 +67,7 @@ type Config struct {
 	OrderJournalPath    string   // SQLite order journal; real entries need it when live
 	PNLDBPath           string   // SQLite closed-trade ledger (pnlstore); "" = off
 	ProtectionMode      string   // "sl" resting stop order (default) or "gtt"
+	ExitModifiesStop    bool     // STRAT_EXIT_MODIFY_STOP: exit = modify the resting stop (default on)
 	ExecMode            string   // "chase" marketable LIMIT (default) or "market"
 	ChaseTicks          int64    // ticks through the touch
 	ChaseReprices       int      // re-prices before BUY cancel / SELL→MARKET
@@ -99,7 +100,11 @@ type Config struct {
 	// TGLadderTrailPct trails the stop this % below the best premium once
 	// past the caller's last target (T1 → cost, T[i] → T[i-1] before). 0 = off.
 	TGLadderTrailPct int64
-	TGMaxChasePct int64 // refuse an entry this % above the call's trigger
+	TGMaxChasePct int64 // refuse an entry this % above the call's trigger (TGEntryCapPaise 0 only)
+	// TGEntryCapPaise: buy with one exchange order capped at trigger + this
+	// (STRAT_TG_ENTRY_CAP_PAISE, default 100 = ₹1; 0 = old software trigger
+	// and chased order).
+	TGEntryCapPaise int64
 	TGArmMin      int   // minutes a call waits for its trigger
 	// TGMaxStrikeGapPct refuses a call whose strike is this % from spot;
 	// TGMaxPriceGapPct one whose entry is this % from the live premium.
@@ -227,6 +232,7 @@ func LoadConfig() Config {
 		OrderJournalPath:    config.GetEnv("STRAT_ORDER_JOURNAL_PATH", "data/orders.db"),
 		PNLDBPath:           config.GetEnv("STRAT_PNL_DB_PATH", "data/pnl.db"),
 		ProtectionMode:      config.GetEnv("STRAT_PROTECTION", "sl"),
+		ExitModifiesStop:    config.GetEnvBool("STRAT_EXIT_MODIFY_STOP", true),
 		ExecMode:            config.GetEnv("STRAT_EXEC_MODE", "chase"),
 		ChaseTicks:          config.GetEnvInt64("STRAT_CHASE_TICKS", 2),
 		ChaseReprices:       config.GetEnvInt("STRAT_CHASE_REPRICES", 3),
@@ -253,6 +259,7 @@ func LoadConfig() Config {
 		TGTargetPct:           config.GetEnvInt64("STRAT_TG_TARGET_PCT", 0),
 		TGLadderTrailPct:      config.GetEnvInt64("STRAT_TG_LADDER_TRAIL_PCT", 10),
 		TGMaxChasePct:         config.GetEnvInt64("STRAT_TG_MAX_CHASE_PCT", 5),
+		TGEntryCapPaise:       config.GetEnvInt64("STRAT_TG_ENTRY_CAP_PAISE", 100),
 		TGArmMin:              config.GetEnvInt("STRAT_TG_ARM_MIN", 30),
 		TGMaxStrikeGapPct:     config.GetEnvInt64("STRAT_TG_MAX_STRIKE_GAP_PCT", 3),
 		TGMaxPriceGapPct:      config.GetEnvInt64("STRAT_TG_MAX_PRICE_GAP_PCT", 40),

@@ -183,7 +183,7 @@ func TestOrderAttempt_RetryAlsoTimesOutAndNotInBook_StateUnknown(t *testing.T) {
 
 func TestBuildOrderParams_IncludesOrderTag(t *testing.T) {
 	oe := NewOrderExecutor(Config{Qty: 75, FNOExchange: "NFO", FNOOrderType: "MARKET", FNOProductType: "INTRADAY"})
-	p := oe.buildOrderParams("NIFTYCE", "123", "BUY", 0, 75, "abcd1234abcd1234")
+	p := oe.buildOrderParams("NIFTYCE", "123", "BUY", 0, 0, 75, "abcd1234abcd1234")
 	if p["ordertag"] != "abcd1234abcd1234" {
 		t.Fatalf("ordertag missing: %v", p)
 	}

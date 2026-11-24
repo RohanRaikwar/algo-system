@@ -168,7 +168,7 @@ func (oe *OrderExecutor) storeEntry(sig model.Signal, rec OrderRecord) {
 // lock.
 func (oe *OrderExecutor) commitEntry(sig model.Signal, rec OrderRecord) {
 	posKey := oe.positionKey(sig)
-	rec.Pending = false
+	rec.Pending, rec.Resting, rec.RestUntil = false, false, time.Time{}
 	if oe.stopMode() {
 		// A stop already recorded (adopted again after a crash) is kept.
 		if rec.SLOrderID == "" {
@@ -204,6 +204,9 @@ func (oe *OrderExecutor) onBuySettled(sig model.Signal, orderID string, f fillRe
 	if !filled {
 		log.Printf("%s BUY %s settled: %s by broker (%s) — clearing", oe.logPrefix(), orderID, f.Status, f.Text)
 		oe.dropEntry(sig)
+		if cur.Resting {
+			oe.notifyEntryDropped(sig, fmt.Sprintf("resting BUY %s %s unfilled: %s", orderID, f.Status, f.Text))
+		}
 		return
 	}
 	rec.OrderID = orderID
@@ -288,6 +291,13 @@ func signalFor(rec OrderRecord) model.Signal {
 // state is left for an operator.
 func (oe *OrderExecutor) pollOrderAsync(posKey, what, orderID string, match func(map[string]any) (map[string]any, bool),
 	done func(orderID string, f fillResult), absent func()) {
+	oe.followOrder(posKey, what, orderID, match, done, absent, true)
+}
+
+// followOrder is pollOrderAsync; alertSlow false skips the "not settled
+// yet" alert for an order expected to rest (a resting entry).
+func (oe *OrderExecutor) followOrder(posKey, what, orderID string, match func(map[string]any) (map[string]any, bool),
+	done func(orderID string, f fillResult), absent func(), alertSlow bool) {
 	if oe.brokerAPI() == nil {
 		oe.alertf("%s: no broker session to settle order — check Angel order book manually", what)
 		return
@@ -304,7 +314,7 @@ func (oe *OrderExecutor) pollOrderAsync(posKey, what, orderID string, match func
 			oe.notifyState()
 		}
 		for i := 0; i < tries+slowTries; i++ {
-			if i == tries {
+			if i == tries && alertSlow {
 				oe.alertf("%s: not settled after %s (last status %q, book readable=%v) — still following it slowly every %s; check Angel order book",
 					what, time.Duration(tries)*every, lastStatus, sawBook, slowEvery)
 			}
@@ -407,10 +417,13 @@ func (oe *OrderExecutor) ResumeSettlement() {
 			if rec.OrderID != "" {
 				match = matchByID(rec.OrderID)
 			}
-			oe.pollOrderAsync(posKey, "restored pending BUY "+rec.ClientOrderID, rec.OrderID, match,
+			oe.followOrder(posKey, "restored pending BUY "+rec.ClientOrderID, rec.OrderID, match,
 				func(orderID string, f fillResult) {
 					oe.onBuySettled(sig, orderID, f)
-				}, func() { oe.dropEntry(sig) })
+				}, func() { oe.dropEntry(sig) }, !rec.Resting)
+			if rec.Resting {
+				oe.expireRestingAt(posKey, rec.OrderID, rec.RestUntil)
+			}
 			continue
 		}
 

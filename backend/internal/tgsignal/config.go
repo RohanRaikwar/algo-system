@@ -51,6 +51,11 @@ type Config struct {
 	// scheduler sends a read to the first one with budget left, so they
 	// add up. A missing base URL or model takes the primary's.
 	LLMExtra []LLMEndpoint
+	// LLMCtx is the fast model that reads messages in a call's trade
+	// context (TG_LLM_CTX_MODEL, …): its own queue, a small prompt, and the
+	// main model only when it is unsure. Model "" = off (main model reads).
+	LLMCtx       LLMEndpoint
+	LLMCtxReason string
 	// DefaultSLPct gives a call without a stop ("Stoploss : PAID") a stop
 	// this % below its entry. 0 = such calls are refused.
 	DefaultSLPct int64
@@ -89,7 +94,16 @@ func LoadConfig() Config {
 		LLMWorkers:    config.GetEnvInt("TG_LLM_CONCURRENCY", 4),
 		LLMCacheTTL:   10 * time.Minute,
 
-		LLMExtra:     loadLLMExtra(),
+		LLMExtra: loadLLMExtra(),
+		LLMCtx: LLMEndpoint{
+			Env:     "TG_LLM_CTX",
+			BaseURL: config.GetEnv("TG_LLM_CTX_BASE_URL", ""),
+			APIKey:  config.GetEnv("TG_LLM_CTX_API_KEY", ""),
+			Model:   config.GetEnv("TG_LLM_CTX_MODEL", ""),
+			TPM:     config.GetEnvInt("TG_LLM_CTX_TPM", 0),
+			RPM:     config.GetEnvInt("TG_LLM_CTX_RPM", 0),
+		},
+		LLMCtxReason: config.GetEnv("TG_LLM_CTX_REASONING", ""),
 		DefaultSLPct: int64(config.GetEnvInt("TG_DEFAULT_SL_PCT", 0)),
 	}
 }
@@ -151,6 +165,19 @@ func loadLLMExtra() []LLMEndpoint {
 		}
 	}
 	return out
+}
+
+// ctxOn reports whether a fast trade-context model is configured.
+func (c Config) ctxOn() bool { return c.LLM && c.LLMCtx.Model != "" }
+
+// ctxEndpoint is the trade-context endpoint with blanks (key included)
+// filled from the primary.
+func (c Config) ctxEndpoint() LLMEndpoint {
+	e := c.LLMCtx.withDefaults(c)
+	if e.APIKey == "" {
+		e.APIKey = c.LLMAPIKey
+	}
+	return e
 }
 
 // withDefaults fills an extra endpoint's blanks from the primary.

@@ -438,6 +438,16 @@ func (ing *Ingest) SubscribeTokens(mode int, tokens []smartconnect.TokenListEntr
 	return ing.ws.Subscribe("dynamic_fno", mode, tokens)
 }
 
+// UnsubscribeTokens drops tokens from the live WS connection and from the
+// set resent on reconnect.
+func (ing *Ingest) UnsubscribeTokens(mode int, tokens []smartconnect.TokenListEntry) error {
+	if ing.ws == nil {
+		return fmt.Errorf("ws not connected")
+	}
+	log.Printf("[ws] unsubscribing tokens: mode=%d tokens=%+v", mode, tokens)
+	return ing.ws.Unsubscribe("dynamic_fno", mode, tokens)
+}
+
 func toInt64(v interface{}) int64 {
 	switch t := v.(type) {
 	case int64:

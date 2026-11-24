@@ -392,3 +392,19 @@ func (g *FeedGroup) SubscribeTokens(mode int, tokens []smartconnect.TokenListEnt
 	}
 	return nil
 }
+
+// UnsubscribeTokens drops tokens on every socket (and from each socket's
+// stored set). It succeeds if any socket took it live.
+func (g *FeedGroup) UnsubscribeTokens(mode int, tokens []smartconnect.TokenListEntry) error {
+	slots := g.slots()
+	var errs []error
+	for i, ing := range slots {
+		if err := ing.UnsubscribeTokens(mode, tokens); err != nil {
+			errs = append(errs, fmt.Errorf("socket %d: %w", i, err))
+		}
+	}
+	if len(errs) == len(slots) {
+		return errors.Join(errs...)
+	}
+	return nil
+}

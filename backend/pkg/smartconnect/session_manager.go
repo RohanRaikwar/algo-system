@@ -318,6 +318,20 @@ func (sm *SessionManager) RMSLimit() (map[string]any, error) {
 	})
 }
 
+// GetCandleData fetches historical candles with automatic session refresh.
+func (sm *SessionManager) GetCandleData(params map[string]any) (map[string]any, error) {
+	return sm.executeWithRetry(func() (map[string]any, error) {
+		return sm.GetClient().GetCandleData(params)
+	})
+}
+
+// GetMarketData fetches quotes with automatic session refresh.
+func (sm *SessionManager) GetMarketData(mode string, exchangeTokens any) (map[string]any, error) {
+	return sm.executeWithRetry(func() (map[string]any, error) {
+		return sm.GetClient().GetMarketData(mode, exchangeTokens)
+	})
+}
+
 // OrderBook fetches order book with automatic session refresh on expiry
 func (sm *SessionManager) OrderBook() (map[string]any, error) {
 	return sm.executeWithRetry(func() (map[string]any, error) {

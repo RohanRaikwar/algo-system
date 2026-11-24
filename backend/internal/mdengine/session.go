@@ -328,7 +328,9 @@ func (s *Service) runProductionSession(ctx context.Context) {
 			wsStarted := time.Now()
 			s.setFeedReconnect(ingest.ForceReconnect)
 			s.setFeedLastFrame(ingest.LastFrameTime)
+			s.leases.setFeed(ingest)
 			startErr := ingest.Start(wsCtx, s.tickCh)
+			s.leases.setFeed(nil)
 			s.setFeedReconnect(nil)
 			s.setFeedLastFrame(nil)
 			if startErr != nil {
