@@ -28,6 +28,8 @@ type Service struct {
 	journal *Journal
 	status  *statusTracker
 	h       *handler
+	// seenBy notes whether push or poll brought each message first.
+	seenBy deliveries
 }
 
 // New builds the service. The session file must exist (tglogin).
@@ -98,7 +100,7 @@ func New(cfg Config) (*Service, error) {
 			log.Printf("[tgsignal] ⚡ fast context LLM: %s at %s (%d tokens/min)", e.Model, e.BaseURL, e.TPM)
 		}
 	}
-	if n, err := svc.h.ctxs.load(journal, cfg.ChatIDs, cfg.DefaultSLPct, time.Now()); err != nil {
+	if n, err := svc.h.ctxs.load(journal, cfg.ChatIDs, cfg.Defaults(), time.Now()); err != nil {
 		log.Printf("[tgsignal] trade contexts from the journal: %v", err)
 	} else if n > 0 {
 		log.Printf("[tgsignal] reopened %d trade context(s) from today's journal", n)
@@ -179,6 +181,9 @@ func (svc *Service) Run(ctx context.Context) error {
 		}
 		svc.status.telegramUp(name, time.Now())
 		svc.publishStatus()
+		pollCtx, stopPoll := context.WithCancel(ctx)
+		defer stopPoll()
+		go svc.runPoller(pollCtx, client.API())
 		err = gaps.Run(ctx, client.API(), status.User.ID, updates.AuthOptions{})
 		svc.status.telegramDown(err)
 		return err
@@ -186,16 +191,33 @@ func (svc *Service) Run(ctx context.Context) error {
 }
 
 func (svc *Service) onMessage(_ context.Context, m tg.MessageClass, edited bool) {
+	svc.deliver(m, edited, srcPush)
+}
+
+// onPolled takes a message the channel poller found.
+func (svc *Service) onPolled(m tg.MessageClass, edited bool) {
+	svc.deliver(m, edited, srcPoll)
+}
+
+func (svc *Service) deliver(m tg.MessageClass, edited bool, src string) {
 	msg, ok := m.(*tg.Message)
 	if !ok || msg.Out {
 		return
 	}
 	in, ok := toInMsg(msg, edited)
-	if !ok {
+	if !ok || !svc.h.chats[in.ChatID] {
 		return
 	}
-	// dispatch never waits for the LLM: reads run on the scheduler.
-	svc.h.r.dispatch(in, time.Now())
+	now := time.Now()
+	if first, ok := svc.seenBy.note(seenKey(in), src, now); ok && first.src == srcPoll {
+		if late := now.Sub(first.at); late >= time.Second {
+			log.Printf("[tgsignal] ⚡ poll beat push by %s for %d:%d (sent %s ago)",
+				late.Round(100*time.Millisecond), in.ChatID, in.MsgID, now.Sub(in.Sent).Round(time.Second))
+		}
+	}
+	// dispatch never waits for the LLM: reads run on the scheduler. A
+	// copy already seen (from the other source) is dropped there.
+	svc.h.r.dispatch(in, now)
 }
 
 func toInMsg(msg *tg.Message, edited bool) (inMsg, bool) {

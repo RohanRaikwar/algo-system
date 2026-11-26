@@ -23,6 +23,9 @@ export interface TradeMarker {
     lines: string[]; // card detail rows; empty in compact mode
     pnl?: number; // paise, exits paired with an entry; tints the P&L row
     below?: boolean; // card under the bar; entries always are
+    title?: string; // full label kept when compact blanks `label` (detail popup)
+    detail?: string[]; // full rows kept when compact blanks `lines` (detail popup)
+    reason?: string; // full, unclipped reason text (detail popup)
 }
 
 export const MARKER_COLORS: Record<TradeMarkerKind, string> = {
@@ -173,7 +176,20 @@ export function autoscaleMargins(markers: readonly TradeMarker[], paneH: number)
 
 /** The phone/zoomed-out badge: icon plus C/P, no label or detail rows. */
 export function compactMarker(m: TradeMarker): TradeMarker {
-    return { ...m, label: '', lines: [] };
+    // The badge drops its text; the detail popup still gets the full card.
+    return { ...m, title: m.title ?? m.label, detail: m.detail ?? m.lines, label: '', lines: [] };
+}
+
+/**
+ * Markers whose drawn card (grown by pad px for touch) contains the point,
+ * newest first. Coordinates are the pane's media pixels, the same space as
+ * a chart click's `point`.
+ */
+export function markersAt(placed: readonly { rect: Rect; m: TradeMarker }[], x: number, y: number, pad = 8): TradeMarker[] {
+    return placed
+        .filter(({ rect: r }) => x >= r.left - pad && x <= r.left + r.w + pad && y >= r.top - pad && y <= r.top + r.h + pad)
+        .map(p => p.m)
+        .sort((a, b) => b.time - a.time);
 }
 
 export function cardSize(m: TradeMarker): { w: number; h: number } {
@@ -368,6 +384,11 @@ export class TradeMarkersPrimitive implements ISeriesPrimitive<Time> {
     setMarkers(markers: TradeMarker[]) {
         this.markers = markers;
         this.requestUpdate?.();
+    }
+
+    /** Markers drawn under a pane point (a chart click), newest first. */
+    markersAt(x: number, y: number): TradeMarker[] {
+        return markersAt(this.view.placed, x, y);
     }
 
     updateAllViews() {

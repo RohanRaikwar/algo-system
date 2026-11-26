@@ -78,6 +78,22 @@ func (pf *Portfolio) ClosePosition(token, exchange string) *Position {
 	return &cp
 }
 
+// ReducePosition sells qty of a long position at its average price; the
+// position is removed once nothing is left.
+func (pf *Portfolio) ReducePosition(token, exchange string, qty int64) {
+	key := exchange + ":" + token
+	pf.mu.Lock()
+	defer pf.mu.Unlock()
+	pos, ok := pf.positions[key]
+	if !ok {
+		return
+	}
+	pos.Qty -= qty
+	if pos.Qty <= 0 {
+		delete(pf.positions, key)
+	}
+}
+
 // UpdatePrice updates the last traded price for a position.
 func (pf *Portfolio) UpdatePrice(candle model.Candle) {
 	key := candle.Exchange + ":" + candle.Token

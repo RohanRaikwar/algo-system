@@ -19,10 +19,10 @@ type HistoryMsg struct {
 }
 
 // Explain runs the service's decision on one message and describes it.
-// reader nil = regex only. slPct is TG_DEFAULT_SL_PCT.
-func Explain(ctx context.Context, reader CallReader, text, replyText string, isReply bool, slPct int64) string {
+// reader nil = regex only. defs fill a missing stop and targets.
+func Explain(ctx context.Context, reader CallReader, text, replyText string, isReply bool, defs Defaults) string {
 	rx, rxErr := Parse(text)
-	rx, rxErr = withDefaultSL(rx, rxErr, slPct)
+	rx, rxErr = withDefaultSL(rx, rxErr, defs)
 	var d decision
 	switch {
 	case isReply && reActive.MatchString(text) && isCall(replyText):
@@ -35,7 +35,7 @@ func Explain(ctx context.Context, reader CallReader, text, replyText string, isR
 		rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		res, err := reader.Read(rctx, text, replyText)
 		cancel()
-		d = decide(rx, rxErr, llmWithDefaultSL(res, slPct), err)
+		d = decide(rx, rxErr, llmWithDefaultSL(res, defs), err)
 		if err == nil {
 			d.reason = fmt.Sprintf("EN: %s | %s (tokens %d)", res.English, d.reason, res.Usage.Total)
 		}

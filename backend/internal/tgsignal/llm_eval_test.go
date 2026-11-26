@@ -51,7 +51,7 @@ func TestLLMEval(t *testing.T) {
 		{"Entry active ho gyi le lo", evalCtx},
 		{"Gold buy 2400 sl 2390", evalCtx},
 	} {
-		fmt.Printf("MSG: %.50q\n  => %s\n", c.text, Explain(context.Background(), r, c.text, c.reply, c.reply != "", 10))
+		fmt.Printf("MSG: %.50q\n  => %s\n", c.text, Explain(context.Background(), r, c.text, c.reply, c.reply != "", Defaults{SLPct: 10}))
 		time.Sleep(3 * time.Second)
 	}
 }

@@ -8,13 +8,13 @@ import { IST_OFFSET } from '../../utils/helpers';
 import { useOptionLTPStore } from '../../store/useOptionLTPStore';
 import { fetchOptionCandles, watchOption, WATCH_EVERY_MS, type OptBar } from '../../services/optionChain';
 import { applyTick, rupees } from './liveBars';
+import { X } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { TimeframeSelect } from '../chart/TradingChart';
 
-const TFS = [
-    { tf: 60, label: '1m' },
-    { tf: 300, label: '5m' },
-    { tf: 900, label: '15m' },
-    { tf: 3600, label: '1h' },
-];
+// Option charts offer 1m and 5m only (the gateway builds both from 1m history).
+const TFS = [60, 300];
 
 function toChart(b: OptBar) {
     return { time: (b.t + IST_OFFSET) as UTCTimestamp, open: b.o / 100, high: b.h / 100, low: b.l / 100, close: b.c / 100 };
@@ -24,6 +24,10 @@ interface OptionChartProps {
     exchange: string;
     token: string;
     symbol: string;
+    /** Fill the parent's height (split screen) instead of a fixed height. */
+    fill?: boolean;
+    /** Shows a close button in the header. */
+    onClose?: () => void;
 }
 
 /**
@@ -32,7 +36,7 @@ interface OptionChartProps {
  * renews the contract's live lease every 20 s; after unmount the server
  * drops the feed a minute later.
  */
-export function OptionChart({ exchange, token, symbol }: OptionChartProps) {
+export function OptionChart({ exchange, token, symbol, fill = false, onClose }: OptionChartProps) {
     const box = useRef<HTMLDivElement | null>(null);
     const chart = useRef<IChartApi | null>(null);
     const series = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -95,28 +99,23 @@ export function OptionChart({ exchange, token, symbol }: OptionChartProps) {
     }, [ltp, tf]);
 
     return (
-        <div className="flex flex-col gap-2 min-w-0">
+        <div className={cn('flex flex-col gap-2 min-w-0', fill && 'h-full min-h-0 p-[8px] bg-sg-surface')}>
             <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-baseline gap-2 min-w-0">
                     <span className="font-semibold truncate">{symbol}</span>
                     <span className="tabular-nums">{rupees(ltp)}</span>
                     {ltp ? <span className="text-xs text-sg-profit">live</span> : null}
                 </div>
-                <div className="flex gap-1" role="group" aria-label="Timeframe">
-                    {TFS.map(t => (
-                        <button
-                            key={t.tf}
-                            type="button"
-                            aria-pressed={tf === t.tf}
-                            onClick={() => setTF(t.tf)}
-                            className={`px-2 py-0.5 rounded-md text-xs border border-sg-line ${tf === t.tf ? 'bg-sg-line text-sg-text' : 'text-sg-muted'}`}
-                        >
-                            {t.label}
-                        </button>
-                    ))}
+                <div className="flex items-center gap-2">
+                    <TimeframeSelect value={tf} tfs={TFS} onChange={setTF} />
+                    {onClose && (
+                        <Button variant="ghost" size="icon-32" onClick={onClose} aria-label="Close option chart">
+                            <X size={18} />
+                        </Button>
+                    )}
                 </div>
             </div>
-            <div ref={box} className="w-full h-[min(60vh,460px)] min-h-[240px]" />
+            <div ref={box} className={cn('w-full', fill ? 'flex-1 min-h-0' : 'h-[min(60vh,460px)] min-h-[240px]')} />
             <div className="text-xs text-sg-muted">{status}</div>
         </div>
     );

@@ -401,6 +401,9 @@ func (cs *contexts) prompt(tc *tradeCtx, link ctxLink) string {
 			ts[i] = rupees(t)
 		}
 		b.WriteString(" targets " + strings.Join(ts, ","))
+		if c.TargetsDefault {
+			b.WriteString(" (our default)")
+		}
 	}
 	b.WriteString("\nOur state: " + tc.stateText() + "\n")
 	b.WriteString("Caller price posts: " + pricesText(tc.prices) + "\n")
@@ -482,7 +485,7 @@ var reCtxWords = regexp.MustCompile(`(?i)\bactive\b`)
 
 // load reopens today's calls that were armed or held and not closed, with
 // their linked replies, after a restart.
-func (cs *contexts) load(j *Journal, chats []int64, slPct int64, now time.Time) (int, error) {
+func (cs *contexts) load(j *Journal, chats []int64, defs Defaults, now time.Time) (int, error) {
 	if j == nil {
 		return 0, nil
 	}
@@ -497,7 +500,7 @@ func (cs *contexts) load(j *Journal, chats []int64, slPct int64, now time.Time) 
 		var open []*tradeCtx
 		for _, r := range rows {
 			if r.verdict == VerdictSent {
-				c, ok := r.call(chat, slPct)
+				c, ok := r.call(chat, defs)
 				if !ok || !reopen(r.outcome) {
 					continue
 				}
@@ -566,16 +569,17 @@ type journalRow struct {
 }
 
 // call rebuilds the published call of a SENT row.
-func (r journalRow) call(chat int64, slPct int64) (model.TGSignal, bool) {
+func (r journalRow) call(chat int64, defs Defaults) (model.TGSignal, bool) {
 	rx, err := Parse(r.text)
-	c, err := withDefaultSL(rx, err, slPct)
+	c, err := withDefaultSL(rx, err, defs)
 	if err != nil && r.llm != "" {
 		var res LLMResult
 		if json.Unmarshal([]byte(r.llm), &res) == nil && res.Kind == "new_call" {
-			c = llmWithDefaultSL(res, slPct).Call()
+			c = llmWithDefaultSL(res, defs).Call()
 			err = c.Validate()
 		}
 	}
+	c = withDefaultTargets(c, defs)
 	c.ChatID, c.MsgID, c.SentAt, c.Text = chat, r.msgID, r.sent, r.text
 	return c, err == nil
 }

@@ -1,5 +1,6 @@
-import { useMemo } from 'react';
-import { ChevronDown, SlidersHorizontal } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import type { MouseEventParams } from 'lightweight-charts';
+import { ChevronDown, ListTree, PanelRight, SlidersHorizontal } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { useCandleStore } from '../../store/useCandleStore';
 import { tfLabel, entryKey, getEntryColor, tokenLabel, tokenCaption } from '../../utils/helpers';
@@ -16,6 +17,8 @@ import { useTradeLineDrag } from './hooks/useTradeLineDrag';
 import { OrderLineOverlay } from './OrderLineOverlay';
 import { SRSituationCard } from './SRSituationCard';
 import { ChartLegend } from './ChartLegend';
+import { MarkerDetails } from './MarkerDetails';
+import type { TradeMarker } from './tradeMarkersPrimitive';
 import { StatusDot } from '../layout/StatusDot';
 import { PHONE_PORTRAIT_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
 import { haptic } from '../../utils/haptic';
@@ -24,14 +27,13 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Kbd } from '@/components/ui/kbd';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 
 const up = 'text-sg-profit';
 const down = 'text-sg-loss';
 // The instrument select is NativeSelect variant="symbol" (drawn chevron).
 // No caption (empty span): the select drops its bottom padding and centres its chevron.
 const symbolStackEmpty = 'lte-640:[&:has(>span:empty)>select]:pb-0 lte-640:[&:has(>span:empty)>select]:[background-position:right_4px_center]';
-const symbolCaption = 'hidden lte-640:absolute lte-640:left-0 lte-640:bottom-[4px] lte-640:pointer-events-none lte-640:block lte-640:text-sg-faint lte-640:text-[11px] lte-640:leading-[1.3] lte-640:tabular-nums lte-640:whitespace-nowrap lte-640:overflow-hidden lte-640:text-ellipsis';
+const symbolCaption = 'hidden lte-640:absolute lte-640:left-0 lte-640:right-0 lte-640:bottom-[4px] lte-640:pointer-events-none lte-640:block lte-640:text-sg-faint lte-640:text-[11px] lte-640:leading-[1.3] lte-640:tabular-nums lte-640:whitespace-nowrap lte-640:overflow-hidden lte-640:text-ellipsis';
 const quoteCls = 'flex items-baseline gap-[10px] whitespace-nowrap tabular-nums lte-640:flex-col lte-640:items-end lte-640:gap-0 lte-640:leading-[1.2]';
 const lastPrice = 'text-sg-text font-semibold tracking-[-0.02em]';
 const change = 'text-[0.86rem] font-medium lte-640:text-[12px]';
@@ -47,6 +49,10 @@ interface TradingChartProps {
     onPaneTFChange?: (tf: number) => void;
     /** Phone: tapping the SR situation chip opens the SR sheet. */
     onOpenSR?: () => void;
+    /** Desktop: opens the side sheet (S/R strategy, F&O instruments). */
+    onOpenStrategy?: () => void;
+    /** Desktop: opens the selected index's option chain in the side sheet. */
+    onOpenOptionChain?: () => void;
 }
 
 const NO_INDICATORS: never[] = [];
@@ -57,7 +63,32 @@ function fmtPrice(v: number): string {
     return v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPaneTFChange, onOpenSR }: TradingChartProps) {
+/** Timeframe dropdown: a pill showing the current TF over a transparent native <select>. */
+export function TimeframeSelect({ value, tfs, onChange, className }: {
+    value: number;
+    tfs: number[];
+    onChange: (tf: number) => void;
+    className?: string;
+}) {
+    return (
+        <span className={cn('relative inline-flex items-center gap-[3px] shrink-0 h-[28px] py-0 pr-[8px] pl-[10px] rounded-ctrl bg-sg-raised border border-solid border-sg-line text-sg-text text-[12px] font-semibold tabular-nums [&_svg]:text-sg-muted active:bg-sg-hover has-[select:active]:bg-sg-hover has-[select:focus-visible]:shadow-ring', className)}>
+            {tfLabel(value)}
+            <ChevronDown size={12} aria-hidden />
+            <select
+                className="absolute inset-y-[-8px] inset-x-[-4px] w-[calc(100%+8px)] opacity-0 text-[16px] cursor-pointer"
+                value={value}
+                onChange={(e) => onChange(Number(e.target.value))}
+                aria-label="Timeframe"
+            >
+                {tfs.map((tf) => (
+                    <option key={tf} value={tf}>{tfLabel(tf)}</option>
+                ))}
+            </select>
+        </span>
+    );
+}
+
+export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPaneTFChange, onOpenSR, onOpenStrategy, onOpenOptionChain }: TradingChartProps) {
     // App state (atomic selectors)
     const config = useAppStore(s => s.config);
     const selectedToken = useAppStore(s => s.selectedToken);
@@ -128,7 +159,20 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
     useChartSubscription(compact ? 0 : selectedTF, compact ? null : selectedToken, activeEntries);
     usePaneSubscription(compact ? selectedToken : null, selectedTF);
     useChartLazyLoad(chartApi, selectedTF, selectedToken);
-    useChartMarkers(candleSeries, selectedToken, selectedTF);
+    const markerPrim = useChartMarkers(candleSeries, selectedToken, selectedTF);
+    // Click/tap on a trade marker opens its full details.
+    const [markerHit, setMarkerHit] = useState<TradeMarker[] | null>(null);
+    useEffect(() => {
+        const chart = chartApi.current;
+        if (!chart) return;
+        const onClick = (p: MouseEventParams) => {
+            if (!p.point) return;
+            const hit = markerPrim.current?.markersAt(p.point.x, p.point.y) ?? [];
+            if (hit.length > 0) setMarkerHit(hit);
+        };
+        chart.subscribeClick(onClick);
+        return () => chart.unsubscribeClick(onClick);
+    }, [chartApi, markerPrim]);
     const lastPaise = quote ? Math.round(quote.price * 100) : null;
     const lineDrag = useTradeLineDrag(chartApi, candleSeries, chartContainer, selectedToken, srOverlay);
     useSRLines(candleSeries, selectedToken, lastPaise, srOverlay, lineDrag.override);
@@ -140,7 +184,7 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
     return (
         <section className="relative flex flex-col flex-[1_1_auto] min-w-0 min-h-0 bg-sg-surface overflow-hidden" aria-label={`Price chart ${tfLabel(selectedTF)}`}>
             {phoneBar ? (
-                <div className="flex flex-wrap items-center gap-[6px] min-h-[calc(52px+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] pr-[8px] pb-0 pl-[14px] border-b border-b-sg-line shrink-0 select-none [-webkit-touch-callout:none]">
+                <div className="flex flex-nowrap items-center gap-[6px] min-h-[calc(52px+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] pr-[8px] pb-0 pl-[14px] border-b border-b-sg-line shrink-0 select-none [-webkit-touch-callout:none]">
                     <StatusDot />
                     <div className={cn('flex flex-col min-w-0 relative shrink max-w-none', symbolStackEmpty)}>
                         <NativeSelect
@@ -155,33 +199,35 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
                         </NativeSelect>
                         <span className={symbolCaption} aria-hidden>{tokenCaption(selectedToken)}</span>
                     </div>
-                    <span className="relative inline-flex items-center gap-[3px] shrink-0 h-[28px] py-0 pr-[8px] pl-[10px] rounded-pill bg-sg-raised border border-solid border-sg-line text-sg-text text-[12px] font-semibold tabular-nums [&_svg]:text-sg-muted active:bg-sg-hover has-[select:active]:bg-sg-hover has-[select:focus-visible]:shadow-ring">
-                        {tfLabel(selectedTF)}
-                        <ChevronDown size={12} aria-hidden />
-                        <select
-                            className="absolute inset-y-[-8px] inset-x-[-4px] w-[calc(100%+8px)] opacity-0 text-[16px] cursor-pointer"
-                            value={selectedTF}
-                            onChange={(e) => { haptic(); setSelectedTF(Number(e.target.value)); }}
-                            aria-label="Timeframe"
+                    <TimeframeSelect value={selectedTF} tfs={config.tfs} onChange={(tf) => { haptic(); setSelectedTF(tf); }} />
+                    {onOpenStrategy && (
+                        <Button
+                            variant="ghost-tool"
+                            size="icon-40"
+                            className="ml-auto"
+                            onClick={onOpenStrategy}
+                            aria-label="S/R strategy and F&O instruments"
+                            aria-controls="sr-sheet"
                         >
-                            {config.tfs.map((tf) => (
-                                <option key={tf} value={tf}>{tfLabel(tf)}</option>
-                            ))}
-                        </select>
-                    </span>
-                    {quote && (
-                        <div className={cn(quoteCls, 'ml-auto')}>
-                            <span className={cn(lastPrice, 'text-[18px]')}>{fmtPrice(quote.price)}</span>
-                            <span className={cn(change, tone)}>
-                                {sign}{fmtPrice(Math.abs(quote.change))} ({sign}{Math.abs(quote.pct).toFixed(2)}%)
-                            </span>
-                        </div>
+                            <PanelRight size={16} />
+                        </Button>
+                    )}
+                    {onOpenOptionChain && (
+                        <Button
+                            variant="ghost-tool"
+                            size="icon-40"
+                            className={onOpenStrategy ? 'ml-0' : 'ml-auto'}
+                            onClick={onOpenOptionChain}
+                            aria-label={`${tokenLabel(selectedToken)} option chain`}
+                        >
+                            <ListTree size={16} />
+                        </Button>
                     )}
                     {onOpenIndicators && (
                         <Button
                             variant="ghost-tool"
                             size="icon-40"
-                            className={quote ? 'ml-0' : 'ml-auto'}
+                            className={onOpenOptionChain || onOpenStrategy ? 'ml-0' : 'ml-auto'}
                             onClick={onOpenIndicators}
                             aria-label={`Indicators${activeEntries.length ? `, ${activeEntries.length} active` : ''}`}
                         >
@@ -226,24 +272,28 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
                                 </span>
                             </div>
                         )}
+                        {onOpenOptionChain && !compact && (
+                            <Button variant="outline" size="sm" onClick={onOpenOptionChain} title={`${tokenLabel(selectedToken)} option chain`}>
+                                <ListTree size={14} />
+                                <span>Option chain</span>
+                            </Button>
+                        )}
                     </div>
 
-                    <ToggleGroup
-                        variant="segment"
-                        size="tf"
-                        className="shrink-0 lte-640:[grid-area:tf] lte-640:flex lte-640:min-w-0"
-                        aria-label="Timeframe"
-                        value={[String(selectedTF)]}
-                        onValueChange={(v) => { if (v[0]) setSelectedTF(Number(v[0])); }}
-                    >
-                        {config.tfs.map((tf) => (
-                            <ToggleGroupItem key={tf} value={String(tf)}>
-                                {tfLabel(tf)}
-                            </ToggleGroupItem>
-                        ))}
-                    </ToggleGroup>
+                    <TimeframeSelect
+                        value={selectedTF}
+                        tfs={config.tfs}
+                        onChange={setSelectedTF}
+                        className="lte-640:[grid-area:tf] lte-640:justify-self-start"
+                    />
 
                     <div className="flex items-center gap-[6px] ml-auto min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lte-900:order-3 lte-900:w-full lte-900:ml-0 lte-640:[grid-area:ind] lte-640:order-[0] lte-640:w-auto lte-640:m-0 lte-640:overflow-visible phone-land:order-[0] phone-land:w-auto phone-land:ml-auto">
+                        {onOpenStrategy && !compact && (
+                            <Button variant="outline" size="sm" onClick={onOpenStrategy} title="S/R strategy and F&O instruments">
+                                <PanelRight size={14} />
+                                <span>S/R · F&amp;O</span>
+                            </Button>
+                        )}
                         {onOpenIndicators && !compact && (
                             <Button
                                 variant="outline"
@@ -299,6 +349,7 @@ export function TradingChart({ onOpenIndicators, compact = false, paneTF, onPane
                     )}
                 </div>
             </div>
+            <MarkerDetails markers={markerHit} onClose={() => setMarkerHit(null)} />
         </section>
     );
 }

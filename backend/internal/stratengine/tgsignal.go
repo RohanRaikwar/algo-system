@@ -319,6 +319,9 @@ func (svc *Service) buildTGStrategies(cfg Config) []*strategy.TelegramSignal {
 		MaxPriceGapPct: cfg.TGMaxPriceGapPct,
 		LadderTrailPct: cfg.TGLadderTrailPct,
 		ArmFor:         time.Duration(cfg.TGArmMin) * time.Minute,
+		CallTargets:    cfg.TGCallTargets,
+		Lots:           max(cfg.TGLots, 0),
+		T1ExitLots:     max(cfg.TGT1ExitLots, 0),
 	}
 	main := scfg
 	main.WaitActive = slices.Contains(cfg.TGWaitActive, strategy.TelegramSignalName)
@@ -522,15 +525,58 @@ func (svc *Service) tgEntryDropped(sig model.Signal, reason string) {
 	if tg := svc.tgByName(sig.StrategyName); tg != nil {
 		tg.CancelEntry(sig.Side, reason)
 	}
+	// The BUY was journaled and shown: close it there too, or the
+	// dashboard keeps an open row nothing holds. Not on this (order)
+	// goroutine: the signal loop may be waiting on it.
+	if svc.tfEngine != nil {
+		go svc.tfEngine.SendSignal(entryDroppedExit(sig, reason))
+	}
+}
+
+// tgHolds reports whether Telegram strategy name holds a position on side.
+func (svc *Service) tgHolds(name string, side model.PositionSide) bool {
+	tg := svc.tgByName(name)
+	if tg == nil {
+		return false
+	}
+	p := tg.Position()
+	return p != nil && p.Arm.Call.Side() == side
+}
+
+// entryDroppedExit is the book-only EXIT for an entry that never filled.
+func entryDroppedExit(sig model.Signal, reason string) model.Signal {
+	return model.Signal{
+		StrategyName: sig.StrategyName,
+		Action:       model.ActionExit,
+		Side:         sig.Side,
+		Token:        sig.Token,
+		Exchange:     sig.Exchange,
+		FNOToken:     sig.FNOToken,
+		FNOSymbol:    sig.FNOSymbol,
+		Reason:       "ENTRY_REFUSED " + reason,
+		BookOnly:     true,
+	}
 }
 
 // tgFilled reports a Telegram strategy's entry fill to the review log,
 // the last step of the call's latency timeline.
 func (svc *Service) tgFilled(f orderexec.FillReport) {
 	tg := svc.tgByName(f.Signal.StrategyName)
-	if tg == nil || f.Direction != "BUY" {
+	if tg == nil {
 		return
 	}
+	if f.Partial {
+		if p := tg.Position(); p != nil {
+			detail := fmt.Sprintf("paper %s sold %d lots (qty %d) at %d, %d lot(s) left for target %d",
+				p.Arm.FNOSymbol, f.Signal.ExitLots, f.Qty, f.FillPricePaise, p.LotsLeft, p.Target)
+			go svc.publishTGOutcome(context.Background(), p.Arm.Call.Key(), "PARTIAL_FILLED", detail)
+		}
+		return
+	}
+	if f.Direction != "BUY" {
+		return
+	}
+	svc.setLiveOrderEntry(f.Signal.StrategyName, f.Signal.Side, f.FillPricePaise)
 	tg.FillEntry(f.Signal.Side, f.FillPricePaise)
 	p := tg.Position()
 	if p == nil {

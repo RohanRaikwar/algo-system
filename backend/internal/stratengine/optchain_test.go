@@ -79,3 +79,37 @@ func TestBuildOptChain_SensexAndEdges(t *testing.T) {
 		t.Fatal("NIFTY built from SENSEX master")
 	}
 }
+
+// multiChainMaster serves several fakeChainMasters, one per option name.
+type multiChainMaster map[string]fakeChainMaster
+
+func (m multiChainMaster) OptionExpiriesOn(name, seg string, now time.Time) []time.Time {
+	return m[name].OptionExpiriesOn(name, seg, now)
+}
+
+func (m multiChainMaster) FindOption(name, seg string, exp time.Time, strike int64, opt string) *instruments.Instrument {
+	return m[name].FindOption(name, seg, exp, strike, opt)
+}
+
+// With SR off (no srExtras) every index in INDEX_TOKEN still gets a chain.
+func TestOptChainViews_AllIndexesWithoutSR(t *testing.T) {
+	t.Setenv("INDEX_TOKEN", "NSE:99926000,BSE:99919000,NSE:99926009")
+	t.Setenv("UNDERLYINGS", "")
+	exp := chainAt(2026, 12, 1, 0, 0)
+	im := multiChainMaster{
+		"NIFTY":     {name: "NIFTY", seg: "NFO", exps: []time.Time{exp}, lo: 20000, hi: 30000, step: 50},
+		"SENSEX":    {name: "SENSEX", seg: "BFO", exps: []time.Time{exp}, lo: 70000, hi: 90000, step: 100},
+		"BANKNIFTY": {name: "BANKNIFTY", seg: "NFO", exps: []time.Time{chainAt(2026, 12, 29, 0, 0)}, lo: 50000, hi: 60000, step: 100},
+	}
+	closes := map[string]int64{"NIFTY": 2565370, "SENSEX": 8400000, "BANKNIFTY": 5703000}
+	svc := &Service{}
+	views := svc.optChainViews(im, nil, func(p underlying.Profile) int64 { return closes[p.Key] }, chainAt(2026, 11, 27, 2, 0))
+	for _, key := range []string{"NSE:99926000", "BSE:99919000", "NSE:99926009"} {
+		if v, ok := views[key]; !ok || len(v.Rows) == 0 {
+			t.Fatalf("no chain for %s: %+v", key, views)
+		}
+	}
+	if v := views["BSE:99919000"]; v.Exchange != "BFO" || v.ATM != 84000 {
+		t.Fatalf("SENSEX view %+v", v)
+	}
+}

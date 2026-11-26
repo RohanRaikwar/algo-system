@@ -109,6 +109,35 @@ func (svc *Service) upsertLiveOrder(strategyName string, side strategy.PositionS
 	svc.liveOrdersMu.Unlock()
 }
 
+// setLiveOrderEntry sets an open live order's entry to its fill price. An
+// entry sent before the option's first tick is booked at 0 and stays off
+// the dashboard until this.
+func (svc *Service) setLiveOrderEntry(strategyName string, side strategy.PositionSide, fill int64) {
+	if fill <= 0 {
+		return
+	}
+	svc.liveOrdersMu.Lock()
+	rt := svc.liveOrders[liveOrderKey(strategyName, side)]
+	if rt != nil {
+		rt.EntryPrice = fill
+		if rt.BestPrice < fill {
+			rt.BestPrice = fill
+		}
+		if rt.CurrentPrice <= 0 {
+			rt.CurrentPrice = fill
+		}
+	}
+	svc.liveOrdersMu.Unlock()
+	if rt == nil || svc.redisWriter == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		svc.publishLiveOrders(ctx)
+	}()
+}
+
 func (svc *Service) removeLiveOrder(strategyName string, side strategy.PositionSide) {
 	if strategyName == "" || side == strategy.SideNone {
 		return

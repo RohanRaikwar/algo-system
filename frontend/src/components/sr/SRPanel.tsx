@@ -8,6 +8,8 @@ import { Badge } from '@/components/ui/badge';
 import { REGIME_TONE } from './srClasses';
 
 const panel = 'shrink-0 border-t border-t-sg-line bg-sg-surface pt-[10px] px-[14px] pb-[8px] text-[13px] text-sg-text-2';
+// Inside the desktop side sheet: no top rule, the sheet scrolls it.
+const sheetPanel = 'bg-sg-surface pt-[12px] px-[16px] pb-[16px] text-[13px] text-sg-text-2';
 const header = 'flex items-center gap-[8px] flex-wrap mb-[8px]';
 const title = 'mt-0 mr-[4px] mb-0 ml-0 text-[13px] font-semibold text-sg-text';
 const block = 'min-w-0 py-[8px] px-[10px] rounded-ctrl bg-sg-raised';
@@ -28,13 +30,20 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
     );
 }
 
-export function SRPanel() {
+interface SRPanelProps {
+    /** 'sheet': laid out for the narrow desktop side sheet (one column). */
+    variant?: 'strip' | 'sheet';
+}
+
+export function SRPanel({ variant = 'strip' }: SRPanelProps = {}) {
+    const inSheet = variant === 'sheet';
+    const panelClass = inSheet ? sheetPanel : panel;
     const v = useSelectedSRView();
     const last = useLastNiftyPaise(v?.key);
 
     if (!v) {
         return (
-            <section className={panel} aria-label="S/R strategy">
+            <section className={panelClass} aria-label="S/R strategy">
                 <div className={header}>
                     <h2 className={title}>S/R strategy</h2>
                     <Badge variant="mobile" className="shrink">Paper</Badge>
@@ -55,7 +64,7 @@ export function SRPanel() {
     const sweep = recentSweep(v);
 
     return (
-        <section className={panel} aria-label="S/R strategy">
+        <section className={panelClass} aria-label="S/R strategy">
             <div className={header}>
                 <h2 className={title}>S/R strategy</h2>
                 <Badge variant="mobile" tone={REGIME_TONE[v.regime]} className="shrink" title={`15m ADX ${v.adx.toFixed(1)}`}>
@@ -71,7 +80,7 @@ export function SRPanel() {
                 {updated && <span className="ml-auto text-[11px] text-sg-faint lte-900:ml-0">as of {updated} IST</span>}
             </div>
 
-            <div className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.1fr)] gap-[10px] lte-900:grid-cols-[1fr]">
+            <div className={cn('grid gap-[10px]', inSheet ? 'grid-cols-[1fr]' : 'grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.1fr)] lte-900:grid-cols-[1fr]')}>
                 <div className={block}>
                     <h3 className={blockTitle}>Situation</h3>
                     <div className={stats}>

@@ -209,6 +209,9 @@ type FillReport struct {
 	FillPricePaise int64
 	Qty            int64 // filled quantity
 	Real           bool  // true when the fill happened at the broker
+	// Partial: a SELL of part of the position (Signal.ExitLots); the rest
+	// stays open.
+	Partial bool
 }
 
 // SetFillListener registers fn to be called for every fill, real or paper.
@@ -695,6 +698,11 @@ func (oe *OrderExecutor) ExecuteSignal(sig model.Signal) {
 	sendReal := isRealOrderStrategy && live
 	if isExit {
 		switch {
+		case realEntry && sig.ExitLots > 0:
+			// Partial exits are paper only: the real position stays whole
+			// with its resting stop; the final exit sells all of it.
+			log.Printf("%s ℹ️  partial EXIT (%d lots) of REAL %s not sent — paper only; position kept whole: %s", prefix, sig.ExitLots, posKey, sig.Reason)
+			return
 		case realEntry && entry.ExitOrderID != "":
 			log.Printf("%s ⏳ EXIT already pending for %s (order %s) — not sending another SELL", prefix, posKey, entry.ExitOrderID)
 			return
@@ -817,6 +825,9 @@ func (oe *OrderExecutor) executePaper(sig model.Signal, posKey, direction, fnoTo
 		paperReason = "PAPER (strategy not enabled for real orders)"
 	}
 	qty := oe.paperQtyFor(fnoSymbol)
+	if direction == "BUY" && sig.Lots > 0 {
+		qty = sig.Lots * oe.paperLotOf(fnoSymbol)
+	}
 	fill := oe.paperFill(direction, fnoToken, ltp)
 	if direction == "BUY" && restingEntry(sig) {
 		f, ok := oe.paperRestingFill(sig, fnoToken, ltp)
@@ -856,6 +867,15 @@ func (oe *OrderExecutor) executePaper(sig model.Signal, posKey, direction, fnoTo
 	}
 
 	entryOrder, hadEntry := oe.entry(posKey)
+	if part := sig.ExitLots * oe.paperLotOf(fnoSymbol); hadEntry && part > 0 && part < entryOrder.Quantity {
+		left := entryOrder.Quantity - part
+		oe.updateEntry(posKey, func(r *OrderRecord) { r.Quantity = left })
+		log.Printf("%s 🔗 DRY-RUN: partial SELL %s of %d (%d lots), %d left | Entry: ₹%.2f → Exit: ₹%.2f | P&L: ₹%.2f",
+			prefix, dryRunOrderID, part, sig.ExitLots, left,
+			float64(entryOrder.Price)/100, float64(ltp)/100, float64(ltp-entryOrder.Price)/100*float64(part))
+		oe.reportPartialFill(sig, ltp, part)
+		return
+	}
 	if hadEntry {
 		log.Printf("%s 🔗 DRY-RUN: SELL order %s closes BUY order %s | Entry: ₹%.2f → Exit: ₹%.2f | P&L: ₹%.2f",
 			prefix, dryRunOrderID, entryOrder.OrderID,

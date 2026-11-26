@@ -10,8 +10,8 @@ import { useMediaQuery, PHONE_QUERY } from '../../../hooks/useMediaQuery';
 import type { LiveOrderStatePayload, SignalRecord } from '../../../types/signal';
 import type { RefusedEntry } from '../../../types/refused';
 import type { SRSweep } from '../../../types/sr';
-import { inferSide, legInfo } from '../../signals/signalAnalytics';
-import { TradeMarkersPrimitive, type TradeMarker } from '../tradeMarkersPrimitive';
+import { inferSide, isTelegramStrategy, legInfo } from '../../signals/signalAnalytics';
+import { TradeMarkersPrimitive, compactMarker, type TradeMarker } from '../tradeMarkersPrimitive';
 import { isWatchAction, watchExitPricedAtPremium } from '../../signals/watch';
 
 function matchesToken(token: string, exchange: string, selectedToken: string): boolean {
@@ -64,10 +64,7 @@ function metaLine(strategy: string, ts: string, ...extra: string[]): string {
 // Price levels the strategy writes into its reason as paise ints, e.g. "level=2273620".
 const LEVEL_KEYS: Array<[string, string]> = [['level', 'LVL'], ['stop', 'SL'], ['target', 'TGT']];
 
-/** TELEGRAM_SIGNAL or a channel's own Telegram strategy (TG_VIKASH, …). */
-export function isTelegramStrategy(name: string | undefined): boolean {
-    return name === 'TELEGRAM_SIGNAL' || (name ?? '').startsWith('TG_');
-}
+export { isTelegramStrategy };
 
 // Telegram levels are option premiums, not index points.
 const TG_LEVEL_KEYS: Array<[string, string]> = [['trigger', 'Entry'], ['sl', 'SL'], ['target', 'TGT']];
@@ -171,7 +168,7 @@ function watchExitMarker(
     s: SignalRecord, time: number, day: string,
     entry: { price: number; qty: number; day: string } | undefined, compact: boolean,
 ): TradeMarker {
-    const marker: TradeMarker = { time, kind: 'watch', label: label('WATCH EXIT', s.side, compact), side: sideShort(s.side), lines: [] };
+    const marker: TradeMarker = { time, kind: 'watch', label: label('WATCH EXIT', s.side, compact), side: sideShort(s.side), lines: [], reason: s.reason };
     const lines: string[] = [metaLine(s.strategy, s.created_at || s.candle_ts, 'advice')];
     if (watchExitPricedAtPremium(s) && s.price && s.price > 0) {
         lines.push(`@ ${rupees(s.price)}`);
@@ -191,7 +188,7 @@ function watchExitMarker(
  * levels and reason. No order was placed, so it opens no position.
  */
 function watchBuyMarker(s: SignalRecord, time: number, compact: boolean): TradeMarker {
-    const marker: TradeMarker = { time, kind: 'watch', label: label('ADVICE BUY', s.side, compact), side: sideShort(s.side), lines: [] };
+    const marker: TradeMarker = { time, kind: 'watch', label: label('ADVICE BUY', s.side, compact), side: sideShort(s.side), lines: [], reason: s.reason };
     if (!compact) {
         const lines = entryLines(s).filter(l => !l.startsWith('qty '));
         lines[0] = metaLine(s.strategy, s.created_at || s.candle_ts, 'advice');
@@ -213,6 +210,21 @@ function label(verb: string, side: string | undefined, compact: boolean, warned 
  * lines and keeps the icon plus C/P.
  */
 export function buildChartMarkers(
+    signals: SignalRecord[],
+    refused: RefusedEntry[],
+    selectedToken: string,
+    tfSec: number,
+    compact: boolean,
+    liveOrders: Record<string, LiveOrderStatePayload> = {},
+    sweeps: readonly SRSweep[] = [],
+): TradeMarker[] {
+    // Always build the full cards: compact badges drop their text for
+    // drawing, but the tap popup still shows every detail.
+    const full = buildFullMarkers(signals, refused, selectedToken, tfSec, false, liveOrders, sweeps);
+    return compact ? full.map(compactMarker) : full;
+}
+
+function buildFullMarkers(
     signals: SignalRecord[],
     refused: RefusedEntry[],
     selectedToken: string,
@@ -254,6 +266,7 @@ export function buildChartMarkers(
             label: label(isBuy ? 'BUY' : 'EXIT', s.side, compact, isBuy && reasonWarnings(s.reason).length > 0),
             side: sideShort(s.side),
             lines: [],
+            reason: s.reason,
         };
 
         if (isBuy) {
@@ -306,7 +319,8 @@ export function buildChartMarkers(
             ...reasonLines(r.strategy_reason),
             ...reasonLines(r.reason ? `Blocked: ${r.reason}` : ''),
         ];
-        out.push({ time, kind: 'refused', label: label('REFUSED', r.side, compact), side: sideShort(r.side), lines });
+        const reason = [r.strategy_reason, r.reason ? `Blocked: ${r.reason}` : ''].filter(Boolean).join('\n');
+        out.push({ time, kind: 'refused', label: label('REFUSED', r.side, compact), side: sideShort(r.side), lines, reason });
     }
 
     // SR liquidity sweeps of the selected index (the view is already per index):
@@ -369,4 +383,6 @@ export function useChartMarkers(
         // remount, or coming back to the dashboard), leaving no markers.
         lastFingerprint.current = '';
     }, [candleSeries]);
+
+    return primitive;
 }

@@ -15,7 +15,6 @@ import { PHONE_PORTRAIT_QUERY, useMediaQuery } from './hooks/useMediaQuery';
 import { Header } from './components/layout/Header';
 import { StatusBar } from './components/layout/StatusBar';
 import { MobileNav } from './components/layout/MobileNav';
-import { ReconnectBanner } from './components/layout/ReconnectBanner';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { AlertSetupDialog } from './components/layout/AlertSetupDialog';
 import { DashboardPage } from './pages/DashboardPage';
@@ -111,7 +110,6 @@ function AppShell() {
             // and shows body background under the tab bar.
             isDashboard && 'h-[100dvh] overflow-hidden [:is(html,body):has(&)]:h-full [:is(html,body):has(&)]:overflow-hidden [:is(html,body):has(&)]:overscroll-none',
         )}>
-            <ReconnectBanner />
             {!isPhone && <Header />}
             <main className={cn(
                 'w-full mx-auto',

@@ -102,23 +102,28 @@ func main() {
 		sessionManager := smartconnect.NewSessionManager(angelAPIKey, angelClientID, angelPassword, angelTOTPSecret, false)
 		log.Println("[api_gateway] 📦 session manager created (TTL: 30min, proactive refresh at: 20min)")
 
-		// Login to Angel One
+		// Login to Angel One. A failed first login (a slow or unreachable
+		// broker at startup) is retried in the background, so the account
+		// and option endpoints come up once the broker answers instead of
+		// staying off until the next restart. The SmartConnect client is
+		// the same object before and after login, so the account service
+		// can be built now.
 		if err := sessionManager.Login(); err != nil {
-			log.Printf("[api_gateway] ⚠️  Angel One login failed: %v", err)
+			log.Printf("[api_gateway] ⚠️  Angel One login failed: %v (retrying in background)", err)
+			go retryAngelLogin(ctx, sessionManager)
 		} else {
 			log.Println("[api_gateway] ✅ Angel One session established with auto-refresh")
-
 			// Start proactive refresh background loop
 			sessionManager.Start()
+		}
 
-			// Open signal journal database for last orders
-			journalPath := getEnv("STRAT_JOURNAL_PATH", "data/signal_journal.db")
-			if journalDB, err := sqlite.NewReader(journalPath); err != nil {
-				log.Printf("[api_gateway] ⚠️  signal journal unavailable: %v", err)
-			} else {
-				accountSvc = gateway.NewAccountServiceWithSessionManager(journalDB.DB(), sessionManager)
-				log.Println("[api_gateway] ✅ Account service initialized with session manager")
-			}
+		// Open signal journal database for last orders
+		journalPath := getEnv("STRAT_JOURNAL_PATH", "data/signal_journal.db")
+		if journalDB, err := sqlite.NewReader(journalPath); err != nil {
+			log.Printf("[api_gateway] ⚠️  signal journal unavailable: %v", err)
+		} else {
+			accountSvc = gateway.NewAccountServiceWithSessionManager(journalDB.DB(), sessionManager)
+			log.Println("[api_gateway] ✅ Account service initialized with session manager")
 		}
 	} else {
 		log.Println("[api_gateway] ℹ️  Angel One credentials not configured, account endpoints disabled")
@@ -227,4 +232,42 @@ func parseIndicatorNames(s string) []string {
 	}
 	log.Printf("[api_gateway] loaded %d indicators from INDICATOR_CONFIGS", len(names))
 	return names
+}
+
+// angelLoginRetryFirst and angelLoginRetryMax bound the wait between
+// background login attempts after a failed startup login.
+const (
+	angelLoginRetryFirst = 30 * time.Second
+	angelLoginRetryMax   = 5 * time.Minute
+)
+
+// retryAngelLogin logs the session manager in again until it succeeds or
+// ctx ends, then starts its proactive refresh loop.
+func retryAngelLogin(ctx context.Context, sm *smartconnect.SessionManager) {
+	retryLogin(ctx, sm.Login, sm.Start, angelLoginRetryFirst, angelLoginRetryMax)
+}
+
+// retryLogin calls login after wait, doubling wait up to max after each
+// failure. On success it calls start once and returns true; it returns
+// false when ctx ends first.
+func retryLogin(ctx context.Context, login func() error, start func(), wait, max time.Duration) bool {
+	for attempt := 1; ; attempt++ {
+		t := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return false
+		case <-t.C:
+		}
+		if err := login(); err != nil {
+			log.Printf("[api_gateway] ⚠️  Angel One login retry %d failed: %v", attempt, err)
+			if wait *= 2; wait > max {
+				wait = max
+			}
+			continue
+		}
+		log.Printf("[api_gateway] ✅ Angel One session established on retry %d", attempt)
+		start()
+		return true
+	}
 }

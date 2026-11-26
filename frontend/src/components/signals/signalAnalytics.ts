@@ -131,6 +131,11 @@ function applyLiveLevels(order: OpenOrder, live: LiveOrderStatePayload) {
     order.real = live.real === true;
 }
 
+/** TELEGRAM_SIGNAL or a channel's own Telegram strategy (TG_VIKASH, …). */
+export function isTelegramStrategy(name: string | undefined): boolean {
+    return name === 'TELEGRAM_SIGNAL' || (name ?? '').startsWith('TG_');
+}
+
 export function buildOpenOrders(
     signals: SignalRecord[],
     liveOrdersByKey: Record<string, LiveOrderStatePayload> = {},
@@ -185,9 +190,15 @@ export function buildOpenOrders(
         }
     }
 
-    for (const order of open.values()) {
+    for (const [key, order] of open) {
         const live = liveOrdersByKey[liveOrderKey(order.strategy, order.side, order.leg)];
-        if (!live) continue;
+        if (!live) {
+            // A Telegram BUY whose order never filled (ENTRY_REFUSED) has no
+            // live order: stratengine holds nothing, so it is not shown and
+            // its SL/TGT/Exit buttons would only be refused.
+            if (isTelegramStrategy(order.strategy)) open.delete(key);
+            continue;
+        }
         if (live.entry_fno_price && order.buyPrice === null) {
             order.buyPrice = live.entry_fno_price / 100;
         }

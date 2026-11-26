@@ -59,6 +59,21 @@ type Config struct {
 	// DefaultSLPct gives a call without a stop ("Stoploss : PAID") a stop
 	// this % below its entry. 0 = such calls are refused.
 	DefaultSLPct int64
+	// DefaultSLPoints is the stop for a call without one, in premium
+	// points below the trigger per underlying (TG_DEFAULT_SL_POINTS,
+	// default NIFTY=15,SENSEX=30,BANKNIFTY=30). It wins over DefaultSLPct.
+	DefaultSLPoints map[string]int64
+	// DefaultTargetPoints are the targets for a call without any, in
+	// premium points above the trigger (TG_DEFAULT_TARGET_POINTS, default
+	// 20,30; "off" = none).
+	DefaultTargetPoints []int64
+	// defaultsErr is a bad TG_DEFAULT_*_POINTS value, reported by Validate.
+	defaultsErr error
+	// PollInterval is how often each followed channel's difference is
+	// fetched in market hours (TG_POLL_INTERVAL, default 2s, 0 = off);
+	// PollIdle outside them (TG_POLL_IDLE, default 30s). Telegram does
+	// not push every update of a large channel.
+	PollInterval, PollIdle time.Duration
 }
 
 // LoadConfig reads all environment variables and returns a Config.
@@ -72,6 +87,12 @@ func LoadConfig() Config {
 	maxAge, err := time.ParseDuration(config.GetEnv("TG_MAX_AGE", "60s"))
 	if err != nil || maxAge <= 0 {
 		maxAge = 60 * time.Second
+	}
+	slPoints, slErr := parseSLPoints(config.GetEnv("TG_DEFAULT_SL_POINTS", "NIFTY=15,SENSEX=30,BANKNIFTY=30"))
+	tgtPoints, tgtErr := parseTargetPoints(config.GetEnv("TG_DEFAULT_TARGET_POINTS", "20,30"))
+	defaultsErr := slErr
+	if defaultsErr == nil {
+		defaultsErr = tgtErr
 	}
 	return Config{
 		RedisAddr:     config.GetEnv("REDIS_ADDR", "localhost:6379"),
@@ -105,11 +126,20 @@ func LoadConfig() Config {
 		},
 		LLMCtxReason: config.GetEnv("TG_LLM_CTX_REASONING", ""),
 		DefaultSLPct: int64(config.GetEnvInt("TG_DEFAULT_SL_PCT", 0)),
+		PollInterval: envDuration("TG_POLL_INTERVAL", 2*time.Second),
+		PollIdle:     envDuration("TG_POLL_IDLE", 30*time.Second),
+
+		DefaultSLPoints:     slPoints,
+		DefaultTargetPoints: tgtPoints,
+		defaultsErr:         defaultsErr,
 	}
 }
 
 // Validate checks the service can connect and knows which chats to read.
 func (c Config) Validate() error {
+	if c.defaultsErr != nil {
+		return fmt.Errorf("TG_DEFAULT_SL_POINTS / TG_DEFAULT_TARGET_POINTS: %w", c.defaultsErr)
+	}
 	switch {
 	case c.APIID == 0 || c.APIHash == "":
 		return fmt.Errorf("TG_API_ID and TG_API_HASH are required (my.telegram.org)")
@@ -227,4 +257,26 @@ func (c Config) SeedSession() (bool, error) {
 		return false, err
 	}
 	return true, os.WriteFile(c.SessionPath, raw, 0o600)
+}
+
+// envDuration reads a duration: unset keeps def, "0" or "off" is 0, a
+// bad value keeps def.
+func envDuration(key string, def time.Duration) time.Duration {
+	v := strings.TrimSpace(config.GetEnv(key, ""))
+	switch strings.ToLower(v) {
+	case "":
+		return def
+	case "0", "off":
+		return 0
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d < 0 {
+		return def
+	}
+	return d
+}
+
+// Defaults are the stop and targets given to calls that leave them out.
+func (c Config) Defaults() Defaults {
+	return Defaults{SLPoints: c.DefaultSLPoints, SLPct: c.DefaultSLPct, TargetPoints: c.DefaultTargetPoints}
 }

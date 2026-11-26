@@ -27,8 +27,17 @@ func IsTelegramStrategy(name string) bool {
 // TelegramSignalConfig tunes TelegramSignal.
 type TelegramSignalConfig struct {
 	// TargetPct is our own premium target above the entry, % (0 = none).
-	// The caller's targets are ignored.
+	// With CallTargets it applies only to a call without targets.
 	TargetPct int64
+	// CallTargets trades the call's targets: T1ExitLots are sold at the
+	// first, the rest at the last. Off = the targets only drive the stop
+	// ladder.
+	CallTargets bool
+	// Lots is the size of each trade in lots (paper; 0 = the executor's
+	// default size). T1ExitLots of them are sold at the first target; the
+	// rest ride to the last target or the stop ladder. With only one
+	// target, or no more lots than T1ExitLots, all exit at the first.
+	Lots, T1ExitLots int64
 	// MaxChasePct refuses an entry whose premium is already more than this
 	// % above the call's trigger. Unused when EntryCapPaise is set.
 	MaxChasePct int64
@@ -94,7 +103,15 @@ type TGPosition struct {
 	// Resting: bought with an exchange order (EntryCapPaise) that has not
 	// filled yet; FillEntry clears it. False for older saved trades.
 	Resting bool `json:"resting,omitempty"`
+	// Lots bought and still held; T1Done once the partial exit at the
+	// first target was sent. Lots 0 = an older saved trade (no partial).
+	Lots     int64 `json:"lots,omitempty"`
+	LotsLeft int64 `json:"lots_left,omitempty"`
+	T1Done   bool  `json:"t1_done,omitempty"`
 }
+
+// TGPartialExit is the event of the lots sold at the first target.
+const TGPartialExit = "PARTIAL_EXIT"
 
 // Arm results.
 const (
@@ -491,7 +508,7 @@ func (s *TelegramSignal) FillEntry(side PositionSide, price int64) {
 	}
 	s.pos.Resting = false
 	s.pos.Entry = price
-	if s.cfg.TargetPct > 0 {
+	if s.cfg.TargetPct > 0 && !(s.cfg.CallTargets && len(s.pos.Targets) > 0) {
 		s.pos.Target = price * (100 + s.cfg.TargetPct) / 100
 	}
 }
@@ -570,6 +587,8 @@ func (s *TelegramSignal) OnTick(tick model.Tick) *Signal {
 			reason = fmt.Sprintf("TG RAISED STOP premium=%d stop=%d entry=%d best=%d", price, p.SL, p.Entry, p.Best)
 		case price <= p.SL:
 			reason = fmt.Sprintf("TG SL premium=%d sl=%d entry=%d", price, p.SL, p.Entry)
+		case s.partialDue(p, price):
+			return s.partialExit(p, price)
 		case p.Target > 0 && price >= p.Target:
 			reason = fmt.Sprintf("TG TARGET premium=%d target=%d entry=%d", price, p.Target, p.Entry)
 		default:
@@ -681,13 +700,17 @@ func (s *TelegramSignal) enter(a TGArm, price int64, now time.Time) *Signal {
 		entry = a.Call.TriggerPaise // the exchange order's price; the fill corrects it (FillEntry)
 	}
 	p := &TGPosition{Arm: a, Entry: entry, SL: a.Call.SLPaise, Last: price, Best: price,
-		Targets: append([]int64(nil), a.Call.Targets...), EnteredTS: now, Resting: s.cfg.EntryCapPaise > 0}
-	if s.cfg.TargetPct > 0 {
+		Targets: append([]int64(nil), a.Call.Targets...), EnteredTS: now, Resting: s.cfg.EntryCapPaise > 0,
+		Lots: s.cfg.Lots, LotsLeft: s.cfg.Lots}
+	switch {
+	case s.cfg.CallTargets && len(p.Targets) > 0:
+		p.Target = p.Targets[0] // the last one once T1's lots are sold
+	case s.cfg.TargetPct > 0:
 		p.Target = entry * (100 + s.cfg.TargetPct) / 100
 	}
 	s.pos, s.arms = p, nil
 	c := a.Call
-	s.event(c.Key(), "ENTERED", fmt.Sprintf("%s premium=%d sl=%d target=%d", a.FNOSymbol, price, p.SL, p.Target))
+	s.event(c.Key(), "ENTERED", fmt.Sprintf("%s premium=%d sl=%d target=%d targets=%v lots=%d", a.FNOSymbol, price, p.SL, p.Target, p.Targets, p.Lots))
 	sig := &Signal{
 		StrategyName: s.Name(),
 		Action:       ActionBuy,
@@ -699,6 +722,7 @@ func (s *TelegramSignal) enter(a TGArm, price int64, now time.Time) *Signal {
 		FNOToken:     a.FNOToken,
 		FNOSymbol:    a.FNOSymbol,
 		Strike:       c.Strike,
+		Lots:         s.cfg.Lots,
 		Reason: fmt.Sprintf("TG ENTRY %s %d%s trigger=%d premium=%d sl=%d target=%d msg=%s src=%s",
 			c.Underlying, c.Strike, c.OptionType, c.TriggerPaise, price, p.SL, p.Target, c.Key(), c.Source),
 		SignalTS: now,
@@ -715,10 +739,39 @@ func (s *TelegramSignal) enter(a TGArm, price int64, now time.Time) *Signal {
 	return sig
 }
 
+// partialDue: price reached the first target and part of the lots is
+// still to be sold there. Needs a later target for the rest.
+func (s *TelegramSignal) partialDue(p *TGPosition, price int64) bool {
+	n := s.cfg.T1ExitLots
+	return s.cfg.CallTargets && !p.T1Done && n > 0 && p.LotsLeft > n && len(p.Targets) > 1 && price >= p.Targets[0]
+}
+
+// partialExit sells T1ExitLots at the first target and keeps the rest
+// open for the last target. The caller holds s.mu.
+func (s *TelegramSignal) partialExit(p *TGPosition, price int64) *Signal {
+	n := s.cfg.T1ExitLots
+	p.T1Done = true
+	p.LotsLeft -= n
+	last := p.Targets[len(p.Targets)-1]
+	if p.Target == p.Targets[0] { // not changed by hand
+		p.Target = last
+	}
+	reason := fmt.Sprintf("TG T1 premium=%d t1=%d entry=%d: sell %d of %d lots, rest to %d", price, p.Targets[0], p.Entry, n, p.Lots, p.Target)
+	s.event(p.Arm.Call.Key(), TGPartialExit, reason)
+	sig := s.exitSignal(p, reason)
+	sig.ExitLots = n
+	return sig
+}
+
 // exit closes s.pos; the caller holds s.mu.
 func (s *TelegramSignal) exit(reason string) *Signal {
 	p := s.pos
 	s.pos = nil
+	return s.exitSignal(p, reason)
+}
+
+// exitSignal is the EXIT for p (all lots held unless ExitLots is set).
+func (s *TelegramSignal) exitSignal(p *TGPosition, reason string) *Signal {
 	return &Signal{
 		StrategyName:  s.Name(),
 		Action:        ActionExit,

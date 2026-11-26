@@ -41,11 +41,11 @@ func TestParseCallsWithoutStop(t *testing.T) {
 				}
 			}
 
-			got, err := withDefaultSL(sig, err, 10)
+			got, err := withDefaultSL(sig, err, Defaults{SLPct: 10})
 			if err != nil || got.SLPaise != c.trigger*90/100 || !got.SLDefault {
 				t.Fatalf("default SL: %+v %v", got, err)
 			}
-			if _, err := withDefaultSL(sig, ErrNoSL, 0); !errors.Is(err, ErrNoSL) {
+			if _, err := withDefaultSL(sig, ErrNoSL, Defaults{}); !errors.Is(err, ErrNoSL) {
 				t.Fatalf("pct 0 must keep the refusal, got %v", err)
 			}
 		})
@@ -59,7 +59,7 @@ func TestDefaultSLOnlyForMissingStop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := withDefaultSL(sig, err, 10)
+	got, err := withDefaultSL(sig, err, Defaults{SLPct: 10})
 	if err != nil || got.SLPaise != 18200 || got.SLDefault {
 		t.Fatalf("message stop replaced: %+v %v", got, err)
 	}
@@ -74,17 +74,17 @@ func TestDefaultSLOnlyForMissingStop(t *testing.T) {
 }
 
 func TestLLMDefaultSL(t *testing.T) {
-	r := llmWithDefaultSL(LLMResult{Kind: "new_call", Underlying: "SENSEX", Strike: 74700, OptionType: "CE", Trigger: "280", SL: ""}, 10)
+	r := llmWithDefaultSL(LLMResult{Kind: "new_call", Underlying: "SENSEX", Strike: 74700, OptionType: "CE", Trigger: "280", SL: ""}, Defaults{SLPct: 10})
 	c := r.Call()
 	if c.SLPaise != 25200 || !c.SLDefault {
 		t.Fatalf("LLM call %+v", c)
 	}
-	if r := llmWithDefaultSL(LLMResult{Kind: "new_call", Trigger: "280", SL: "260"}, 10); r.Call().SLPaise != 26000 || r.Call().SLDefault {
+	if r := llmWithDefaultSL(LLMResult{Kind: "new_call", Trigger: "280", SL: "260"}, Defaults{SLPct: 10}); r.Call().SLPaise != 26000 || r.Call().SLDefault {
 		t.Fatalf("LLM stop replaced: %+v", r.Call())
 	}
 	// Regex and LLM both default the stop: they still agree.
 	rx, rxErr := Parse(tciCall)
-	rx, rxErr = withDefaultSL(rx, rxErr, 10)
+	rx, rxErr = withDefaultSL(rx, rxErr, Defaults{SLPct: 10})
 	d := decide(rx, rxErr, r, nil)
 	if d.verdict != VerdictSent || d.call == nil || d.call.SLPaise != 25200 || !d.call.SLDefault {
 		t.Fatalf("decide %+v", d)
@@ -137,11 +137,11 @@ func TestActiveReply(t *testing.T) {
 			t.Errorf("%q active=%v, want %v", text, got, want)
 		}
 	}
-	got := Explain(context.Background(), nil, "Active 🔥🔥🔥", vikashCall, true, 10)
+	got := Explain(context.Background(), nil, "Active 🔥🔥🔥", vikashCall, true, Defaults{SLPct: 10})
 	if !strings.HasPrefix(got, VerdictFollowUp+" activate") {
 		t.Fatalf("explain %q", got)
 	}
-	if got := Explain(context.Background(), nil, "Active 🔥🔥🔥", "Good morning traders", true, 10); strings.Contains(got, "activate") {
+	if got := Explain(context.Background(), nil, "Active 🔥🔥🔥", "Good morning traders", true, Defaults{SLPct: 10}); strings.Contains(got, "activate") {
 		t.Fatalf("Active to a non-call read as activate: %q", got)
 	}
 }
