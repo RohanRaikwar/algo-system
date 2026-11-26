@@ -51,6 +51,19 @@ func (oe *OrderExecutor) paperQtyFor(symbol string) int64 {
 	return oe.cfg.LiveLots * lot
 }
 
+// paperLotOf is one lot of symbol for a paper trade sized in lots
+// (Signal.Lots / ExitLots): the instrument master's lot, else NIFTY's
+// STRAT_QTY or the underlying's fallback lot.
+func (oe *OrderExecutor) paperLotOf(symbol string) int64 {
+	if lot, err := oe.lotSizeOf(symbol); err == nil && lot > 0 {
+		return lot
+	}
+	if p, ok := extraProfileOf(symbol); ok {
+		return int64(p.LotFallback)
+	}
+	return oe.cfg.Qty
+}
+
 // underlyingOfStrategy is the underlying key a strategy trades: its
 // profile's when it is an SR strategy of an extra underlying, else the
 // primary (NIFTY).

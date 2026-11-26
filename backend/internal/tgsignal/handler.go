@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,7 +38,7 @@ const maxEditAge = 30 * time.Minute
 type handler struct {
 	chats   map[int64]bool
 	maxAge  time.Duration
-	slPct   int64      // default stop % for calls without one, 0 = refuse
+	defs    Defaults   // stop and targets for calls that leave them out
 	reader  CallReader // nil = regex only
 	journal *Journal   // nil = no review log
 
@@ -63,7 +64,7 @@ type handler struct {
 
 func newHandler(cfg Config, reader CallReader, journal *Journal, publishCall func(model.TGSignal) error, publishFollowUp func(model.TGFollowUp) error) *handler {
 	h := &handler{
-		chats: make(map[int64]bool), maxAge: cfg.MaxAge, slPct: cfg.DefaultSLPct, reader: reader, journal: journal,
+		chats: make(map[int64]bool), maxAge: cfg.MaxAge, defs: cfg.Defaults(), reader: reader, journal: journal,
 		publishCall: publishCall, publishFollowUp: publishFollowUp, seen: make(map[string]time.Time), ctxs: newContexts(),
 	}
 	for _, id := range cfg.ChatIDs {
@@ -152,7 +153,18 @@ func (d decision) what() string {
 		if c.SLDefault {
 			sl += " default"
 		}
-		return fmt.Sprintf("BUY %s %d%s above %s SL %s (%s)", c.Underlying, c.Strike, c.OptionType, rupees(c.TriggerPaise), sl, c.Source)
+		what := fmt.Sprintf("BUY %s %d%s above %s SL %s", c.Underlying, c.Strike, c.OptionType, rupees(c.TriggerPaise), sl)
+		if len(c.Targets) > 0 {
+			ts := make([]string, len(c.Targets))
+			for i, t := range c.Targets {
+				ts[i] = rupees(t)
+			}
+			what += " TGT " + strings.Join(ts, ",")
+			if c.TargetsDefault {
+				what += " default"
+			}
+		}
+		return what + " (" + c.Source + ")"
 	case d.followUp != nil:
 		f := d.followUp
 		if f.Action == model.TGMoveSL {

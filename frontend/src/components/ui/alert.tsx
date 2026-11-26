@@ -11,9 +11,6 @@ import { cn } from "cn"
 const alertVariants = cva("", {
   variants: {
     variant: {
-      /** ReconnectBanner: red gradient strip, white semibold text (position it with fixed top-0 left-0 right-0 z-[200]). */
-      banner:
-        "flex items-center justify-center gap-[8px] py-[10px] px-[20px] bg-[linear-gradient(90deg,rgba(239,68,68,0.95),rgba(220,38,38,0.95))] text-white text-center text-[0.85rem] font-semibold tracking-[0.3px] [backdrop-filter:blur(8px)]",
       /** SystemHealth summary banner: surface card with a 3px tone-coloured left border; tone colours the leading svg. */
       status:
         "flex items-start gap-[12px] py-[14px] px-[16px] bg-sg-surface border border-solid border-sg-line border-l-[3px] rounded-[12px] [&>svg]:shrink-0 [&>svg]:mt-[1px]",

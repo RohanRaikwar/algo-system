@@ -238,7 +238,7 @@ func TestHandlerStatusAndDashboardList(t *testing.T) {
 	h.onMessage(context.Background(), msg(2, "193🔥🔥🔥"), tNow)
 
 	if len(shown) != 2 || shown[0].English != "Buy Nifty PE 22750" || shown[0].Verdict != VerdictSent ||
-		shown[0].Summary != "BUY NIFTY 22750PE above 191.00 SL 182.00 (REGEX_FIRST)" || shown[1].Verdict != VerdictSkipped {
+		shown[0].Summary != "BUY NIFTY 22750PE above 191.00 SL 182.00 TGT 202.00,221.00 (REGEX_FIRST)" || shown[1].Verdict != VerdictSkipped {
 		t.Fatalf("shown %+v", shown)
 	}
 	st := h.status.snapshot(time.Now())

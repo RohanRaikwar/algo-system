@@ -15,7 +15,7 @@ import { rupees } from './liveBars';
 
 const POLL_MS = 15_000;
 
-interface Picked {
+export interface Picked {
     exchange: string;
     token: string;
     symbol: string;
@@ -38,7 +38,15 @@ function useVisiblePoll(fn: () => void, deps: unknown[]) {
  * strikes, prices from one quote snapshot (nothing is subscribed). Clicking
  * a CE/PE price opens its chart, which streams that one contract.
  */
-export function OptionChainPanel() {
+interface OptionChainPanelProps {
+    /** 'panel': inside the dashboard side sheet; the toolbar's index picker drives it. */
+    variant?: 'page' | 'panel';
+    /** When set, a picked contract goes here instead of the built-in dialog. */
+    onPick?: (p: Picked) => void;
+}
+
+export function OptionChainPanel({ variant = 'page', onPick }: OptionChainPanelProps = {}) {
+    const inPanel = variant === 'panel';
     const isPhone = useMediaQuery(PHONE_PORTRAIT_QUERY);
     const [indexes, setIndexes] = useState<OptChainIndex[]>([]);
     const selected = useAppStore(s => s.selectedToken);
@@ -67,7 +75,10 @@ export function OptionChainPanel() {
     useVisiblePoll(load, [load]);
 
     const open = (leg?: OptChainLeg) => {
-        if (leg && view) setPicked({ exchange: view.exchange, token: leg.token, symbol: leg.symbol });
+        if (!leg || !view) return;
+        const p = { exchange: view.exchange, token: leg.token, symbol: leg.symbol };
+        if (onPick) onPick(p);
+        else setPicked(p);
     };
     const close = () => setPicked(null);
 
@@ -92,7 +103,7 @@ export function OptionChainPanel() {
 
     return (
         <div className="flex flex-col gap-3 min-w-0">
-            {indexes.length > 0 && (
+            {indexes.length > 0 && !inPanel && (
                 <div className="flex items-center gap-2">
                     <NativeSelect variant="filter" value={index} onChange={e => setSelected(e.target.value)} aria-label="Index">
                         {indexes.map(i => (
@@ -115,7 +126,7 @@ export function OptionChainPanel() {
                                 : view.price_note || 'No prices'}
                         </span>
                     </div>
-                    <div className="overflow-auto border border-sg-line rounded-xl bg-sg-bg max-h-[min(72vh,820px)]">
+                    <div className={cn('overflow-auto border border-sg-line rounded-xl bg-sg-bg', !inPanel && 'max-h-[min(72vh,820px)]')}>
                         <table className="w-full text-sm border-collapse">
                             <thead className="sticky top-0 bg-sg-surface text-sg-muted text-xs">
                                 <tr>
@@ -149,7 +160,7 @@ export function OptionChainPanel() {
                 </>
             )}
 
-            {isPhone ? (
+            {onPick ? null : isPhone ? (
                 <BottomSheet open={!!picked} onClose={close} title={picked?.symbol ?? ''}>
                     {chart}
                 </BottomSheet>

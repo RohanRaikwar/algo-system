@@ -110,7 +110,10 @@ func (r *router) dispatch(m inMsg, now time.Time) {
 	it := &item{m: m, now: now, start: time.Now(), entry: entry}
 	raw, rawErr := Parse(m.Text) // once: isCall would parse again
 	it.call = rawErr == nil || errors.Is(rawErr, ErrNoSL)
-	it.rx, it.rxErr = withDefaultSL(raw, rawErr, h.slPct)
+	it.rx, it.rxErr = withDefaultSL(raw, rawErr, h.defs)
+	if it.rxErr == nil {
+		it.rx = withDefaultTargets(it.rx, h.defs)
+	}
 	it.entry.Regex = regexView(it.rx, it.rxErr)
 	r.add(1)
 	r.route(it)
@@ -325,7 +328,7 @@ func (r *router) inChat(it *item, path chatPath, replyCall bool) {
 		r.read(prio, it, h.replyText(it.m), func(res LLMResult, err error) {
 			r.chatBox(it.m.ChatID).push(func() {
 				english := r.readDone(it, res, err)
-				d := decide(it.rx, it.rxErr, llmWithDefaultSL(res, h.slPct), err)
+				d := decide(it.rx, it.rxErr, llmWithDefaultSL(res, h.defs), err)
 				if err == ErrLLMStale {
 					d = decision{verdict: VerdictStale, reason: err.Error()}
 				}
@@ -368,7 +371,7 @@ func (r *router) armFirst(it *item) {
 func (r *router) verified(tc *tradeCtx, ver int, it *item, res LLMResult, err error) {
 	h := r.h
 	english := r.readDone(it, res, err)
-	d := decide(it.rx, it.rxErr, llmWithDefaultSL(res, h.slPct), err)
+	d := decide(it.rx, it.rxErr, llmWithDefaultSL(res, h.defs), err)
 	if err == nil && d.call != nil && d.call.Source == "AGREE" {
 		d.call.Source = "REGEX_FIRST"
 		d.reason = "armed on regex, " + d.reason
@@ -561,7 +564,7 @@ func (r *router) contextRead(tc *tradeCtx, link ctxLink, it *item, res LLMResult
 	h := r.h
 	callID := tc.call.MsgID
 	english := r.readDone(it, res, err)
-	d := decide(it.rx, it.rxErr, llmWithDefaultSL(res, h.slPct), err)
+	d := decide(it.rx, it.rxErr, llmWithDefaultSL(res, h.defs), err)
 	if err == ErrLLMStale {
 		d = decision{verdict: VerdictStale, reason: err.Error()}
 	}
@@ -740,6 +743,7 @@ func (r *router) publish(it *item, d decision) decision {
 func (r *router) publishCall(it *item, c model.TGSignal, verified bool) (*tradeCtx, int, error) {
 	h := r.h
 	m := it.m
+	c = withDefaultTargets(c, h.defs)
 	c.ChatID, c.MsgID, c.ReceivedAt, c.Text, c.Edited = m.ChatID, m.MsgID, it.now, m.Text, m.Edited
 	c.SentAt, c.ReadMS, c.PublishedAt = m.Sent, time.Since(it.start).Milliseconds(), time.Now()
 	if err := h.publishCall(c); err != nil {

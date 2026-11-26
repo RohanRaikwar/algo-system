@@ -12,6 +12,10 @@ export function useConfigQuery() {
         queryFn: fetchConfig,
         staleTime: Infinity,   // Config doesn't change during a session
         retry: 2,
+        // While the gateway is down (restart, deploy) the app runs on
+        // NIFTY-only defaults; keep asking so the real index list replaces
+        // them once the gateway answers.
+        refetchInterval: (q) => (q.state.status === 'error' ? 5_000 : false),
     });
 }
 

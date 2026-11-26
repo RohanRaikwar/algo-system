@@ -42,7 +42,7 @@ export function relativeTime(ts: string, now = Date.now()): string {
 }
 
 function actionKind(action: string): ActionTone {
-    if (action === 'EXIT') return 'exit';
+    if (action === 'EXIT' || action === 'PARTIAL_EXIT') return 'exit';
     return 'buy';
 }
 

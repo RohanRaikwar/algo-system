@@ -270,6 +270,19 @@ func (oe *OrderExecutor) reportFill(sig model.Signal, direction string, pricePai
 	}
 }
 
+// reportPartialFill reports a paper SELL of part of the position.
+func (oe *OrderExecutor) reportPartialFill(sig model.Signal, pricePaise, qty int64) {
+	if pricePaise <= 0 {
+		return
+	}
+	oe.mu.RLock()
+	fn := oe.onFill
+	oe.mu.RUnlock()
+	if fn != nil {
+		fn(FillReport{Signal: sig, Direction: "SELL", FillPricePaise: pricePaise, Qty: qty, Partial: true})
+	}
+}
+
 // signalFor rebuilds the signal identity of a stored entry, for settling
 // it after a restart or retrying its exit. Token/Exchange are the index
 // instrument that opened it, so fills land on the same P&L key.

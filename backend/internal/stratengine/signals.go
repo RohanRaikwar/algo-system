@@ -77,6 +77,9 @@ func (svc *Service) handleSignal(ctx context.Context, book *signalBook, sig stra
 	if strategy.IsTelegramStrategy(sig.StrategyName) {
 		defer svc.report(ctx, func() { svc.saveTGPosition(ctx, sig.StrategyName) })
 	}
+	if sig.BookOnly && svc.tgHolds(sig.StrategyName, sig.Side) {
+		return // a new entry on this side came first: keep it
+	}
 	if !svc.admitSignal(ctx, &sig, now) {
 		return
 	}
@@ -134,6 +137,8 @@ func (svc *Service) handleSignal(ctx context.Context, book *signalBook, sig stra
 		// so open REAL positions can be closed properly.
 		log.Printf("[stratengine] 🛑 PROFIT CAP: skipping new BUY — dailyPnL >= ₹650 (mode=%s) %s",
 			out.orderMode, sig.StrategyName)
+	} else if sig.BookOnly {
+		log.Printf("[stratengine] 📕 %s %s closed in the book only (no order): %s", sig.StrategyName, sig.Side, sig.Reason)
 	} else {
 		svc.dispatchOrder(ctx, sig)
 	}
@@ -351,6 +356,18 @@ func (svc *Service) bookExit(book *signalBook, sig *strategy.Signal, posKey stri
 		}
 	}
 	svc.normalizeExitInstrument(sig, book.instruments, posKey)
+	if sig.ExitLots > 0 {
+		// Part of the lots: the position stays on the book and dashboard.
+		if entryToken := book.fnoTokens[posKey]; entryToken != "" {
+			token, ok = entryToken, true
+			if exitLTP := svc.orderExecutor.GetLTP(entryToken); exitLTP > 0 {
+				ltp = exitLTP
+				sig.Price = exitLTP
+			}
+		}
+		sig.EntryFNOPrice = book.fnoPrices[posKey]
+		return token, ltp, ok
+	}
 	svc.closeExitPolicy(posKey)
 	svc.removeLiveOrder(sig.StrategyName, sig.Side)
 	if entryToken, has := book.fnoTokens[posKey]; has && entryToken != "" {
@@ -377,6 +394,9 @@ func (svc *Service) reportSignal(ctx context.Context, sig strategy.Signal, out s
 	// Journal and publish a copy naming the traded option. The
 	// order was already dispatched with sig unchanged.
 	rec := sig
+	if sig.Action == strategy.ActionExit && sig.ExitLots > 0 {
+		rec.Action = model.ActionPartialExit // the position stays open
+	}
 	rec.FNOToken = svc.unqualifyToken(out.tradedToken)
 	if rec.FNOSymbol == "" || sig.Action == strategy.ActionExit {
 		if name := svc.fnoSymbolFor(rec.FNOToken); name != "" {
@@ -392,7 +412,8 @@ func (svc *Service) reportSignal(ctx context.Context, sig strategy.Signal, out s
 	// Publish to Redis PubSub for frontend WS delivery
 	sigPayload, err := json.Marshal(map[string]interface{}{
 		"strategy_name":     sig.StrategyName,
-		"action":            sig.Action,
+		"action":            rec.Action,
+		"exit_lots":         sig.ExitLots,
 		"side":              sig.Side,
 		"reverse_to":        sig.ReverseTo,
 		"market_state":      sig.MarketState,

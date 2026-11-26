@@ -62,6 +62,19 @@ type Signal struct {
 	EntryLimitPaise   int64     `json:"entry_limit_paise,omitempty"`
 	EntryExpiresAt    time.Time `json:"entry_expires_at,omitempty"`
 
+	// ── Lots (paper only) ──
+	// Lots sizes a paper BUY in lots of its contract (0 = the configured
+	// paper size). ExitLots on an EXIT sells only that many lots and keeps
+	// the rest open (0 = everything held). A real position ignores both:
+	// a real BUY is sized by STRAT_LIVE_LOTS and a partial exit of a real
+	// position is not sent.
+	Lots     int64 `json:"lots,omitempty"`
+	ExitLots int64 `json:"exit_lots,omitempty"`
+
+	// BookOnly closes a position in stratengine's book, journal and
+	// dashboard without an order: the entry it closes never filled.
+	BookOnly bool `json:"-"`
+
 	// EmittedAt is the local time the engine emitted the signal (wall
 	// clock), for the signal → order latency (orderpath_stage_ms).
 	EmittedAt time.Time `json:"emitted_at,omitempty"`
@@ -92,6 +105,9 @@ const (
 	ActionBuy  Action = "BUY"
 	ActionSell Action = "SELL"
 	ActionExit Action = "EXIT"
+	// ActionPartialExit is how an EXIT with ExitLots is journaled and
+	// shown: the position stays open. Never sent to the executor.
+	ActionPartialExit Action = "PARTIAL_EXIT"
 	// ActionWatchBuy is entry advice: stratengine publishes it and never
 	// places an order or opens a position for it.
 	ActionWatchBuy Action = "WATCH_BUY"

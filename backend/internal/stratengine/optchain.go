@@ -130,7 +130,10 @@ func (svc *Service) optChainViews(im optChainMaster, prev map[string]model.OptCh
 		primGreeks = c
 	}
 	add := func(p underlying.Profile, greeks []instruments.OptionContract) {
-		spot := svc.orderExecutor.GetLTP(p.IndexToken)
+		var spot int64
+		if svc.orderExecutor != nil {
+			spot = svc.orderExecutor.GetLTP(p.IndexToken)
+		}
 		if spot <= 0 && closeOf != nil {
 			spot = closeOf(p)
 		}
@@ -141,11 +144,20 @@ func (svc *Service) optChainViews(im optChainMaster, prev map[string]model.OptCh
 		}
 	}
 	add(prim, primGreeks)
+	// Every index in INDEX_TOKEN gets a chain, whether or not its SR
+	// strategy runs (STRAT_SR_ENABLED=false leaves srExtras empty). Greeks
+	// come from a running SR instance's cached chain when there is one.
+	greeksOf := make(map[string][]instruments.OptionContract, len(svc.srExtras))
 	for _, ex := range svc.srExtras {
 		ex.mu.Lock()
-		g := ex.chain
+		greeksOf[ex.prof.Key] = ex.chain
 		ex.mu.Unlock()
-		add(ex.prof, g)
+	}
+	for _, p := range underlying.All() {
+		if p.Key == prim.Key {
+			continue
+		}
+		add(p, greeksOf[p.Key])
 	}
 	return out
 }

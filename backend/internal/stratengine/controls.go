@@ -367,6 +367,8 @@ func (svc *Service) onFill(f orderexec.FillReport) {
 				openQty = -qty
 			}
 			svc.portfolio.OpenPosition(token, exchange, openQty, f.FillPricePaise)
+		} else if f.Partial {
+			svc.portfolio.ReducePosition(token, exchange, qty)
 		} else {
 			svc.portfolio.ClosePosition(token, exchange)
 		}

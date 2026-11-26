@@ -3,41 +3,61 @@ import { ErrorBoundary } from '../components/ErrorBoundary';
 import { TradingChart } from '../components/chart/TradingChart';
 import { SRPanel } from '../components/sr/SRPanel';
 import { FnoInstrumentsTab } from '../components/signals/FnoInstrumentsTab';
-import { SRPeek } from '../components/sr/SRPeek';
 import { SRSheet, type SheetSnap } from '../components/sr/SRSheet';
 import { useMediaQuery, PHONE_QUERY, PHONE_LANDSCAPE_QUERY } from '../hooks/useMediaQuery';
-import { useAppStore } from '../store/useAppStore';
-import { loadLayout, saveLayout, LAYOUTS, type ChartLayout } from './dashboardLayout';
-import { cn } from '@/lib/utils';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-
-const GRID_COLS: Record<number, string> = {
-    1: 'grid-cols-[minmax(0,1fr)] lte-640:grid-rows-[minmax(0,1fr)] phone-land:grid-rows-[minmax(0,1fr)]',
-    2: 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)]',
-    4: 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)] grid-rows-[minmax(0,1fr)_minmax(0,1fr)]',
-};
+import { Button } from '@/components/ui/button';
+import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { tokenLabel } from '../utils/helpers';
+import { BottomSheet } from '../components/layout/BottomSheet';
+import { X } from 'lucide-react';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
+import { useDefaultLayout, type LayoutStorage } from 'react-resizable-panels';
+import { OptionChainPanel, type Picked } from '../components/optionchain/OptionChainPanel';
+import { OptionChart } from '../components/optionchain/OptionChart';
+import { useAppStore } from '../store/useAppStore';
 
 const SHEET_ID = 'sr-sheet';
 const SNAP_KEY = 'rangeSheetSnap';
-const VIEW_KEY = 'dashboardView';
+const SIDE_TAB_KEY = 'dashboardSideTab';
 
-type DashView = 'charts' | 'fno';
+type SideTab = 'sr' | 'fno';
 
-/** The desktop view last chosen in this browser; charts when none. */
-function loadView(): DashView {
+/** localStorage that never throws (private mode, blocked site data): the split just isn't remembered. */
+const splitStorage: LayoutStorage = {
+    getItem(key) {
+        try {
+            const v = localStorage.getItem(key);
+            if (v) JSON.parse(v);
+            return v;
+        } catch {
+            return null;
+        }
+    },
+    setItem(key, value) {
+        try {
+            localStorage.setItem(key, value);
+        } catch {
+            // blocked storage
+        }
+    },
+};
+
+/** The desktop side-sheet tab last chosen in this browser; S/R when none. */
+function loadSideTab(): SideTab {
     try {
-        return localStorage.getItem(VIEW_KEY) === 'fno' ? 'fno' : 'charts';
+        return localStorage.getItem(SIDE_TAB_KEY) === 'fno' ? 'fno' : 'sr';
     } catch {
-        return 'charts';
+        return 'sr';
     }
 }
 
-function saveView(v: DashView) {
+function saveSideTab(t: SideTab) {
     try {
-        localStorage.setItem(VIEW_KEY, v);
+        localStorage.setItem(SIDE_TAB_KEY, t);
     } catch {
-        // blocked storage: the view just isn't remembered
+        // blocked storage: the tab just isn't remembered
     }
 }
 
@@ -63,89 +83,124 @@ interface DashboardPageProps {
 }
 
 export function DashboardPage({ onOpenIndicators }: DashboardPageProps) {
-    const tfs = useAppStore(s => s.config.tfs);
-    const [layout, setLayout] = useState<ChartLayout>(() => loadLayout(tfs));
-    const [view, setView] = useState<DashView>(loadView);
+    // Desktop: the chart fills the page; S/R strategy and F&O instruments
+    // open in a sheet on the right.
+    const [sideOpen, setSideOpen] = useState(false);
+    const [sideTab, setSideTab] = useState<SideTab>(loadSideTab);
+    const openSide = useCallback(() => setSideOpen(true), []);
+    // Option chain opens in a modal; a picked contract's chart then takes
+    // the right half of the screen beside the index chart.
+    const [chainOpen, setChainOpen] = useState(false);
+    const openChain = useCallback(() => setChainOpen(true), []);
+    const [optionPick, setOptionPick] = useState<Picked | null>(null);
+    // The split starts at 50/50; a dragged width is remembered in this browser.
+    // Side by side on desktop, stacked (index on top) on phones; each remembers its own split.
+    const splitWide = useDefaultLayout({ id: 'dashboard-option-split', onlySaveAfterUserInteractions: true, storage: splitStorage });
+    const splitTall = useDefaultLayout({ id: 'dashboard-option-split-phone', onlySaveAfterUserInteractions: true, storage: splitStorage });
+    const pickOption = useCallback((p: Picked) => { setOptionPick(p); setChainOpen(false); }, []);
+    const selectedToken = useAppStore(s => s.selectedToken);
+    // The picked contract belongs to the index it came from.
+    useEffect(() => { setOptionPick(null); }, [selectedToken]);
 
-    useEffect(() => saveView(view), [view]);
+    useEffect(() => saveSideTab(sideTab), [sideTab]);
 
-    useEffect(() => saveLayout(layout), [layout]);
-
-    // Phones show one chart and the strategy as peek strip + sheet. The saved
-    // layout is left alone so desktop keeps its 2/4-chart choice.
+    // Phones show the strategy as peek strip + sheet.
     const isPhone = useMediaQuery(PHONE_QUERY);
     const isLandscape = useMediaQuery(PHONE_LANDSCAPE_QUERY);
     const compactUI = isPhone || isLandscape;
-    const count = compactUI ? 1 : layout.count;
-    // Phones keep the chart; F&O instruments stay in Signals there.
-    const showFno = !compactUI && view === 'fno';
     const [snap, setSnap] = useState<SheetSnap>('closed');
-    const peekRef = useRef<HTMLButtonElement>(null);
-    const openSheet = useCallback(() => setSnap(s => (s === 'closed' ? lastOpenSnap() : 'closed')), []);
+    // Focus goes back to the button that opened the sheet.
+    const openerRef = useRef<HTMLElement | null>(null);
     const onSnap = useCallback((s: SheetSnap) => {
         if (s !== 'closed') rememberSnap(s);
         setSnap(s);
     }, []);
-    const openSR = useCallback(() => onSnap(lastOpenSnap()), [onSnap]);
+    const openSR = useCallback(() => {
+        openerRef.current = document.activeElement as HTMLElement | null;
+        onSnap(lastOpenSnap());
+    }, [onSnap]);
     useEffect(() => { if (!compactUI) setSnap('closed'); }, [compactUI]);
 
-    const panes = layout.panes.slice(0, count - 1);
-    const setPaneTF = (i: number, tf: number) =>
-        setLayout(l => ({ ...l, panes: l.panes.map((p, j) => (j === i ? tf : p)) }));
+    const indexChart = (
+        <TradingChart
+            onOpenIndicators={onOpenIndicators}
+            onOpenSR={compactUI ? openSR : undefined}
+            onOpenStrategy={compactUI ? openSR : openSide}
+            onOpenOptionChain={openChain}
+        />
+    );
 
     return (
         <ErrorBoundary>
             <div className="relative flex flex-col flex-[1_1_auto] min-w-0 min-h-0">
-                <div className="flex items-center justify-end gap-[8px] py-[4px] px-[12px] border-b border-b-sg-line bg-sg-surface shrink-0 lte-640:hidden phone-land:hidden">
-                    <Tabs value={view} onValueChange={v => setView(v as DashView)}>
-                        <TabsList variant="compact" aria-label="Dashboard view">
-                            {(['charts', 'fno'] as const).map(v => (
-                                <TabsTrigger key={v} value={v}>
-                                    {v === 'charts' ? 'Charts' : 'F&O instruments'}
-                                </TabsTrigger>
-                            ))}
-                        </TabsList>
-                    </Tabs>
-                    <span className="flex-[1_1_auto]" />
-                    {!showFno && (<>
-                    <span className="text-[11px] text-sg-muted">Charts</span>
-                    <ToggleGroup
-                        variant="compact"
-                        aria-label="Chart layout"
-                        value={[String(layout.count)]}
-                        onValueChange={v => v[0] && setLayout(l => ({ ...l, count: Number(v[0]) as ChartLayout['count'] }))}
-                    >
-                        {LAYOUTS.map(n => (
-                            <ToggleGroupItem
-                                key={n}
-                                value={String(n)}
-                                title={n === 1 ? 'One chart' : `${n} charts, each with its own timeframe`}
-                            >
-                                {n}
-                            </ToggleGroupItem>
-                        ))}
-                    </ToggleGroup>
-                    </>)}
+                <div className="grid flex-[1_1_auto] min-h-0 grid-cols-[minmax(0,1fr)] lte-640:grid-rows-[minmax(0,1fr)] phone-land:grid-rows-[minmax(0,1fr)]">
+                    {optionPick ? (
+                        <ResizablePanelGroup
+                            key={isPhone ? 'tall' : 'wide'}
+                            orientation={isPhone ? 'vertical' : 'horizontal'}
+                            className="min-h-0"
+                            defaultLayout={(isPhone ? splitTall : splitWide).defaultLayout}
+                            onLayoutChanged={(isPhone ? splitTall : splitWide).onLayoutChanged}
+                        >
+                            <ResizablePanel id="index" defaultSize="50%" minSize="25%" className="flex min-w-0 min-h-0">
+                                {indexChart}
+                            </ResizablePanel>
+                            <ResizableHandle withHandle />
+                            <ResizablePanel id="option" defaultSize="50%" minSize="25%" className="min-w-0 min-h-0">
+                                <OptionChart key={optionPick.token} {...optionPick} fill onClose={() => setOptionPick(null)} />
+                            </ResizablePanel>
+                        </ResizablePanelGroup>
+                    ) : indexChart}
                 </div>
-                {showFno ? (
-                    <div className="flex-[1_1_auto] min-h-0 overflow-y-auto py-[12px] px-[16px] bg-sg-bg">
-                        <FnoInstrumentsTab />
-                    </div>
-                ) : (
-                    <div className={cn('grid flex-[1_1_auto] min-h-0 gap-[1px] bg-sg-line', GRID_COLS[count])}>
-                        <TradingChart onOpenIndicators={onOpenIndicators} onOpenSR={compactUI ? openSR : undefined} />
-                        {panes.map((tf, i) => (
-                            <TradingChart key={i} compact paneTF={tf} onPaneTFChange={t => setPaneTF(i, t)} />
-                        ))}
-                    </div>
-                )}
                 {compactUI ? (
-                    <>
-                        <SRPeek ref={peekRef} open={snap !== 'closed'} sheetId={SHEET_ID} onOpen={openSheet} />
-                        <SRSheet id={SHEET_ID} snap={snap} onSnap={onSnap} returnFocusRef={peekRef} />
-                    </>
+                    <SRSheet id={SHEET_ID} snap={snap} onSnap={onSnap} returnFocusRef={openerRef} />
                 ) : (
-                    <SRPanel />
+                    <Drawer open={sideOpen} onOpenChange={setSideOpen} swipeDirection="right" showSwipeHandle={false}>
+                        <DrawerContent aria-label="Strategy and instruments" className="[--drawer-content-width:min(40rem,92vw)]! sm:[--drawer-content-width:min(40rem,92vw)]!">
+                            <div className="flex flex-col min-h-0 flex-1">
+                                <DrawerHeader className="justify-between pt-[12px] pr-[8px] pl-[16px]">
+                                    <DrawerTitle className="sr-only">{sideTab === 'sr' ? 'S/R strategy' : 'F&O instruments'}</DrawerTitle>
+                                    <Tabs value={sideTab} onValueChange={v => setSideTab(v as SideTab)}>
+                                        <TabsList variant="compact" aria-label="Sheet view">
+                                            <TabsTrigger value="sr">S/R strategy</TabsTrigger>
+                                            <TabsTrigger value="fno">F&amp;O instruments</TabsTrigger>
+                                        </TabsList>
+                                    </Tabs>
+                                    <Button variant="ghost" size="icon-32" onClick={() => setSideOpen(false)} aria-label="Close">
+                                        <X size={18} />
+                                    </Button>
+                                </DrawerHeader>
+                                <div className="flex-1 min-h-0 overflow-y-auto">
+                                    {sideTab === 'sr' ? (
+                                        <SRPanel variant="sheet" />
+                                    ) : (
+                                        <div className="py-[12px] px-[16px]">
+                                            <FnoInstrumentsTab />
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </DrawerContent>
+                    </Drawer>
+                )}
+                {isPhone ? (
+                    <BottomSheet open={chainOpen} onClose={() => setChainOpen(false)} title={`${tokenLabel(selectedToken)} option chain`}>
+                        <OptionChainPanel variant="panel" onPick={pickOption} />
+                    </BottomSheet>
+                ) : (
+                    <Dialog open={chainOpen} onOpenChange={setChainOpen}>
+                        <DialogContent showCloseButton className="sm:max-w-[760px] w-[min(96vw,760px)]">
+                            <DialogHeader>
+                                <div>
+                                    <DialogTitle>{tokenLabel(selectedToken)} option chain</DialogTitle>
+                                    <DialogDescription>Click a CE or PE price to open its chart beside the index chart.</DialogDescription>
+                                </div>
+                            </DialogHeader>
+                            <DialogBody>
+                                <OptionChainPanel variant="panel" onPick={pickOption} />
+                            </DialogBody>
+                        </DialogContent>
+                    </Dialog>
                 )}
             </div>
         </ErrorBoundary>

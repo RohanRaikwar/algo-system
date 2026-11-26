@@ -102,7 +102,7 @@ type Config struct {
 	TGLadderTrailPct int64
 	TGMaxChasePct int64 // refuse an entry this % above the call's trigger (TGEntryCapPaise 0 only)
 	// TGEntryCapPaise: buy with one exchange order capped at trigger + this
-	// (STRAT_TG_ENTRY_CAP_PAISE, default 100 = ₹1; 0 = old software trigger
+	// (STRAT_TG_ENTRY_CAP_PAISE, default 500 = ₹5; 0 = old software trigger
 	// and chased order).
 	TGEntryCapPaise int64
 	TGArmMin      int   // minutes a call waits for its trigger
@@ -110,6 +110,12 @@ type Config struct {
 	// TGMaxPriceGapPct one whose entry is this % from the live premium.
 	TGMaxStrikeGapPct int64
 	TGMaxPriceGapPct  int64
+	// TGCallTargets trades the call's targets (STRAT_TG_CALL_TARGETS,
+	// default on): TGT1ExitLots of TGLots are sold at T1, the rest at the
+	// last target. Paper only: a real position exits whole.
+	TGCallTargets bool
+	TGLots        int64 // STRAT_TG_LOTS, default 3
+	TGT1ExitLots  int64 // STRAT_TG_T1_EXIT_LOTS, default 2
 	// TGChannels gives a Telegram chat its own strategy (one trade per
 	// channel): chat id → name starting with TG_. Other chats trade as
 	// TELEGRAM_SIGNAL. STRAT_TG_CHANNELS=4340040418=TG_VIKASH,…
@@ -120,7 +126,9 @@ type Config struct {
 	// STRAT_TG_WAIT_ACTIVE=TELEGRAM_SIGNAL,TG_VIKASH,TG_TCI
 	TGWaitActive []string
 
-	// ── NIFTY50_SR: regime-aware support/resistance, paper only ──
+	// ── NIFTY50_SR: regime-aware support/resistance, paper only. Off by
+	// default since Nov 26 2026 (Telegram only); STRAT_SR_ENABLED=true turns
+	// it and SENSEX_SR/BANKNIFTY_SR back on. ──
 	SREnabled       bool
 	SRMaxDayLossPts int64   // stop entries after this many index paise lost today, 0 = off
 	SRDeltaMin      float64 // bought strike |delta| band, from the live chain
@@ -259,11 +267,14 @@ func LoadConfig() Config {
 		TGTargetPct:           config.GetEnvInt64("STRAT_TG_TARGET_PCT", 0),
 		TGLadderTrailPct:      config.GetEnvInt64("STRAT_TG_LADDER_TRAIL_PCT", 10),
 		TGMaxChasePct:         config.GetEnvInt64("STRAT_TG_MAX_CHASE_PCT", 5),
-		TGEntryCapPaise:       config.GetEnvInt64("STRAT_TG_ENTRY_CAP_PAISE", 100),
+		TGEntryCapPaise:       config.GetEnvInt64("STRAT_TG_ENTRY_CAP_PAISE", 500),
 		TGArmMin:              config.GetEnvInt("STRAT_TG_ARM_MIN", 30),
 		TGMaxStrikeGapPct:     config.GetEnvInt64("STRAT_TG_MAX_STRIKE_GAP_PCT", 3),
 		TGMaxPriceGapPct:      config.GetEnvInt64("STRAT_TG_MAX_PRICE_GAP_PCT", 40),
-		SREnabled:             config.GetEnvBool("STRAT_SR_ENABLED", true),
+		TGCallTargets:         config.GetEnvBool("STRAT_TG_CALL_TARGETS", true),
+		TGLots:                config.GetEnvInt64("STRAT_TG_LOTS", 3),
+		TGT1ExitLots:          config.GetEnvInt64("STRAT_TG_T1_EXIT_LOTS", 2),
+		SREnabled:             config.GetEnvBool("STRAT_SR_ENABLED", false),
 		SRMaxDayLossPts:       config.GetEnvInt64("STRAT_SR_MAX_DAY_LOSS_PAISE", 6000),
 		SRDeltaMin:            getEnvFloat("STRAT_SR_DELTA_MIN", 0.45),
 		SRDeltaMax:            getEnvFloat("STRAT_SR_DELTA_MAX", 0.60),

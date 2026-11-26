@@ -38,7 +38,7 @@ func TestContextTCIConfirmsOnFirstPriceAtEntry(t *testing.T) {
 	}
 	defer f.Close()
 	h, s, j := newTestHandler(t, nil)
-	h.slPct = 10
+	h.defs = Defaults{SLPct: 10}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
 	for sc.Scan() {
@@ -187,7 +187,7 @@ func TestContextLoadFromJournal(t *testing.T) {
 	}
 
 	cs := newContexts()
-	n, err := cs.load(j, []int64{42}, 10, tNow)
+	n, err := cs.load(j, []int64{42}, Defaults{SLPct: 10}, tNow)
 	if err != nil || n != 1 {
 		t.Fatalf("load %d %v", n, err)
 	}
